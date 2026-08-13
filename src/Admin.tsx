@@ -6,6 +6,10 @@ import ConfirmDialog from "./ConfirmDialog";
 interface Props {
   /** The admin's own org id — the owner workspace is never deletable. */
   ownerOrgId: number;
+  /** Phase 3d — "View account": swap the owner's session into this tenant's
+   *  workspace (server-side impersonation). Throws on failure so the caller
+   *  can surface the error. */
+  onViewAccount: (orgId: number) => Promise<void>;
 }
 
 /** Random password (crypto-grade): one from each class + extras, 19 chars. */
@@ -25,9 +29,11 @@ function generatePassword(): string {
   return sets.map((s) => pick(s, 4)).join("") + pick(all, 3);
 }
 
-export default function Admin({ ownerOrgId }: Props) {
+export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Org whose "View account" is in flight (shows a spinner on that row). */
+  const [viewingOrgId, setViewingOrgId] = useState<number | null>(null);
 
   /* Create-account form */
   const [name, setName] = useState("");
@@ -91,6 +97,21 @@ export default function Admin({ ownerOrgId }: Props) {
       setError(e instanceof Error ? e.message : "Delete failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  /* Phase 3d — jump into the tenant's workspace. On success the App shell
+     swaps to that tenant's user (banner appears); on failure keep the admin
+     view and surface the error. */
+  async function handleViewAccount(o: Org) {
+    setViewingOrgId(o.id);
+    setError(null);
+    try {
+      await onViewAccount(o.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not open this account.");
+    } finally {
+      setViewingOrgId(null);
     }
   }
 
@@ -262,14 +283,26 @@ export default function Admin({ ownerOrgId }: Props) {
                               —
                             </span>
                           ) : (
-                            <button
-                              className="icon-btn danger"
-                              title="Delete tenant"
-                              aria-label={`Delete ${o.name}`}
-                              onClick={() => setDeleting(o)}
-                            >
-                              Delete
-                            </button>
+                            <>
+                              <button
+                                className="icon-btn"
+                                title="Open this workspace as the client sees it"
+                                aria-label={`View ${o.name} account`}
+                                disabled={viewingOrgId !== null}
+                                onClick={() => handleViewAccount(o)}
+                              >
+                                {viewingOrgId === o.id ? "Opening…" : "View account"}
+                              </button>
+                              <button
+                                className="icon-btn danger"
+                                title="Delete tenant"
+                                aria-label={`Delete ${o.name}`}
+                                disabled={viewingOrgId !== null}
+                                onClick={() => setDeleting(o)}
+                              >
+                                Delete
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>

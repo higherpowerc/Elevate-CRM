@@ -689,6 +689,55 @@ legend.field-label {
   letter-spacing: 0.04em;
 }
 
+/* ── Owner impersonation banner (Phase 3d) ───────────────────
+   Lives INSIDE the sticky .nav header, so it stays on screen on every
+   tab while the owner is viewing a client's workspace. Amber on purpose:
+   zero ambiguity that this is the client's account, not the owner's. */
+
+.impersonate-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 8px 24px;
+  width: 100%;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #241a04;
+  background: var(--amber);
+  border-bottom: 1px solid rgba(36, 26, 4, 0.25);
+}
+
+.impersonate-icon {
+  font-size: 15px;
+  line-height: 1;
+  flex: none;
+}
+
+.impersonate-text strong {
+  font-weight: 700;
+}
+
+.impersonate-return {
+  margin-left: auto;
+  flex: none;
+  background: rgba(36, 26, 4, 0.1);
+  border: 1px solid rgba(36, 26, 4, 0.4);
+  color: #241a04;
+  font-weight: 700;
+}
+
+.impersonate-return:hover {
+  background: rgba(36, 26, 4, 0.18);
+  color: #140e02;
+}
+
+.impersonate-return:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
 /* ── Page layout ───────────────────────────────────────────── */
 
 .page {
@@ -1760,6 +1809,17 @@ legend.field-label {
 }
 
 @media (max-width: 760px) {
+  .impersonate-banner {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 8px 16px;
+  }
+
+  .impersonate-return {
+    margin-left: 0;
+    width: 100%;
+  }
+
   .nav-inner {
     height: auto;
     padding: 10px 16px;
@@ -1773,6 +1833,12 @@ legend.field-label {
 
   .nav-right {
     margin-left: auto;
+  }
+
+  .tabs {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .main {

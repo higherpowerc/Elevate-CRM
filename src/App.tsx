@@ -16,6 +16,10 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState<View>("dashboard");
+  /* Phase 3d — owner impersonation. True while the owner's session is swapped
+     into a client tenant's workspace; drives the banner in the shell. */
+  const [impersonating, setImpersonating] = useState(false);
+  const [returning, setReturning] = useState(false);
 
   useEffect(() => {
     const onUnauthorized = () => {
@@ -23,11 +27,15 @@ export default function App() {
         if (u) window.location.hash = "";
         return null;
       });
+      setImpersonating(false);
     };
     window.addEventListener("crm:unauthorized", onUnauthorized);
     api
       .me()
-      .then(({ user }) => setUser(user))
+      .then((res) => {
+        setUser(res.user);
+        setImpersonating(res.impersonating === true);
+      })
       .catch(() => setUser(null))
       .finally(() => setBooted(true));
     return () => window.removeEventListener("crm:unauthorized", onUnauthorized);
@@ -54,7 +62,36 @@ export default function App() {
       /* session already gone is fine */
     }
     setUser(null);
+    setImpersonating(false);
     setView("dashboard");
+  }, []);
+
+  /* Phase 3d — "View account" from the owner's Admin tab: the server swaps
+     this session into the tenant's member user. Land on that tenant's
+     dashboard — their nav, data, branding and role rules now apply as if the
+     owner had logged in as them. */
+  const handleImpersonate = useCallback(async (orgId: number) => {
+    const res = await api.adminImpersonate(orgId);
+    setUser(res.user);
+    setImpersonating(true);
+    setView("dashboard");
+  }, []);
+
+  /* Phase 3d — banner "Return to my dashboard": swap back to the owner's own
+     session and land on the Admin view where they started. */
+  const handleImpersonateReturn = useCallback(async () => {
+    setReturning(true);
+    try {
+      const res = await api.impersonateReturn();
+      setUser(res.user);
+      setImpersonating(false);
+      setView("admin");
+    } catch {
+      // Session round-trip failed — reload so /api/auth/me reports the truth.
+      window.location.reload();
+    } finally {
+      setReturning(false);
+    }
   }, []);
 
   if (!booted) {
@@ -81,6 +118,24 @@ export default function App() {
   return (
     <div className="app" style={accentStyle}>
       <header className="nav">
+        {impersonating && (
+          <div className="impersonate-banner" role="status" aria-label="Impersonation notice">
+            <span className="impersonate-icon" aria-hidden="true">
+              ⚠
+            </span>
+            <span className="impersonate-text">
+              Viewing as <strong>{orgName || "tenant"}</strong> — you are inside this client's
+              workspace. Everything you see is exactly what they see.
+            </span>
+            <button
+              className="btn btn-sm impersonate-return"
+              onClick={handleImpersonateReturn}
+              disabled={returning}
+            >
+              {returning ? "Returning…" : "Return to my dashboard"}
+            </button>
+          </div>
+        )}
         <div className="nav-inner">
           <button className="brand" onClick={() => setView("dashboard")} aria-label="Go to dashboard">
             <span className="brand-mark">{brandMark}</span>
@@ -159,7 +214,7 @@ export default function App() {
         ) : view === "finance" ? (
           <Finance />
         ) : view === "admin" ? (
-          <Admin ownerOrgId={user.orgId} />
+          <Admin ownerOrgId={user.orgId} onViewAccount={handleImpersonate} />
         ) : (
           <Settings />
         )}

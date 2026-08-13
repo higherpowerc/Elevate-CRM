@@ -166,7 +166,9 @@ provisioning (signup, per-tenant login) is Phase 2; the schema is ready for it.
 | -------- | -------------------- | ---------------------------------------------- | ---------------------------------- |
 | POST     | `/api/auth/login`    | `{email, password}`                            | Sets session cookie; `503 setup_required` if no admin exists |
 | POST     | `/api/auth/logout`   | —                                              | Clears cookie                      |
-| GET      | `/api/auth/me`       | —                                              | Current user                       |
+| GET      | `/api/auth/me`       | —                                              | Current user (`impersonating`/`impersonatedFrom` set during Phase 3d owner impersonation) |
+| POST     | `/api/admin/impersonate` | `{orgId}`                                  | Owner-only (403 for members): swap the session into that tenant's user — no password, no new users; `impersonating:true` + `impersonatedFrom` in response |
+| POST     | `/api/auth/impersonate-return` | —                                        | Swap back to the owner's own session (400 if not impersonating) |
 | GET      | `/api/dashboard`     | —                                              | Stage counts, projectedPipeline (active only), recent clients |
 | GET      | `/api/clients`       | `?archived=1` `?q=term`                        | List (archived hidden by default)  |
 | POST     | `/api/clients`       | full client object (incl. `services` string[] and `customFields` {label,value}[]) | 201 on create; 400 on invalid      |

@@ -742,6 +742,109 @@ grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ owner org unt
 check "admin deletes tenant B → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$TENANTB_ID")
 rm -f "$JARB" "$JAR3"
 
+echo "== 18. Owner impersonation (Phase 3d) =="
+# The suite runs against a clean DB (bun run db:reset) without demo seed, so
+# this section provisions its own tenant through the admin API — the same path
+# the Admin tab uses — and exercises the whole impersonate → view → return
+# round trip. $JAR still holds the admin session from section 17.
+IMP_ORG_NAME="Acme Impersonation QA"
+IMP_EMAIL="acme-imp@example.com"
+IMP_PASSWORD="AcmeImpersonate123!"
+JAR4=$(mktemp)   # the tenant member's own session
+JAR5=$(mktemp)   # empty jar (unauthenticated)
+JAR6=$(mktemp)   # fresh jar for the password-unchanged login check
+
+echo "-- 18a. Provision a tenant to impersonate + seed it with 3 clients =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"name\":\"$IMP_ORG_NAME\",\"email\":\"$IMP_EMAIL\",\"password\":\"$IMP_PASSWORD\"}" "$BASE/api/admin/orgs")
+check "admin provisions impersonation target org → 201" 201 "$S"
+IMP_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+IMP_USER_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+echo "    (impersonation org id=$IMP_ORG_ID, member user id=$IMP_USER_ID)"
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+ADMIN_USER_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+echo "    (admin user id=$ADMIN_USER_ID)"
+
+S=$(code -c "$JAR4" -b "$JAR4" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$IMP_EMAIL\",\"password\":\"$IMP_PASSWORD\"}" "$BASE/api/auth/login")
+check "target member login → 200" 200 "$S"
+grep -q "\"orgId\":$IMP_ORG_ID" /tmp/body.json && echo "  ✓ member login returns the target orgId" || echo "  ✗ member orgId: $(cat /tmp/body.json)"
+for CL in \
+  '{"companyName":"Greenlawn HOA","dealValue":3200,"stage":"Prospect"}' \
+  '{"companyName":"Cactus Ridge HOA","dealValue":1800,"stage":"Prospect"}' \
+  '{"companyName":"Sonoran Stoneworks","dealValue":12400,"stage":"Prospect"}'; do
+  code -b "$JAR4" -X POST -H 'Content-Type: application/json' -d "$CL" "$BASE/api/clients" > /dev/null
+done
+S=$(code -b "$JAR4" "$BASE/api/clients")
+check "target member lists clients → 200" 200 "$S"
+grep -q 'Greenlawn HOA' /tmp/body.json && grep -q 'Cactus Ridge HOA' /tmp/body.json && grep -q 'Sonoran Stoneworks' /tmp/body.json && echo "  ✓ tenant seeded with its 3 clients" || echo "  ✗ tenant clients: $(cat /tmp/body.json)"
+
+echo "-- 18b. Guards: 401 / 403 / own org / missing org (before impersonating) =="
+check "impersonate without cookie → 401" 401 $(code -b "$JAR5" -X POST -H 'Content-Type: application/json' \
+  -d "{\"orgId\":$IMP_ORG_ID}" "$BASE/api/admin/impersonate")
+check "member calls impersonate → 403" 403 $(code -b "$JAR4" -X POST -H 'Content-Type: application/json' \
+  -d "{\"orgId\":$IMP_ORG_ID}" "$BASE/api/admin/impersonate")
+check "impersonate own org → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"orgId\":$DEFAULT_ORG_ID}" "$BASE/api/admin/impersonate")
+check "impersonate missing org → 404" 404 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"orgId":999999}' "$BASE/api/admin/impersonate")
+check "impersonate with bad orgId → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"orgId":"abc"}' "$BASE/api/admin/impersonate")
+
+echo "-- 18c. Admin impersonates the tenant =="
+S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"orgId\":$IMP_ORG_ID}" "$BASE/api/admin/impersonate")
+check "owner impersonate tenant → 200" 200 "$S"
+grep -q "\"orgId\":$IMP_ORG_ID" /tmp/body.json && echo "  ✓ response user is the tenant's user (orgId matches)" || echo "  ✗ response orgId: $(cat /tmp/body.json)"
+grep -q "\"id\":$IMP_USER_ID" /tmp/body.json && echo "  ✓ response user id is the tenant member's id" || echo "  ✗ response user id: $(cat /tmp/body.json)"
+grep -q '"role":"member"' /tmp/body.json && echo "  ✓ response role is member" || echo "  ✗ response role: $(cat /tmp/body.json)"
+grep -q '"impersonating":true' /tmp/body.json && echo "  ✓ response impersonating:true" || echo "  ✗ impersonating flag: $(cat /tmp/body.json)"
+grep -q "\"impersonatedFrom\":$ADMIN_USER_ID" /tmp/body.json && echo "  ✓ response impersonatedFrom = admin id" || echo "  ✗ impersonatedFrom: $(cat /tmp/body.json)"
+
+echo "-- 18d. me reports the impersonation =="
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+check "me while impersonating → 200" 200 "$S"
+grep -Fq "$IMP_EMAIL" /tmp/body.json && echo "  ✓ me returns the tenant user (email)" || echo "  ✗ me email: $(cat /tmp/body.json)"
+grep -q "\"orgId\":$IMP_ORG_ID" /tmp/body.json && echo "  ✓ me orgId is the tenant org" || echo "  ✗ me orgId: $(cat /tmp/body.json)"
+grep -q '"impersonating":true' /tmp/body.json && echo "  ✓ me impersonating:true" || echo "  ✗ me impersonating: $(cat /tmp/body.json)"
+grep -q "\"impersonatedFrom\":$ADMIN_USER_ID" /tmp/body.json && echo "  ✓ me impersonatedFrom set to admin id" || echo "  ✗ me impersonatedFrom: $(cat /tmp/body.json)"
+
+echo "-- 18e. Isolation intact while impersonating (owner sees only the tenant) =="
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "impersonated clients list → 200" 200 "$S"
+grep -q 'Greenlawn HOA' /tmp/body.json && grep -q 'Sonoran Stoneworks' /tmp/body.json && echo "  ✓ impersonated session sees the tenant's clients" || echo "  ✗ tenant clients missing: $(cat /tmp/body.json)"
+grep -qv 'Summit Heating' /tmp/body.json && grep -qv 'Willow & Stone' /tmp/body.json && echo "  ✓ impersonated session does NOT see owner-org clients (isolation intact)" || echo "  ✗ CROSS-ORG LEAK: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+check "impersonated dashboard → 200" 200 "$S"
+grep -q '"totalClients":3' /tmp/body.json && echo "  ✓ dashboard counts only the tenant's 3 clients" || echo "  ✗ dashboard: $(cat /tmp/body.json)"
+check "impersonated session cannot use admin endpoints → 403" 403 $(code -b "$JAR" "$BASE/api/admin/orgs")
+
+echo "-- 18f. Return to the owner dashboard =="
+S=$(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/impersonate-return")
+check "impersonate-return → 200" 200 "$S"
+grep -Fq "$ADMIN_EMAIL" /tmp/body.json && echo "  ✓ return response is the owner user" || echo "  ✗ return user: $(cat /tmp/body.json)"
+grep -q '"impersonating":false' /tmp/body.json && echo "  ✓ return impersonating:false" || echo "  ✗ return flag: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+check "me after return → 200" 200 "$S"
+grep -Fq "$ADMIN_EMAIL" /tmp/body.json && grep -q '"impersonating":false' /tmp/body.json && echo "  ✓ me is the owner again, not impersonating" || echo "  ✗ me after return: $(cat /tmp/body.json)"
+grep -qv 'impersonatedFrom' /tmp/body.json && echo "  ✓ no impersonatedFrom on a normal session" || echo "  ✗ impersonatedFrom should be absent: $(cat /tmp/body.json)"
+check "admin endpoints work again → 200" 200 $(code -b "$JAR" "$BASE/api/admin/orgs")
+
+echo "-- 18g. Return guards =="
+check "impersonate-return when not impersonating → 400" 400 $(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/impersonate-return")
+check "member impersonate-return (never impersonating) → 400" 400 $(code -c "$JAR4" -b "$JAR4" -X POST "$BASE/api/auth/impersonate-return")
+check "impersonate-return without cookie → 401" 401 $(code -b "$JAR5" -X POST "$BASE/api/auth/impersonate-return")
+
+echo "-- 18h. Impersonation never touches the tenant's password =="
+S=$(code -c "$JAR6" -b "$JAR6" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$IMP_EMAIL\",\"password\":\"$IMP_PASSWORD\"}" "$BASE/api/auth/login")
+check "member login with original password after round-trip → 200" 200 "$S"
+grep -q "\"orgId\":$IMP_ORG_ID" /tmp/body.json && grep -q '"role":"member"' /tmp/body.json && echo "  ✓ original password still works, role intact" || echo "  ✗ login after round-trip: $(cat /tmp/body.json)"
+
+echo "-- 18i. Cleanup =="
+check "admin deletes the impersonation target org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$IMP_ORG_ID")
+rm -f "$JAR4" "$JAR5" "$JAR6"
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json

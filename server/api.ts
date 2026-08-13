@@ -22,6 +22,7 @@ import {
 import {
   createSession,
   verifySession,
+  verifySessionPayload,
   verifyPassword,
   getUserByEmail,
   getUserById,
@@ -96,6 +97,21 @@ function requireAdmin(req: Request): AuthContext | Response {
   if (auth instanceof Response) return auth;
   if (auth.role !== "admin") return err("Forbidden.", 403);
   return auth;
+}
+
+/**
+ * Phase 3d — owner impersonation. If the current session is an impersonation,
+ * returns the admin user id who started it — but only when that user still
+ * exists and is still an admin. Any other session returns null. The `imp`
+ * field lives inside the HMAC-signed session payload, so a client can neither
+ * forge an impersonation nor attach one to a normal session.
+ */
+function impersonationFrom(req: Request): number | null {
+  const payload = verifySessionPayload(getCookie(req, SESSION_COOKIE));
+  if (!payload || typeof payload.imp !== "number") return null;
+  const admin = getUserById(payload.imp);
+  if (!admin || admin.role !== "admin") return null;
+  return payload.imp;
 }
 
 /* ── Client row → API shape ─────────────────────────────────────────── */
@@ -620,7 +636,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
     const token = createSession(user.id);
     return json(
-      { user: toUser(user), ok: true },
+      { user: toUser(user), impersonating: false, ok: true },
       200,
       { "Set-Cookie": sessionCookie(token) },
     );
@@ -637,7 +653,32 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (auth instanceof Response) return auth;
     const user = getUserById(auth.userId);
     if (!user) return err("Not signed in.", 401);
-    return json({ user });
+    const imp = impersonationFrom(req);
+    if (imp !== null) {
+      return json({ user, impersonating: true, impersonatedFrom: imp });
+    }
+    return json({ user, impersonating: false });
+  }
+
+  /* Phase 3d — end an owner impersonation: swap back to the admin's own
+     session (the origin is recorded in the current session's signed `imp`
+     field). Only reachable while impersonating; the tenant user's own normal
+     session has no `imp` and gets a 400. */
+  if (pathname === "/api/auth/impersonate-return" && method === "POST") {
+    const auth = requireAuth(req);
+    if (auth instanceof Response) return auth;
+    const adminId = impersonationFrom(req);
+    if (adminId === null) return err("Not impersonating.", 400);
+    const admin = getUserById(adminId);
+    if (!admin || admin.role !== "admin") {
+      return err("Original admin session is no longer valid.", 403);
+    }
+    const token = createSession(admin.id);
+    return json(
+      { user: admin, impersonating: false, ok: true },
+      200,
+      { "Set-Cookie": sessionCookie(token) },
+    );
   }
 
   /* Everything below requires auth */
@@ -718,6 +759,48 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db.query("DELETE FROM orgs WHERE id = ?").run(id);
     })();
     return json({ ok: true });
+  }
+
+  /* Phase 3d — owner impersonation: swap the admin's session for the target
+     tenant's member user. This is a pure session swap — no new users/orgs,
+     no password changes — and because the new session IS the tenant's user,
+     every existing row-level isolation rule applies unchanged (the owner sees
+     exactly what that tenant sees, nothing more). The originating admin id is
+     stored inside the new signed session payload (`imp`) so the banner can
+     show and `/api/auth/impersonate-return` can restore the admin session. */
+  if (pathname === "/api/admin/impersonate" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const orgIdNum = Number(body.orgId);
+    if (!Number.isInteger(orgIdNum) || orgIdNum <= 0) {
+      return err("orgId must be a positive integer.", 400);
+    }
+    const org = db.query("SELECT id, name FROM orgs WHERE id = ?").get(orgIdNum) as
+      | { id: number; name: string }
+      | null;
+    if (!org) return err("Org not found.", 404);
+    if (org.id === admin.orgId) return err("Cannot impersonate your own org.", 400);
+    // Prefer the org's member login; fall back to any of its users (the owner
+    // may provision an org whose only user is an admin in the future).
+    const member = db
+      .query("SELECT id FROM users WHERE org_id = ? AND role = 'member' ORDER BY id ASC LIMIT 1")
+      .get(org.id) as { id: number } | null;
+    const target =
+      member ??
+      (db.query("SELECT id FROM users WHERE org_id = ? ORDER BY id ASC LIMIT 1").get(org.id) as
+        | { id: number }
+        | null);
+    if (!target) return err("Org has no user accounts.", 400);
+    const targetUser = getUserById(target.id);
+    if (!targetUser) return err("Org user not found.", 404);
+    const token = createSession(targetUser.id, { impersonatedFrom: admin.userId });
+    return json(
+      { user: targetUser, impersonating: true, impersonatedFrom: admin.userId, ok: true },
+      200,
+      { "Set-Cookie": sessionCookie(token) },
+    );
   }
 
   /* Dashboard */
