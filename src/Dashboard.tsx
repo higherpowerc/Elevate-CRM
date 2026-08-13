@@ -31,9 +31,6 @@ export default function Dashboard({ onGoToClients }: { onGoToClients: () => void
             {data.archivedClients > 0 && ` · ${data.archivedClients} archived`}
           </p>
         </div>
-        <button className="btn btn-primary" onClick={onGoToClients}>
-          + New client
-        </button>
       </div>
 
       <div className="kpi-row">
