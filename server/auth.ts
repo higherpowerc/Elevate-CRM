@@ -1,4 +1,4 @@
-import { db, ensureDefaultOrg, type Role } from "./db";
+import { db, ensureDefaultOrg, getOrg, parseStages, DEFAULT_STAGES, DEFAULT_ACCENT, type Role } from "./db";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -72,6 +72,11 @@ export interface User {
   orgId: number;
   role: Role;
   orgName: string;
+  /** The tenant's ordered pipeline stages (Phase 3a) — the client stage
+   *  dropdown and dashboard breakdown are driven by this list. */
+  stages: string[];
+  /** The tenant's brand accent (hex) — the app shell uses it for the accent. */
+  accentColor: string;
   created_at: string;
 }
 
@@ -83,17 +88,18 @@ interface UserRow {
   created_at: string;
 }
 
-/** Map a users row to the API shape; orgName lets the shell show which tenant
- *  the signed-in user belongs to (helps the owner tell tenants apart when
- *  testing client logins). */
+/** Map a users row to the API shape; orgName/stages/accentColor let the shell
+ *  show the signed-in tenant's own branding once authenticated. */
 export function toUser(row: UserRow): User {
-  const org = db.query("SELECT name FROM orgs WHERE id = ?").get(row.org_id) as { name: string } | null;
+  const org = getOrg(row.org_id);
   return {
     id: row.id,
     email: row.email,
     orgId: row.org_id,
     role: row.role,
     orgName: org?.name ?? "",
+    stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
+    accentColor: org?.accent_color ?? DEFAULT_ACCENT,
     created_at: row.created_at,
   };
 }

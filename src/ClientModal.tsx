@@ -1,29 +1,31 @@
 import { useState, type FormEvent, type KeyboardEvent } from "react";
-import { STAGES, type Client, type CustomField, type Stage } from "./types";
+import type { Client, CustomField, Stage } from "./types";
 
 interface Props {
   client?: Client;
+  /** The tenant's ordered pipeline stages (Phase 3a) — drives the dropdown. */
+  stages: Stage[];
   busy: boolean;
   onClose: () => void;
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
 }
 
-const empty = (): Omit<Client, "id" | "createdAt" | "updatedAt"> => ({
-  companyName: "",
-  contactName: "",
-  email: "",
-  phone: "",
-  industry: "",
-  services: [],
-  customFields: [],
-  dealValue: 0,
-  stage: "Prospect",
-  nextAction: "",
-  notes: "",
-  archived: false,
-});
-
-export default function ClientModal({ client, busy, onClose, onSave }: Props) {
+export default function ClientModal({ client, stages, busy, onClose, onSave }: Props) {
+  const defaultStage = stages[0] ?? "Prospect";
+  const empty = (): Omit<Client, "id" | "createdAt" | "updatedAt"> => ({
+    companyName: "",
+    contactName: "",
+    email: "",
+    phone: "",
+    industry: "",
+    services: [],
+    customFields: [],
+    dealValue: 0,
+    stage: defaultStage,
+    nextAction: "",
+    notes: "",
+    archived: false,
+  });
   const [form, setForm] = useState(() =>
     client
       ? {
@@ -187,7 +189,7 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
             <label className="field">
               <span className="field-label">Stage</span>
               <select value={form.stage} onChange={(e) => set("stage", e.target.value as Stage)}>
-                {STAGES.map((s) => (
+                {stages.map((s) => (
                   <option key={s} value={s}>
                     {s}
                   </option>

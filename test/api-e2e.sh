@@ -532,6 +532,134 @@ check "delete owner org → 400" 400 $(code -b "$JAR" -X DELETE "$BASE/api/admin
 check "delete missing org → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/999999")
 rm -f "$JAR2"
 
+echo "== 17. Per-tenant branding + pipeline stages (Phase 3a) =="
+echo "-- 17a. Branding + defaults in the session =="
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+check "owner me → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+u = d['user']
+assert u['orgName'] == 'Elevate Studio', u.get('orgName')
+assert u['stages'] == ['Prospect','Intake','Kickoff','Build','Launch','Retainer'], u['stages']
+assert u['accentColor'] == '#d6ff3f', u.get('accentColor')
+print("  ✓ me returns orgName + default stages + accentColor")
+PY
+
+echo "-- 17b. Settings auth guard =="
+JAR3=$(mktemp)
+check "settings without cookie → 401" 401 $(code -b "$JAR3" "$BASE/api/settings")
+check "settings PUT without cookie → 401" 401 $(code -b "$JAR3" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["A"]}' "$BASE/api/settings")
+
+echo "-- 17c. GET settings =="
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "owner GET settings → 200" 200 "$S"
+grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ settings carries org name" || echo "  ✗ settings orgName: $(cat /tmp/body.json)"
+grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ settings returns default stages" || echo "  ✗ settings stages: $(cat /tmp/body.json)"
+grep -q '"accentColor":"#d6ff3f"' /tmp/body.json && echo "  ✓ settings returns default accent" || echo "  ✗ settings accent: $(cat /tmp/body.json)"
+
+echo "-- 17d. Settings validation =="
+check "empty stages → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":[]}' "$BASE/api/settings")
+check "duplicate stages → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Lead","Lead"]}' "$BASE/api/settings")
+check "blank stage name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Lead","   "]}' "$BASE/api/settings")
+check "13 stages → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["A","B","C","D","E","F","G","H","I","J","K","L","M"]}' "$BASE/api/settings")
+check "stages not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":"Prospect"}' "$BASE/api/settings")
+check "bad accent → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"accentColor":"lime"}' "$BASE/api/settings")
+check "blank org name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"orgName":""}' "$BASE/api/settings")
+
+echo "-- 17e. Rename a stage migrates its clients =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+check "rename Kickoff→Proposal → 200" 200 "$S"
+grep -q '"stages":\["Prospect","Intake","Proposal"' /tmp/body.json && echo "  ✓ new stage list returned" || echo "  ✗ response: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients/$HVAC_ID")
+check "get HVAC client → 200" 200 "$S"
+grep -q '"stage":"Proposal"' /tmp/body.json && echo "  ✓ client in renamed stage migrated to Proposal" || echo "  ✗ client stage after rename: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+check "dashboard after rename → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+sc = d['stageCounts']
+assert sc.get('Proposal') == 1, sc
+assert sc.get('Kickoff', 0) == 0, sc
+print("  ✓ dashboard counts follow the rename (Proposal=1, Kickoff=0)")
+PY
+
+echo "-- 17f. Add / remove stages =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer","Won"]}' "$BASE/api/settings")
+check "add stage Won → 200" 200 "$S"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+check "remove empty stage Won → 200" 200 "$S"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer","Won"]}' "$BASE/api/settings")
+check "re-add Won → 200" 200 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Won Co","stage":"Won"}' "$BASE/api/clients")
+check "create client in Won → 201" 201 "$S"
+WON_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+check "remove Won with client → 400" 400 "$S"
+grep -q 'reassign' /tmp/body.json && echo "  ✓ block message tells the user to reassign" || echo "  ✗ block message: $(cat /tmp/body.json)"
+check "delete Won Co → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/clients/$WON_ID")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+check "remove Won after clearing clients → 200" 200 "$S"
+
+echo "-- 17g. Org comes from the session, never the body =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"orgName":"Elevate Studio HQ","orgId":999999}' "$BASE/api/settings")
+check "PUT with bogus body orgId → 200 (ignored)" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"orgName":"Elevate Studio HQ"' /tmp/body.json && echo "  ✓ body orgId ignored — own org updated" || echo "  ✗ settings: $(cat /tmp/body.json)"
+code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"orgName":"Elevate Studio"}' "$BASE/api/settings" > /dev/null
+
+echo "-- 17h. Stage lists are org-scoped =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Tenant B LLC","email":"tenantb@example.com","password":"tenantbpass123"}' "$BASE/api/admin/orgs")
+check "admin creates tenant B → 201" 201 "$S"
+TENANTB_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARB=$(mktemp)
+S=$(code -c "$JARB" -b "$JARB" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"tenantb@example.com","password":"tenantbpass123"}' "$BASE/api/auth/login")
+check "tenant B login → 200" 200 "$S"
+S=$(code -b "$JARB" "$BASE/api/settings")
+check "tenant B GET settings → 200" 200 "$S"
+grep -q '"orgName":"Tenant B LLC"' /tmp/body.json && echo "  ✓ tenant B sees its own name" || echo "  ✗ tenant B name: $(cat /tmp/body.json)"
+grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ tenant B starts from default stages (unaffected by owner's rename)" || echo "  ✗ tenant B stages: $(cat /tmp/body.json)"
+S=$(code -b "$JARB" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Lead","Tour","Offer","Contract","Closed"]}' "$BASE/api/settings")
+check "tenant B renames its stages → 200" 200 "$S"
+grep -q '"Lead","Tour","Offer","Contract","Closed"' /tmp/body.json && echo "  ✓ tenant B stages saved" || echo "  ✗ tenant B save: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+st = d['settings']['stages']
+assert 'Lead' not in st and st[2] == 'Proposal', st
+print("  ✓ owner stages unaffected by tenant B's rename (isolation)")
+PY
+S=$(code -b "$JARB" -X PUT -H 'Content-Type: application/json' \
+  -d '{"orgName":"Tenant B Rebranded","orgId":1}' "$BASE/api/settings")
+check "tenant B PUT with owner orgId in body → 200" 200 "$S"
+S=$(code -b "$JARB" "$BASE/api/auth/me")
+grep -q '"orgName":"Tenant B Rebranded"' /tmp/body.json && echo "  ✓ tenant B write landed on tenant B (session org wins)" || echo "  ✗ tenant B me: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ owner org untouched by tenant B's body-orgId write" || echo "  ✗ owner me: $(cat /tmp/body.json)"
+check "admin deletes tenant B → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$TENANTB_ID")
+rm -f "$JARB" "$JAR3"
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json

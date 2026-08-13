@@ -2,7 +2,13 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-export const STAGES = [
+/**
+ * Default pipeline stages — every org starts here (Elevate Studio keeps them;
+ * Phase 3a lets each tenant rename/reorder its own via Settings, stored as a
+ * JSON array in orgs.stages). A client's `stage` is a plain string, so the
+ * stored value follows whatever the tenant's current stage list says.
+ */
+export const DEFAULT_STAGES = [
   "Prospect",
   "Intake",
   "Kickoff",
@@ -10,10 +16,29 @@ export const STAGES = [
   "Launch",
   "Retainer",
 ] as const;
-export type Stage = (typeof STAGES)[number];
+export type Stage = string;
 
-export function isStage(v: unknown): v is Stage {
-  return typeof v === "string" && (STAGES as readonly string[]).includes(v);
+/** The brand accent every org defaults to (hex). Tenants can restyle via Settings. */
+export const DEFAULT_ACCENT = "#d6ff3f";
+
+/** Parse an org's stored stages JSON → ordered list of trimmed names.
+ *  Falls back to the default list on anything malformed or empty. */
+export function parseStages(raw: string | null | undefined): string[] {
+  if (raw) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every((s) => typeof s === "string" && s.trim().length > 0)
+      ) {
+        return parsed.map((s) => (s as string).trim());
+      }
+    } catch {
+      /* fall through to default */
+    }
+  }
+  return [...DEFAULT_STAGES];
 }
 
 export const INVOICE_STATUSES = ["draft", "sent", "paid"] as const;
@@ -183,6 +208,25 @@ db.exec(`
 }
 
 /**
+ * Per-tenant settings migration (Phase 3a). Idempotent — safe on every boot.
+ * Adds orgs.stages (JSON array of pipeline stage names — backfilled to the
+ * default list for existing orgs so every tenant starts from the same
+ * pipeline) and orgs.accent_color (hex string for the tenant's brand accent).
+ * Both are plain TEXT columns with DEFAULTs, so no FK games are needed.
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "stages")) {
+    db.exec(
+      `ALTER TABLE orgs ADD COLUMN stages TEXT NOT NULL DEFAULT '${JSON.stringify(DEFAULT_STAGES)}'`,
+    );
+  }
+  if (!orgCols.some((c) => c.name === "accent_color")) {
+    db.exec(`ALTER TABLE orgs ADD COLUMN accent_color TEXT NOT NULL DEFAULT '${DEFAULT_ACCENT}'`);
+  }
+}
+
+/**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
@@ -192,6 +236,22 @@ export function ensureDefaultOrg(): number {
     .get(DEFAULT_ORG_NAME) as { id: number } | null;
   if (orgRow) return orgRow.id;
   return Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(DEFAULT_ORG_NAME).lastInsertRowid);
+}
+
+/** Full org row (branding + pipeline settings). Every settings read/write is
+ *  scoped to the session org — there is no cross-org addressing on these. */
+export interface OrgRow {
+  id: number;
+  name: string;
+  stages: string;
+  accent_color: string;
+  created_at: string;
+}
+
+export function getOrg(orgId: number): OrgRow | null {
+  return db
+    .query("SELECT id, name, stages, accent_color, created_at FROM orgs WHERE id = ?")
+    .get(orgId) as OrgRow | null;
 }
 
 export interface ClientRow {
