@@ -3,10 +3,16 @@ import {
   DEFAULT_STAGES,
   parseStages,
   parseCustomFields,
+  parseIntakeOpts,
   getOrg,
   INVOICE_STATUSES,
   isInvoiceStatus,
   isCustomFieldType,
+  isServiceModel,
+  isDeliveryType,
+  isIndustry,
+  isIntakeOptGroup,
+  INTAKE_OPT_GROUPS,
   DEFAULT_ORG_NAME,
   ensureDefaultOrg,
   type ClientRow,
@@ -169,6 +175,32 @@ function toClient(row: ClientRow) {
     zip: row.zip,
     website: row.website,
     leadSource: row.lead_source,
+    // Adaptive intake Phase 1: optional billing + intake fields.
+    billingAddress: row.billing_address,
+    billingCity: row.billing_city,
+    billingState: row.billing_state,
+    billingZip: row.billing_zip,
+    billingSame: row.billing_same === 1,
+    preferredContactMethod: row.preferred_contact_method,
+    businessType: row.business_type,
+    taxIdEin: row.tax_id_ein,
+    apContact: row.ap_contact,
+    poRequired: row.po_required === 1,
+    unitsLocations: row.units_locations,
+    propertyManagerName: row.property_manager_name,
+    propertyManagerContact: row.property_manager_contact,
+    hoaName: row.hoa_name,
+    hoaContact: row.hoa_contact,
+    accessInstructions: row.access_instructions,
+    coiRequired: row.coi_required === 1,
+    serviceContract: row.service_contract,
+    dbaName: row.dba_name,
+    einSsn: row.ein_ssn,
+    homeownerRenter: row.homeowner_renter,
+    hoaRestrictions: row.hoa_restrictions,
+    parkingAccess: row.parking_access,
+    petOnPremises: row.pet_on_premises === 1,
+    preferredServiceLocation: row.preferred_service_location,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -203,7 +235,98 @@ interface ClientInput {
   zip: string;
   website: string;
   leadSource: string;
+  /** Adaptive intake Phase 1: optional billing/intake fields. Every key is
+   *  OPTIONAL — on create, absent keys default ('' / 0); on update, absent
+   *  keys leave the stored value untouched (only keys present in the body
+   *  are persisted). */
+  billingAddress?: string;
+  billingCity?: string;
+  billingState?: string;
+  billingZip?: string;
+  billingSame?: boolean;
+  preferredContactMethod?: string;
+  businessType?: string;
+  taxIdEin?: string;
+  apContact?: string;
+  poRequired?: boolean;
+  unitsLocations?: string;
+  propertyManagerName?: string;
+  propertyManagerContact?: string;
+  hoaName?: string;
+  hoaContact?: string;
+  accessInstructions?: string;
+  coiRequired?: boolean;
+  serviceContract?: string;
+  dbaName?: string;
+  einSsn?: string;
+  homeownerRenter?: string;
+  hoaRestrictions?: string;
+  parkingAccess?: string;
+  petOnPremises?: boolean;
+  preferredServiceLocation?: string;
 }
+
+/** Adaptive intake Phase 1: optional TEXT columns — client JSON key → DB
+ *  column, with the same length caps the Phase 3e fields use. Absent from
+ *  the body ⇒ not persisted (create defaults to '', update leaves intact). */
+const INTAKE_TEXT_COLS: { key: string; col: string; max: number; label: string }[] = [
+  { key: "billingAddress", col: "billing_address", max: 200, label: "Billing address" },
+  { key: "billingCity", col: "billing_city", max: 100, label: "Billing city" },
+  { key: "billingState", col: "billing_state", max: 50, label: "Billing state" },
+  { key: "billingZip", col: "billing_zip", max: 20, label: "Billing ZIP / postal code" },
+  { key: "preferredContactMethod", col: "preferred_contact_method", max: 100, label: "Preferred contact method" },
+  { key: "businessType", col: "business_type", max: 120, label: "Business type" },
+  { key: "taxIdEin", col: "tax_id_ein", max: 50, label: "Tax ID / EIN" },
+  { key: "apContact", col: "ap_contact", max: 200, label: "Accounts payable contact" },
+  { key: "unitsLocations", col: "units_locations", max: 200, label: "Units / locations" },
+  { key: "propertyManagerName", col: "property_manager_name", max: 200, label: "Property manager name" },
+  { key: "propertyManagerContact", col: "property_manager_contact", max: 200, label: "Property manager contact" },
+  { key: "hoaName", col: "hoa_name", max: 200, label: "HOA name" },
+  { key: "hoaContact", col: "hoa_contact", max: 200, label: "HOA contact" },
+  { key: "accessInstructions", col: "access_instructions", max: 2000, label: "Access instructions" },
+  { key: "serviceContract", col: "service_contract", max: 2000, label: "Service contract" },
+  { key: "dbaName", col: "dba_name", max: 200, label: "Business / DBA name" },
+  { key: "einSsn", col: "ein_ssn", max: 50, label: "EIN or SSN" },
+  { key: "homeownerRenter", col: "homeowner_renter", max: 50, label: "Homeowner / renter" },
+  { key: "hoaRestrictions", col: "hoa_restrictions", max: 2000, label: "HOA restrictions" },
+  { key: "parkingAccess", col: "parking_access", max: 2000, label: "Parking / access" },
+  { key: "preferredServiceLocation", col: "preferred_service_location", max: 200, label: "Preferred service location" },
+];
+
+/** Adaptive intake Phase 1: optional yes/no columns (stored as 0/1). */
+const INTAKE_BOOL_COLS: { key: string; col: string; label: string }[] = [
+  { key: "billingSame", col: "billing_same", label: "Billing same as service" },
+  { key: "poRequired", col: "po_required", label: "PO required" },
+  { key: "coiRequired", col: "coi_required", label: "Certificate of insurance required" },
+  { key: "petOnPremises", col: "pet_on_premises", label: "Pet on premises" },
+];
+
+/** All adaptive-intake columns + their values from a parsed ClientInput.
+ *  Used by client create: absent keys default to '' / 0. (Client update
+ *  filters to keys actually present in the body so nothing gets clobbered.) */
+function intakeColumns(c: ClientInput): { cols: string[]; values: (string | number)[] } {
+  const cols: string[] = [];
+  const values: (string | number)[] = [];
+  const rec = c as unknown as Record<string, unknown>;
+  for (const f of INTAKE_TEXT_COLS) {
+    const v = rec[f.key];
+    cols.push(f.col);
+    values.push(typeof v === "string" ? v : "");
+  }
+  for (const f of INTAKE_BOOL_COLS) {
+    const v = rec[f.key];
+    cols.push(f.col);
+    values.push(v === true ? 1 : 0);
+  }
+  return { cols, values };
+}
+
+/** The same column list, in the same order — shared by create and update so
+ *  the column/value lists can never drift apart. */
+const INTAKE_COLS: string[] = [
+  ...INTAKE_TEXT_COLS.map((f) => f.col),
+  ...INTAKE_BOOL_COLS.map((f) => f.col),
+];
 
 /**
  * Validates the client payload. `stages` is the caller's OWN org stage list
@@ -345,30 +468,60 @@ function validateClient(
     stage = s;
   }
 
-  return {
-    ok: true,
-    value: {
-      companyName,
-      contactName: str(body.contactName, 200),
-      email: str(body.email, 254),
-      phone: str(body.phone, 60),
-      industry: str(body.industry, 120),
-      services,
-      customFields,
-      dealValue,
-      stage,
-      nextAction: str(body.nextAction, 500),
-      notes: str(body.notes, 10000),
-      archived: body.archived === true,
-      clientType,
-      address: address.value,
-      city: city.value,
-      state: state.value,
-      zip: zip.value,
-      website: website.value,
-      leadSource: leadSource.value,
-    },
+  // Adaptive intake Phase 1: optional intake/billing fields. Absent keys stay
+  // undefined — create defaults them, update leaves them untouched. Text
+  // fields are trimmed + length-capped; yes/no fields accept true/false or
+  // 0/1 ("0"/"1" tolerated, like the custom-field checkbox handling).
+  const intakeText: Record<string, string> = {};
+  for (const f of INTAKE_TEXT_COLS) {
+    const raw = body[f.key];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== "string") return { ok: false, error: `${f.label} must be text.` };
+    const t = raw.trim();
+    if (t.length > f.max) {
+      return { ok: false, error: `${f.label} must be under ${f.max + 1} characters.` };
+    }
+    intakeText[f.key] = t;
+  }
+  const intakeBool: Record<string, boolean> = {};
+  for (const f of INTAKE_BOOL_COLS) {
+    const raw = body[f.key];
+    if (raw === undefined || raw === null) continue;
+    if (raw === true || raw === 1 || raw === "1") intakeBool[f.key] = true;
+    else if (raw === false || raw === 0 || raw === "0") intakeBool[f.key] = false;
+    else return { ok: false, error: `${f.label} must be yes or no.` };
+  }
+
+  const value: ClientInput = {
+    companyName,
+    contactName: str(body.contactName, 200),
+    email: str(body.email, 254),
+    phone: str(body.phone, 60),
+    industry: str(body.industry, 120),
+    services,
+    customFields,
+    dealValue,
+    stage,
+    nextAction: str(body.nextAction, 500),
+    notes: str(body.notes, 10000),
+    archived: body.archived === true,
+    clientType,
+    address: address.value,
+    city: city.value,
+    state: state.value,
+    zip: zip.value,
+    website: website.value,
+    leadSource: leadSource.value,
   };
+  for (const f of INTAKE_TEXT_COLS) {
+    const v = intakeText[f.key];
+    if (v !== undefined) (value as unknown as Record<string, unknown>)[f.key] = v;
+  }
+  for (const f of INTAKE_BOOL_COLS) {
+    const v = intakeBool[f.key];
+    if (v !== undefined) (value as unknown as Record<string, unknown>)[f.key] = v;
+  }
+  return { ok: true, value };
 }
 
 /* ── Task row → API shape ──────────────────────────────── */
@@ -921,6 +1074,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         stages: parseStages(org.stages),
         stageCounts: orgStageCounts(orgId),
         customFields: parseCustomFields(org.custom_fields),
+        // Adaptive intake Phase 1: account-level vertical config.
+        serviceModel: org.service_model,
+        deliveryType: org.delivery_type,
+        industry: org.industry,
+        intakeOpts: parseIntakeOpts(org.intake_opts),
       },
     });
   }
@@ -1005,6 +1163,57 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       params.push(JSON.stringify(next));
     }
 
+    /* Adaptive intake Phase 1: account-level vertical config. Unknown enum
+       values are rejected; intakeOpts must be a JSON array of known optional
+       group ids (unknown ids rejected, duplicates collapsed). */
+    if (body.serviceModel !== undefined) {
+      if (!isServiceModel(body.serviceModel)) {
+        return err("Service model must be one of: residential_only, commercial_only, both.", 400);
+      }
+      sets.push("service_model = ?");
+      params.push(body.serviceModel);
+    }
+
+    if (body.deliveryType !== undefined) {
+      if (!isDeliveryType(body.deliveryType)) {
+        return err("Delivery type must be one of: client_comes, we_go, both.", 400);
+      }
+      sets.push("delivery_type = ?");
+      params.push(body.deliveryType);
+    }
+
+    if (body.industry !== undefined) {
+      if (!isIndustry(body.industry)) {
+        return err(
+          "Industry must be one of: home_services, mobile_personal, professional, other, or empty.",
+          400,
+        );
+      }
+      sets.push("industry = ?");
+      params.push(body.industry);
+    }
+
+    if (body.intakeOpts !== undefined) {
+      if (!Array.isArray(body.intakeOpts)) {
+        return err("intakeOpts must be a list of optional intake groups.", 400);
+      }
+      const out: string[] = [];
+      const seen = new Set<string>();
+      for (const g of body.intakeOpts) {
+        if (!isIntakeOptGroup(g)) {
+          return err(
+            `Unknown optional intake group: ${String(g)} — allowed: ${INTAKE_OPT_GROUPS.join(", ")}.`,
+            400,
+          );
+        }
+        if (seen.has(g)) continue;
+        seen.add(g);
+        out.push(g);
+      }
+      sets.push("intake_opts = ?");
+      params.push(JSON.stringify(out));
+    }
+
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(orgId);
     db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -1017,6 +1226,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         accentColor: updated.accent_color,
         stages: parseStages(updated.stages),
         customFields: parseCustomFields(updated.custom_fields),
+        serviceModel: updated.service_model,
+        deliveryType: updated.delivery_type,
+        industry: updated.industry,
+        intakeOpts: parseIntakeOpts(updated.intake_opts),
       },
     });
   }
@@ -1068,10 +1281,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     );
     if (!v.ok) return err(v.error, 400);
     const c = v.value;
+    const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, ${INTAKE_COLS.join(", ")})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")})`,
       )
       .run(
         orgId,
@@ -1079,6 +1293,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
         c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
+        ...intake.values,
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row) }, 201);
@@ -1109,20 +1324,38 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       );
       if (!v.ok) return err(v.error, 400);
       const c = v.value;
-      db.query(
-        `UPDATE clients SET
-           company_name = ?, contact_name = ?, email = ?, phone = ?, industry = ?,
-           services = ?, custom_fields = ?, deal_value = ?, stage = ?, next_action = ?, notes = ?, archived = ?,
-           client_type = ?, address = ?, city = ?, state = ?, zip = ?, website = ?, lead_source = ?,
-           updated_at = datetime('now')
-         WHERE id = ? AND org_id = ?`,
-      ).run(
+      const sets = [
+        "company_name = ?", "contact_name = ?", "email = ?", "phone = ?", "industry = ?",
+        "services = ?", "custom_fields = ?", "deal_value = ?", "stage = ?", "next_action = ?", "notes = ?", "archived = ?",
+        "client_type = ?", "address = ?", "city = ?", "state = ?", "zip = ?", "website = ?", "lead_source = ?",
+      ];
+      const params: (string | number)[] = [
         c.companyName, c.contactName, c.email, c.phone, c.industry,
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
         c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
-        id, orgId,
-      );
+      ];
+      // Adaptive intake Phase 1: only persist the new optional fields that are
+      // actually present in the body — missing keys leave the stored value
+      // untouched (nothing clobbered on partial updates).
+      const rec = c as unknown as Record<string, unknown>;
+      for (const f of INTAKE_TEXT_COLS) {
+        const v = rec[f.key];
+        if (v !== undefined) {
+          sets.push(`${f.col} = ?`);
+          params.push(v as string);
+        }
+      }
+      for (const f of INTAKE_BOOL_COLS) {
+        const v = rec[f.key];
+        if (v !== undefined) {
+          sets.push(`${f.col} = ?`);
+          params.push(v === true ? 1 : 0);
+        }
+      }
+      sets.push("updated_at = datetime('now')");
+      params.push(id, orgId);
+      db.query(`UPDATE clients SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
       const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
       return json({ client: toClient(updated) });
     }

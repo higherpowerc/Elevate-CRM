@@ -21,6 +21,64 @@ export type Stage = string;
 /** The brand accent every org defaults to (hex). Tenants can restyle via Settings. */
 export const DEFAULT_ACCENT = "#d6ff3f";
 
+/* ── Adaptive intake Phase 1: account-level vertical config ────────────
+ * Set once per CRM account in Settings; drives which conditional field
+ * groups the adaptive intake form (Phase 2) may show. */
+export const SERVICE_MODELS = ["residential_only", "commercial_only", "both"] as const;
+export type ServiceModel = (typeof SERVICE_MODELS)[number];
+
+export const DELIVERY_TYPES = ["client_comes", "we_go", "both"] as const;
+export type DeliveryType = (typeof DELIVERY_TYPES)[number];
+
+/** '' = unspecified (rendered as "Other" in the UI). */
+export const INDUSTRIES = ["home_services", "mobile_personal", "professional", "other", ""] as const;
+export type Industry = (typeof INDUSTRIES)[number];
+
+/** Optional (➖ in the spec's Step 4 table) intake groups a tenant can
+ *  enable/disable — stored as a JSON array on orgs.intake_opts. */
+export const INTAKE_OPT_GROUPS = [
+  "business_llc_tab",
+  "hoa_restrictions",
+  "pet_on_premises",
+  "parking_access",
+] as const;
+export type IntakeOptGroup = (typeof INTAKE_OPT_GROUPS)[number];
+
+export function isServiceModel(v: unknown): v is ServiceModel {
+  return typeof v === "string" && (SERVICE_MODELS as readonly string[]).includes(v);
+}
+export function isDeliveryType(v: unknown): v is DeliveryType {
+  return typeof v === "string" && (DELIVERY_TYPES as readonly string[]).includes(v);
+}
+export function isIndustry(v: unknown): v is Industry {
+  return typeof v === "string" && (INDUSTRIES as readonly string[]).includes(v);
+}
+export function isIntakeOptGroup(v: unknown): v is IntakeOptGroup {
+  return typeof v === "string" && (INTAKE_OPT_GROUPS as readonly string[]).includes(v);
+}
+
+/** Parse an org's stored intake_opts JSON → clean list of enabled optional
+ *  groups. Defensive: drops unknown ids and duplicates, falls back to [] on
+ *  anything unusable ('' and '[]' both mean "none enabled"). */
+export function parseIntakeOpts(raw: string | null | undefined): IntakeOptGroup[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: IntakeOptGroup[] = [];
+    const seen = new Set<string>();
+    for (const g of parsed) {
+      if (typeof g !== "string" || !isIntakeOptGroup(g)) continue;
+      if (seen.has(g)) continue;
+      seen.add(g);
+      out.push(g);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Parse an org's stored stages JSON → ordered list of trimmed names.
  *  Falls back to the default list on anything malformed or empty. */
 export function parseStages(raw: string | null | undefined): string[] {
@@ -310,6 +368,70 @@ db.exec(`
 }
 
 /**
+ * Adaptive intake Phase 1 migration (owner spec 2026-08-13). Idempotent —
+ * safe on every boot.
+ *
+ * orgs gains the account-level vertical config that drives intake field
+ * visibility (Phase 2 rules engine):
+ *   service_model  residential_only | commercial_only | both
+ *   delivery_type  client_comes | we_go | both
+ *   industry       home_services | mobile_personal | professional | other | ''
+ *   intake_opts    JSON array of enabled optional (➖) intake groups
+ *                  (business_llc_tab, hoa_restrictions, pet_on_premises,
+ *                  parking_access)
+ *
+ * clients gains the optional intake/billing columns from the spec. All are
+ * plain TEXT/INTEGER with DEFAULTs, so existing rows backfill cleanly and no
+ * FK games are needed.
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  const addOrgCol = (name: string, ddl: string) => {
+    if (!orgCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE orgs ADD COLUMN ${ddl}`);
+    }
+  };
+  addOrgCol("service_model", "service_model TEXT NOT NULL DEFAULT 'both'");
+  addOrgCol("delivery_type", "delivery_type TEXT NOT NULL DEFAULT 'both'");
+  addOrgCol("industry", "industry TEXT NOT NULL DEFAULT ''");
+  addOrgCol("intake_opts", "intake_opts TEXT NOT NULL DEFAULT '[]'");
+
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${ddl}`);
+    }
+  };
+  // Billing block
+  addCol("billing_address", "billing_address TEXT NOT NULL DEFAULT ''");
+  addCol("billing_city", "billing_city TEXT NOT NULL DEFAULT ''");
+  addCol("billing_state", "billing_state TEXT NOT NULL DEFAULT ''");
+  addCol("billing_zip", "billing_zip TEXT NOT NULL DEFAULT ''");
+  addCol("billing_same", "billing_same INTEGER NOT NULL DEFAULT 0");
+  // Intake block
+  addCol("preferred_contact_method", "preferred_contact_method TEXT NOT NULL DEFAULT ''");
+  addCol("business_type", "business_type TEXT NOT NULL DEFAULT ''");
+  addCol("tax_id_ein", "tax_id_ein TEXT NOT NULL DEFAULT ''");
+  addCol("ap_contact", "ap_contact TEXT NOT NULL DEFAULT ''");
+  addCol("po_required", "po_required INTEGER NOT NULL DEFAULT 0");
+  addCol("units_locations", "units_locations TEXT NOT NULL DEFAULT ''");
+  addCol("property_manager_name", "property_manager_name TEXT NOT NULL DEFAULT ''");
+  addCol("property_manager_contact", "property_manager_contact TEXT NOT NULL DEFAULT ''");
+  addCol("hoa_name", "hoa_name TEXT NOT NULL DEFAULT ''");
+  addCol("hoa_contact", "hoa_contact TEXT NOT NULL DEFAULT ''");
+  addCol("access_instructions", "access_instructions TEXT NOT NULL DEFAULT ''");
+  addCol("coi_required", "coi_required INTEGER NOT NULL DEFAULT 0");
+  addCol("service_contract", "service_contract TEXT NOT NULL DEFAULT ''");
+  addCol("dba_name", "dba_name TEXT NOT NULL DEFAULT ''");
+  addCol("ein_ssn", "ein_ssn TEXT NOT NULL DEFAULT ''");
+  addCol("homeowner_renter", "homeowner_renter TEXT NOT NULL DEFAULT ''");
+  addCol("hoa_restrictions", "hoa_restrictions TEXT NOT NULL DEFAULT ''");
+  addCol("parking_access", "parking_access TEXT NOT NULL DEFAULT ''");
+  addCol("pet_on_premises", "pet_on_premises INTEGER NOT NULL DEFAULT 0");
+  addCol("preferred_service_location", "preferred_service_location TEXT NOT NULL DEFAULT ''");
+}
+
+/**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
@@ -330,12 +452,19 @@ export interface OrgRow {
   stages: string;
   accent_color: string;
   custom_fields: string;
+  /** Adaptive intake Phase 1: account-level vertical config. */
+  service_model: string;
+  delivery_type: string;
+  industry: string;
+  intake_opts: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
-    .query("SELECT id, name, stages, accent_color, custom_fields, created_at FROM orgs WHERE id = ?")
+    .query(
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, created_at FROM orgs WHERE id = ?",
+    )
     .get(orgId) as OrgRow | null;
 }
 
@@ -362,6 +491,32 @@ export interface ClientRow {
   zip: string;
   website: string;
   lead_source: string;
+  /** Adaptive intake Phase 1: optional billing + intake columns. */
+  billing_address: string;
+  billing_city: string;
+  billing_state: string;
+  billing_zip: string;
+  billing_same: number;
+  preferred_contact_method: string;
+  business_type: string;
+  tax_id_ein: string;
+  ap_contact: string;
+  po_required: number;
+  units_locations: string;
+  property_manager_name: string;
+  property_manager_contact: string;
+  hoa_name: string;
+  hoa_contact: string;
+  access_instructions: string;
+  coi_required: number;
+  service_contract: string;
+  dba_name: string;
+  ein_ssn: string;
+  homeowner_renter: string;
+  hoa_restrictions: string;
+  parking_access: string;
+  pet_on_premises: number;
+  preferred_service_location: string;
   created_at: string;
   updated_at: string;
 }

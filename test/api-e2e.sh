@@ -951,6 +951,106 @@ grep -q "\"Prospect\":$P0" /tmp/body.json && echo "  ✓ stageCounts Prospect=$P
 python3 -c "import json,sys;sys.exit(0 if abs(json.load(open('/tmp/body.json'))['projectedPipeline']-$V0)<0.01 else 1)" && echo "  ✓ projectedPipeline back to $V0 (restored deal counted)" || echo "  ✗ pipeline after restore: $(cat /tmp/body.json)"
 grep -q "\"archivedClients\":$A0" /tmp/body.json && echo "  ✓ archivedClients back to $A0" || echo "  ✗ archivedClients after restore: $(cat /tmp/body.json)"
 
+echo "== 21. Adaptive intake Phase 1: org vertical config + client intake fields =="
+
+echo "-- 21a. Settings round-trip for the four new org fields =="
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET settings includes vertical defaults → 200" 200 "$S"
+grep -q '"serviceModel":"both"' /tmp/body.json && grep -q '"deliveryType":"both"' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && grep -q '"intakeOpts":\[\]' /tmp/body.json && echo "  ✓ vertical defaults: both / both / empty / []" || echo "  ✗ vertical defaults: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"serviceModel":"residential_only","deliveryType":"client_comes","industry":"professional","intakeOpts":["business_llc_tab","pet_on_premises","pet_on_premises","hoa_restrictions"]}' "$BASE/api/settings")
+check "PUT all four vertical fields → 200" 200 "$S"
+grep -q '"serviceModel":"residential_only"' /tmp/body.json && grep -q '"deliveryType":"client_comes"' /tmp/body.json && grep -q '"industry":"professional"' /tmp/body.json && grep -q '"intakeOpts":\["business_llc_tab","pet_on_premises","hoa_restrictions"\]' /tmp/body.json && echo "  ✓ round-trip + duplicate collapse (order preserved)" || echo "  ✗ settings response: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET after vertical PUT → 200" 200 "$S"
+grep -q '"serviceModel":"residential_only"' /tmp/body.json && grep -q '"industry":"professional"' /tmp/body.json && grep -q '"intakeOpts":\["business_llc_tab","pet_on_premises","hoa_restrictions"\]' /tmp/body.json && echo "  ✓ persisted values survive a GET round-trip" || echo "  ✗ GET after PUT: $(cat /tmp/body.json)"
+
+echo "-- 21b. Vertical settings validation =="
+check "PUT bad serviceModel → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"serviceModel":"enterprise"}' "$BASE/api/settings")
+check "PUT bad deliveryType → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"deliveryType":"teleport"}' "$BASE/api/settings")
+check "PUT bad industry → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"industry":"space"}' "$BASE/api/settings")
+check "PUT unknown intake group → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"intakeOpts":["business_llc_tab","secret_field"]}' "$BASE/api/settings")
+check "PUT intakeOpts not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"intakeOpts":"business_llc_tab"}' "$BASE/api/settings")
+check "stages-only PUT keeps vertical fields → 200" 200 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"serviceModel":"residential_only"' /tmp/body.json && grep -q '"intakeOpts":\["business_llc_tab","pet_on_premises","hoa_restrictions"\]' /tmp/body.json && echo "  ✓ vertical fields untouched by a stages-only PUT" || echo "  ✗ vertical fields lost: $(cat /tmp/body.json)"
+
+echo "-- 21c. Client create with intake/billing fields → GET round-trip =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Westgate Tower Mgmt","contactName":"Ava Stone","clientType":"commercial","industry":"Property Management","dealValue":18000,"stage":"Prospect","billingAddress":"400 Bay St","billingCity":"San Francisco","billingState":"CA","billingZip":"94133","billingSame":false,"preferredContactMethod":"Email","businessType":"Property Management","taxIdEin":"12-3456789","apContact":"Ava Stone — accounts@westgate.example","poRequired":true,"unitsLocations":"3 towers","propertyManagerName":"Derek Liu","propertyManagerContact":"derek@westgate.example","hoaName":"Westgate HOA","hoaContact":"board@westgate.example","accessInstructions":"Gate code 4455; loading dock B","coiRequired":true,"serviceContract":"Annual maintenance — renews Jan","petOnPremises":false,"preferredServiceLocation":"On-site"}' \
+  "$BASE/api/clients")
+check "create commercial client with intake/billing fields → 201" 201 "$S"
+AI_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (created client id=$AI_ID)"
+grep -q '"billingAddress":"400 Bay St"' /tmp/body.json && grep -q '"billingZip":"94133"' /tmp/body.json && grep -q '"billingSame":false' /tmp/body.json && grep -q '"poRequired":true' /tmp/body.json && grep -q '"coiRequired":true' /tmp/body.json && grep -q '"petOnPremises":false' /tmp/body.json && echo "  ✓ billing + yes/no fields round-trip on create" || echo "  ✗ create response: $(cat /tmp/body.json)"
+grep -q '"propertyManagerName":"Derek Liu"' /tmp/body.json && grep -q '"hoaContact":"board@westgate.example"' /tmp/body.json && grep -q '"accessInstructions":"Gate code 4455; loading dock B"' /tmp/body.json && grep -q '"serviceContract":"Annual maintenance — renews Jan"' /tmp/body.json && echo "  ✓ home-services intake fields round-trip" || echo "  ✗ intake fields missing: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients/$AI_ID")
+check "GET client → 200" 200 "$S"
+grep -q '"taxIdEin":"12-3456789"' /tmp/body.json && grep -q '"unitsLocations":"3 towers"' /tmp/body.json && grep -q '"preferredContactMethod":"Email"' /tmp/body.json && grep -q '"preferredServiceLocation":"On-site"' /tmp/body.json && echo "  ✓ GET returns all new fields" || echo "  ✗ GET missing fields: $(cat /tmp/body.json)"
+
+echo "-- 21d. New-field validation =="
+check "over-long billing address → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Long Bill Co\",\"clientType\":\"residential\",\"billingAddress\":\"$(python3 -c "print('x'*201)")\"}" "$BASE/api/clients")
+check "bad boolean petOnPremises → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad Pet Co","clientType":"residential","petOnPremises":"yes"}' "$BASE/api/clients")
+check "over-long tax ID → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Long EIN Co\",\"clientType\":\"commercial\",\"taxIdEin\":\"$(python3 -c "print('9'*51)")\"}" "$BASE/api/clients")
+
+echo "-- 21e. Partial update: only present keys persisted =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Westgate Tower Mgmt","contactName":"Ava Stone","clientType":"commercial","industry":"Property Management","dealValue":18000,"stage":"Prospect","billingAddress":"500 Bay St","billingCity":"San Francisco","billingState":"CA","billingZip":"94133","billingSame":true,"poRequired":false,"coiRequired":true,"petOnPremises":false}' \
+  "$BASE/api/clients/$AI_ID")
+check "PUT subset of new fields → 200" 200 "$S"
+grep -q '"billingAddress":"500 Bay St"' /tmp/body.json && grep -q '"billingSame":true' /tmp/body.json && grep -q '"poRequired":false' /tmp/body.json && echo "  ✓ updated fields applied" || echo "  ✗ update response: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients/$AI_ID")
+check "GET after subset update → 200" 200 "$S"
+grep -q '"taxIdEin":"12-3456789"' /tmp/body.json && grep -q '"preferredContactMethod":"Email"' /tmp/body.json && grep -q '"apContact":"Ava Stone — accounts@westgate.example"' /tmp/body.json && grep -q '"accessInstructions":"Gate code 4455; loading dock B"' /tmp/body.json && grep -q '"propertyManagerName":"Derek Liu"' /tmp/body.json && grep -q '"coiRequired":true' /tmp/body.json && echo "  ✓ absent keys NOT clobbered (intake fields intact)" || echo "  ✗ CLOBBERED: $(cat /tmp/body.json)"
+
+echo "-- 21f. Cross-org isolation of the new fields =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Adaptive Intake QA LLC","email":"aiqa@example.com","password":"aiqapass123"}' "$BASE/api/admin/orgs")
+check "admin provisions isolation org → 201" 201 "$S"
+AI_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARAI=$(mktemp)
+S=$(code -c "$JARAI" -b "$JARAI" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"aiqa@example.com","password":"aiqapass123"}' "$BASE/api/auth/login")
+check "isolation org login → 200" 200 "$S"
+S=$(code -b "$JARAI" -X PUT -H 'Content-Type: application/json' \
+  -d '{"serviceModel":"commercial_only","deliveryType":"we_go","industry":"mobile_personal","intakeOpts":["parking_access","pet_on_premises"]}' "$BASE/api/settings")
+check "isolation org sets its own vertical config → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"serviceModel":"residential_only"' /tmp/body.json && grep -qv 'mobile_personal' /tmp/body.json && echo "  ✓ owner config unaffected by other org's vertical settings" || echo "  ✗ owner settings: $(cat /tmp/body.json)"
+S=$(code -b "$JARAI" "$BASE/api/settings")
+check "isolation org GET settings → 200" 200 "$S"
+grep -q '"serviceModel":"commercial_only"' /tmp/body.json && grep -q '"intakeOpts":\["parking_access","pet_on_premises"\]' /tmp/body.json && grep -qv '"residential_only"' /tmp/body.json && echo "  ✓ isolation org sees only its own vertical config" || echo "  ✗ isolation org settings: $(cat /tmp/body.json)"
+S=$(code -b "$JARAI" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Glow Mobile Spa","contactName":"Nina Reyes","clientType":"residential","petOnPremises":true,"parkingAccess":"Driveway, back gate","dbaName":"Glow LLC","einSsn":"123-45-6789","preferredServiceLocation":"Client home"}' \
+  "$BASE/api/clients")
+check "isolation org creates client with new fields → 201" 201 "$S"
+AI_CLIENT_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+grep -q '"petOnPremises":true' /tmp/body.json && grep -q '"dbaName":"Glow LLC"' /tmp/body.json && grep -q '"parkingAccess":"Driveway, back gate"' /tmp/body.json && echo "  ✓ new fields stored on the other org's client" || echo "  ✗ isolation client: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "owner client list → 200" 200 "$S"
+grep -qv 'Glow Mobile Spa' /tmp/body.json && grep -qv '"dbaName":"Glow LLC"' /tmp/body.json && echo "  ✓ owner does NOT see other org's client intake fields" || echo "  ✗ cross-org leak: $(cat /tmp/body.json)"
+check "owner GET other-org client → 404" 404 $(code -b "$JAR" "$BASE/api/clients/$AI_CLIENT_ID")
+check "owner PUT other-org client → 404" 404 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Hacked","clientType":"residential","petOnPremises":true}' "$BASE/api/clients/$AI_CLIENT_ID")
+S=$(code -b "$JARAI" "$BASE/api/clients")
+check "isolation org client list → 200" 200 "$S"
+grep -qv 'Westgate Tower Mgmt' /tmp/body.json && grep -qv '"taxIdEin":"12-3456789"' /tmp/body.json && echo "  ✓ other org does NOT see owner's client intake fields" || echo "  ✗ cross-org leak: $(cat /tmp/body.json)"
+check "admin deletes isolation org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$AI_ORG_ID")
+rm -f "$JARAI"
+# Restore the owner org's vertical config to defaults (fresh-DB suites expect
+# the owner to start clean; harmless if another section runs after this one).
+code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"serviceModel":"both","deliveryType":"both","industry":"","intakeOpts":[]}' "$BASE/api/settings" > /dev/null
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json

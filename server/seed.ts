@@ -403,6 +403,12 @@ const DEMO_CLIENT_ORG = {
     { name: "License #", type: "text" },
     { name: "Yearly contract", type: "checkbox" },
   ],
+  // Adaptive intake Phase 1: the demo tenant demos the adaptive intake form
+  // as a home-services company that services both residential + commercial
+  // and goes to the client (the spec's "HVAC-style" example flow).
+  serviceModel: "both",
+  deliveryType: "we_go",
+  industry: "home_services",
 };
 
 const DEMO_CLIENT_ORG_CLIENTS = [
@@ -478,16 +484,26 @@ if (wantDemo) {
     | null;
   if (existing) {
     console.log(`[seed] demo client org "${DEMO_CLIENT_ORG.name}" already exists — skipping.`);
+    // Adaptive intake Phase 1: keep the demo tenant's vertical config in sync
+    // even on re-seeds against an older database (idempotent demo data).
+    db.query(
+      "UPDATE orgs SET service_model = ?, delivery_type = ?, industry = ? WHERE id = ?",
+    ).run(DEMO_CLIENT_ORG.serviceModel, DEMO_CLIENT_ORG.deliveryType, DEMO_CLIENT_ORG.industry, existing.id);
   } else {
     const hash = await hashPassword(DEMO_CLIENT_ORG.password);
     const tx = db.transaction(() => {
       const orgId = Number(
         db
-          .query("INSERT INTO orgs (name, stages, custom_fields) VALUES (?, ?, ?)")
+          .query(
+            "INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry) VALUES (?, ?, ?, ?, ?, ?)",
+          )
           .run(
             DEMO_CLIENT_ORG.name,
             JSON.stringify(DEMO_CLIENT_ORG.stages),
             JSON.stringify(DEMO_CLIENT_ORG.customFields),
+            DEMO_CLIENT_ORG.serviceModel,
+            DEMO_CLIENT_ORG.deliveryType,
+            DEMO_CLIENT_ORG.industry,
           ).lastInsertRowid,
       );
       db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')").run(
