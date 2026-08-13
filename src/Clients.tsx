@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type ClientInput } from "./api";
 import { money, fmtDate, type Client, type CustomFieldDef, type Stage } from "./types";
+import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
 import ClientModal from "./ClientModal";
 import ConfirmDialog from "./ConfirmDialog";
@@ -27,6 +28,14 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
 export default function Clients({ stages }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
+  /* Adaptive intake Phase 1/2: the org's account-level vertical config —
+     drives which sections the client form shows. Loaded with settings. */
+  const [intake, setIntake] = useState<IntakeOrgSettings>({
+    industry: "",
+    serviceModel: "both",
+    deliveryType: "both",
+    intakeOpts: [],
+  });
   // Local copy of the tenant's stages + per-stage counts, refreshed from the
   // settings endpoint (already fetched for custom fields) so stage changes
   // made in the "Manage stages" shortcut apply to this page immediately.
@@ -53,6 +62,12 @@ export default function Clients({ stages }: Props) {
       setCustomFieldDefs(settings.customFields);
       setOrgStages(settings.stages);
       setStageCounts(settings.stageCounts);
+      setIntake({
+        industry: settings.industry,
+        serviceModel: settings.serviceModel,
+        deliveryType: settings.deliveryType,
+        intakeOpts: settings.intakeOpts,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load clients.");
     }
@@ -261,7 +276,7 @@ export default function Clients({ stages }: Props) {
                       <div className="cell-company">
                         {c.companyName}
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
-                          {c.clientType === "commercial" ? "Commercial" : "Residential"}
+                          {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
                         {c.archived && <span className="chip chip-archived">archived</span>}
                       </div>
@@ -363,6 +378,7 @@ export default function Clients({ stages }: Props) {
           client={modal.mode === "edit" ? modal.client : undefined}
           stages={orgStages}
           customFieldDefs={customFieldDefs}
+          intake={intake}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}

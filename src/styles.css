@@ -2405,3 +2405,96 @@ legend.field-label {
     justify-content: flex-start;
   }
 }
+
+/* ── Adaptive intake (Phase 2): rules-driven sections in the client modal ── */
+/* Each rules-engine section gets a small-caps header; blocks inside the
+   section span both grid columns so the 2-col field grid stays clean. */
+.intake-section + .intake-section {
+  margin-top: 4px;
+}
+.intake-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.intake-section:first-of-type .intake-section-title {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+/* Full-width fields/blocks inside the 2-column intake grid (the grid is the
+   section body, so blocks need to span both tracks). */
+.intake-grid .intake-block,
+.intake-grid .field.intake-block,
+.intake-grid fieldset.intake-block {
+  grid-column: 1 / -1;
+}
+.intake-grid .field {
+  min-width: 0;
+}
+/* Compact yes/no toggle (PO required, COI, pet on premises). */
+.yesno-seg {
+  align-self: flex-start;
+}
+.yesno-seg .seg-btn {
+  min-width: 62px;
+  justify-content: center;
+}
+/* Business name / LLC collapsed tab (individual intake). */
+.llc-tab {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  padding: 4px 14px;
+}
+.llc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 10px 0;
+  cursor: pointer;
+  text-align: left;
+}
+.llc-caret {
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.llc-note {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+.llc-body {
+  padding: 2px 0 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.llc-body .field {
+  margin: 0;
+}
+/* Billing address fields (shown when "same as service address" is off). */
+.billing-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.billing-fields .field {
+  margin: 0;
+}
