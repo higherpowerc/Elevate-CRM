@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -132,6 +132,7 @@ export const api = {
     deliveryType?: OrgSettings["deliveryType"];
     industry?: OrgSettings["industry"];
     intakeOpts?: string[];
+    customIntakeGroups?: CustomIntakeGroup[];
   }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",

@@ -35,6 +35,7 @@ export default function Clients({ stages }: Props) {
     serviceModel: "both",
     deliveryType: "both",
     intakeOpts: [],
+    customIntakeGroups: [],
   });
   // Local copy of the tenant's stages + per-stage counts, refreshed from the
   // settings endpoint (already fetched for custom fields) so stage changes
@@ -67,6 +68,7 @@ export default function Clients({ stages }: Props) {
         serviceModel: settings.serviceModel,
         deliveryType: settings.deliveryType,
         intakeOpts: settings.intakeOpts,
+        customIntakeGroups: settings.customIntakeGroups,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load clients.");

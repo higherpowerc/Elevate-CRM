@@ -4,6 +4,7 @@ import {
   parseStages,
   parseCustomFields,
   parseIntakeOpts,
+  parseCustomIntakeGroups,
   getOrg,
   INVOICE_STATUSES,
   isInvoiceStatus,
@@ -12,6 +13,8 @@ import {
   isDeliveryType,
   isIndustry,
   isIntakeOptGroup,
+  isIntakeGroupAppliesTo,
+  isIntakeGroupFieldKind,
   INTAKE_OPT_GROUPS,
   DEFAULT_ORG_NAME,
   ensureDefaultOrg,
@@ -19,6 +22,9 @@ import {
   type CustomField,
   type CustomFieldDef,
   type CustomFieldType,
+  type CustomIntakeField,
+  type CustomIntakeGroup,
+  type IntakeGroupFieldKind,
   type Role,
   type Stage,
   type TaskRow,
@@ -334,11 +340,16 @@ const INTAKE_COLS: string[] = [
  * tenant's current pipeline stages. `defs` is the tenant's OWN custom-field
  * definition list (Phase 3b) — a client's customFields values must reference
  * exactly those field names, and each value must match its field's type.
+ * `intakeGroups` is the tenant's OWN custom intake groups (Phase 3) — their
+ * field KEYS extend the customFields allowlist (only groups that are enabled
+ * AND apply to the client type being written), and yes/no fields normalize
+ * their value to "1"/"0".
  */
 function validateClient(
   body: Record<string, unknown>,
   stages: string[],
   defs: CustomFieldDef[],
+  intakeGroups: CustomIntakeGroup[] = [],
 ): { ok: true; value: ClientInput } | { ok: false; error: string } {
   const str = (v: unknown, max = 500): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
@@ -402,13 +413,45 @@ function validateClient(
   // Phase 3b custom fields: [{name, value}], every name must be one of the
   // tenant's defined fields (case-insensitive), values validated per type.
   // All fields are optional — omitted fields simply store no value.
+  // Phase 3 (custom intake groups): the field keys of the tenant's ENABLED
+  // custom intake groups (that apply to this client type) extend the allowlist
+  // — values for those keys live in the SAME custom_fields array.
   const defByName = new Map<string, CustomFieldDef>();
   for (const d of defs) defByName.set(d.name.toLowerCase(), d);
+
+  // key (lowercased) → {kind, appliesTo, enabled} for every intake-group field.
+  const intakeKeyInfo = new Map<string, { kind: IntakeGroupFieldKind; appliesTo: string; enabled: boolean }>();
+  for (const g of intakeGroups) {
+    for (const f of g.fields) {
+      intakeKeyInfo.set(f.key.toLowerCase(), { kind: f.kind, appliesTo: g.appliesTo, enabled: g.enabled });
+    }
+  }
+
+  const intakeGroupValue = (
+    key: string,
+    kind: IntakeGroupFieldKind,
+    raw: unknown,
+  ): { ok: true; value: string } | { ok: false; error: string } => {
+    if (kind === "yesno") {
+      if (raw === true || raw === 1 || raw === "1") return { ok: true, value: "1" };
+      if (raw === false || raw === 0 || raw === "0") return { ok: true, value: "0" };
+      return { ok: false, error: `"${key}" must be yes or no.` };
+    }
+    if (raw === undefined || raw === null || raw === "") return { ok: true, value: "" };
+    if (typeof raw !== "string" && typeof raw !== "number") {
+      return { ok: false, error: `"${key}" must be text.` };
+    }
+    const t = String(raw).trim();
+    if (t.length > 500) return { ok: false, error: `"${key}" must be under 500 characters.` };
+    return { ok: true, value: t };
+  };
 
   let customFields: CustomField[] = [];
   if (body.customFields !== undefined) {
     if (!Array.isArray(body.customFields)) return { ok: false, error: "Custom fields must be a list." };
-    if (body.customFields.length > 30) return { ok: false, error: "Too many custom field values (max 30)." };
+    if (body.customFields.length > 250) {
+      return { ok: false, error: "Too many custom field values (max 250)." };
+    }
     const seen = new Set<string>();
     for (const f of body.customFields) {
       if (f === null || typeof f !== "object" || Array.isArray(f)) {
@@ -417,39 +460,69 @@ function validateClient(
       const obj = f as Record<string, unknown>;
       const name = typeof obj.name === "string" ? obj.name.trim() : "";
       if (!name) return { ok: false, error: "Custom field name is required." };
-      const def = defByName.get(name.toLowerCase());
-      if (!def) return { ok: false, error: `Unknown custom field: ${name}.` };
       if (seen.has(name.toLowerCase())) return { ok: false, error: `Duplicate custom field: ${name}.` };
       seen.add(name.toLowerCase());
 
       const raw = obj.value;
-      let value = "";
-      if (def.type === "checkbox") {
-        if (raw === true) value = "1";
-        else if (raw === false) value = "0";
-        else if (raw === 1 || raw === "1") value = "1";
-        else if (raw === 0 || raw === "0") value = "0";
-        else return { ok: false, error: `${def.name} must be a checkbox value (yes/no).` };
-      } else {
-        if (raw !== undefined && raw !== null && raw !== "") {
-          if (typeof raw !== "string" && typeof raw !== "number") {
-            return { ok: false, error: `${def.name} must be text.` };
-          }
-          value = String(raw).trim();
-          if (def.type === "number") {
-            if (value === "" || !Number.isFinite(Number(value))) {
-              return { ok: false, error: `${def.name} must be a number.` };
+      const def = defByName.get(name.toLowerCase());
+      if (def) {
+        let value = "";
+        if (def.type === "checkbox") {
+          if (raw === true) value = "1";
+          else if (raw === false) value = "0";
+          else if (raw === 1 || raw === "1") value = "1";
+          else if (raw === 0 || raw === "0") value = "0";
+          else return { ok: false, error: `${def.name} must be a checkbox value (yes/no).` };
+        } else {
+          if (raw !== undefined && raw !== null && raw !== "") {
+            if (typeof raw !== "string" && typeof raw !== "number") {
+              return { ok: false, error: `${def.name} must be text.` };
             }
-          } else if (def.type === "date") {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value + "T00:00:00Z"))) {
-              return { ok: false, error: `${def.name} must be a date like 2026-08-01.` };
+            value = String(raw).trim();
+            if (def.type === "number") {
+              if (value === "" || !Number.isFinite(Number(value))) {
+                return { ok: false, error: `${def.name} must be a number.` };
+              }
+            } else if (def.type === "date") {
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value + "T00:00:00Z"))) {
+                return { ok: false, error: `${def.name} must be a date like 2026-08-01.` };
+              }
+            } else if (value.length > 500) {
+              return { ok: false, error: `${def.name} must be under 500 characters.` };
             }
-          } else if (value.length > 500) {
-            return { ok: false, error: `${def.name} must be under 500 characters.` };
           }
         }
+        customFields.push({ name: def.name, value });
+        continue;
       }
-      customFields.push({ name: def.name, value });
+
+      // Not a tenant custom field — maybe a custom intake group key?
+      const info = intakeKeyInfo.get(name.toLowerCase());
+      if (info) {
+        if (!info.enabled) {
+          return {
+            ok: false,
+            error: `"${name}" belongs to a disabled intake group — enable it in Settings first.`,
+          };
+        }
+        // Group appliesTo uses the UI-level type ("individual" == stored
+        // "residential"); map before comparing so the gate matches the modal.
+        const intakeType = clientType === "commercial" ? "commercial" : "individual";
+        if (info.appliesTo !== "both" && info.appliesTo !== intakeType) {
+          return {
+            ok: false,
+            error: `"${name}" is not available for ${
+              intakeType === "commercial" ? "Commercial" : "Individual"
+            } clients (its group applies to ${info.appliesTo === "commercial" ? "Commercial" : "Individual"}).`,
+          };
+        }
+        const v = intakeGroupValue(name, info.kind, raw);
+        if (!v.ok) return v;
+        customFields.push({ name, value: v.value });
+        continue;
+      }
+
+      return { ok: false, error: `Unknown custom field: ${name}.` };
     }
   }
 
@@ -828,6 +901,130 @@ function validateCustomFields(
   return { ok: true, value: out };
 }
 
+/* ── Adaptive intake Phase 3: custom conditional field groups ──────── */
+
+const MAX_INTAKE_GROUPS = 10;
+const MAX_GROUP_FIELDS = 20;
+/** Field keys are stable identifiers values are stored under — lowercase
+ *  letters/digits/underscores, starting with a letter (e.g. fleet_size). */
+const INTAKE_GROUP_KEY_RE = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * Validates a proposed custom-intake-group list (Phase 3): 0..10 groups,
+ * each {id, name, appliesTo, enabled, fields[]}. Group names are trimmed
+ * 1–80 chars; field keys must be /^[a-z][a-z0-9_]*$/ (≤ 40 chars), labels
+ * trimmed 1–80 chars, kinds text|yesno|select (select requires non-empty
+ * options, each ≤ 100 chars). Field keys must be unique across ALL groups —
+ * `otherDefs` lets the caller also forbid collisions with the tenant's
+ * custom-field names, which share the same client value array. Returns the
+ * cleaned list.
+ */
+function validateCustomIntakeGroups(
+  v: unknown,
+  otherDefs: CustomFieldDef[] = [],
+): { ok: true; value: CustomIntakeGroup[] } | { ok: false; error: string } {
+  if (!Array.isArray(v)) {
+    return { ok: false, error: "Custom intake groups must be a list of groups." };
+  }
+  if (v.length > MAX_INTAKE_GROUPS) {
+    return { ok: false, error: `Too many custom intake groups (max ${MAX_INTAKE_GROUPS}).` };
+  }
+  const out: CustomIntakeGroup[] = [];
+  const usedKeys = new Set<string>();
+  for (const d of otherDefs) usedKeys.add(d.name.toLowerCase());
+  for (const g of v) {
+    if (g === null || typeof g !== "object" || Array.isArray(g)) {
+      return { ok: false, error: "Each custom intake group must be an object." };
+    }
+    const obj = g as Record<string, unknown>;
+    const id = typeof obj.id === "string" ? obj.id.trim() : "";
+    if (!id) return { ok: false, error: "Each custom intake group needs an id." };
+    if (id.length > 60) return { ok: false, error: "Custom intake group ids must be under 61 characters." };
+    const name = typeof obj.name === "string" ? obj.name.trim() : "";
+    if (!name) return { ok: false, error: "Custom intake group name is required." };
+    if (name.length > 80) return { ok: false, error: "Custom intake group names must be under 81 characters." };
+    if (!isIntakeGroupAppliesTo(obj.appliesTo)) {
+      return { ok: false, error: "Custom intake group appliesTo must be one of: commercial, individual, both." };
+    }
+    const enabled = obj.enabled === true;
+    const fieldsRaw = obj.fields;
+    if (!Array.isArray(fieldsRaw)) return { ok: false, error: `Custom intake group "${name}" needs a fields list.` };
+    if (fieldsRaw.length === 0) return { ok: false, error: `Custom intake group "${name}" needs at least one field.` };
+    if (fieldsRaw.length > MAX_GROUP_FIELDS) {
+      return { ok: false, error: `Custom intake group "${name}" has too many fields (max ${MAX_GROUP_FIELDS}).` };
+    }
+    const fields: CustomIntakeField[] = [];
+    for (const f of fieldsRaw) {
+      if (f === null || typeof f !== "object" || Array.isArray(f)) {
+        return { ok: false, error: `Custom intake group "${name}": each field must be an object.` };
+      }
+      const fo = f as Record<string, unknown>;
+      const key = typeof fo.key === "string" ? fo.key.trim() : "";
+      if (!INTAKE_GROUP_KEY_RE.test(key)) {
+        return {
+          ok: false,
+          error: `Custom intake group "${name}": key "${key || "(empty)"}" must start with a lowercase letter and use only lowercase letters, digits and underscores (e.g. fleet_size).`,
+        };
+      }
+      if (key.length > 40) {
+        return { ok: false, error: `Custom intake group "${name}": key "${key}" must be under 41 characters.` };
+      }
+      if (usedKeys.has(key.toLowerCase())) {
+        return {
+          ok: false,
+          error: `Custom intake group "${name}": key "${key}" is already used by another field — keys must be unique across all groups.`,
+        };
+      }
+      usedKeys.add(key.toLowerCase());
+      const label = typeof fo.label === "string" ? fo.label.trim() : "";
+      if (!label) return { ok: false, error: `Custom intake group "${name}": field "${key}" needs a label.` };
+      if (label.length > 80) {
+        return { ok: false, error: `Custom intake group "${name}": field "${key}" label must be under 81 characters.` };
+      }
+      const kind = fo.kind;
+      if (!isIntakeGroupFieldKind(kind)) {
+        return {
+          ok: false,
+          error: `Custom intake group "${name}": field "${key}" kind must be one of: text, yesno, select.`,
+        };
+      }
+      let options: string[] | undefined;
+      if (kind === "select") {
+        if (!Array.isArray(fo.options) || fo.options.length === 0) {
+          return {
+            ok: false,
+            error: `Custom intake group "${name}": select field "${key}" needs at least one option.`,
+          };
+        }
+        if (fo.options.length > 50) {
+          return {
+            ok: false,
+            error: `Custom intake group "${name}": select field "${key}" has too many options (max 50).`,
+          };
+        }
+        options = [];
+        for (const o of fo.options) {
+          if (typeof o !== "string") {
+            return { ok: false, error: `Custom intake group "${name}": select field "${key}" options must be text.` };
+          }
+          const t = o.trim();
+          if (!t) return { ok: false, error: `Custom intake group "${name}": select field "${key}" options cannot be empty.` };
+          if (t.length > 100) {
+            return {
+              ok: false,
+              error: `Custom intake group "${name}": select field "${key}" options must be under 101 characters.`,
+            };
+          }
+          options.push(t);
+        }
+      }
+      fields.push({ key, label, kind, ...(options ? { options } : {}) });
+    }
+    out.push({ id, name, appliesTo: obj.appliesTo, enabled, fields });
+  }
+  return { ok: true, value: out };
+}
+
 /* ── Routes ─────────────────────────────────────────────────────────── */
 
 async function handleApi(req: Request, url: URL): Promise<Response> {
@@ -1079,6 +1276,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         deliveryType: org.delivery_type,
         industry: org.industry,
         intakeOpts: parseIntakeOpts(org.intake_opts),
+        // Adaptive intake Phase 3: tenant-defined custom conditional groups.
+        customIntakeGroups: parseCustomIntakeGroups(org.custom_intake_groups),
       },
     });
   }
@@ -1214,6 +1413,24 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       params.push(JSON.stringify(out));
     }
 
+    /* Adaptive intake Phase 3: custom conditional field groups. The shape is
+       validated strictly (see validateCustomIntakeGroups); keys must be unique
+       across all groups AND not collide with the tenant's custom-field names
+       (both share the client's custom_fields value array). When customFields
+       is updated in the same request, the collision check uses the NEW list. */
+    if (body.customIntakeGroups !== undefined) {
+      let defs = parseCustomFields(org.custom_fields);
+      if (body.customFields !== undefined) {
+        const vc = validateCustomFields(body.customFields);
+        if (!vc.ok) return err(vc.error, 400);
+        defs = vc.value;
+      }
+      const v = validateCustomIntakeGroups(body.customIntakeGroups, defs);
+      if (!v.ok) return err(v.error, 400);
+      sets.push("custom_intake_groups = ?");
+      params.push(JSON.stringify(v.value));
+    }
+
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(orgId);
     db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -1230,6 +1447,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         deliveryType: updated.delivery_type,
         industry: updated.industry,
         intakeOpts: parseIntakeOpts(updated.intake_opts),
+        customIntakeGroups: parseCustomIntakeGroups(updated.custom_intake_groups),
       },
     });
   }
@@ -1278,6 +1496,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       body,
       org ? parseStages(org.stages) : [...DEFAULT_STAGES],
       org ? parseCustomFields(org.custom_fields) : [],
+      org ? parseCustomIntakeGroups(org.custom_intake_groups) : [],
     );
     if (!v.ok) return err(v.error, 400);
     const c = v.value;
@@ -1321,6 +1540,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         body,
         org ? parseStages(org.stages) : [...DEFAULT_STAGES],
         org ? parseCustomFields(org.custom_fields) : [],
+        org ? parseCustomIntakeGroups(org.custom_intake_groups) : [],
       );
       if (!v.ok) return err(v.error, 400);
       const c = v.value;

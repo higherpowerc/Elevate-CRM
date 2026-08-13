@@ -902,6 +902,11 @@ if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ type badges missing from $NEWEST_JS"
   fi
+  if grep -q "Custom intake groups" "$NEWEST_JS" && grep -q "appliesTo" "$NEWEST_JS" && grep -q "fleet_size" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ Phase 3 custom-intake-group editor + key hints present in the bundle"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ Phase 3 custom-intake-group strings missing from $NEWEST_JS"
+  fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found — run \`bun run build\` before the suite"
 fi
@@ -1048,6 +1053,113 @@ check "admin deletes isolation org → 200" 200 $(code -b "$JAR" -X DELETE "$BAS
 rm -f "$JARAI"
 # Restore the owner org's vertical config to defaults (fresh-DB suites expect
 # the owner to start clean; harmless if another section runs after this one).
+code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"serviceModel":"both","deliveryType":"both","industry":"","intakeOpts":[]}' "$BASE/api/settings" > /dev/null
+echo "== 22. Adaptive intake Phase 3: custom conditional field groups =="
+echo "-- 22a. Settings round-trip for customIntakeGroups =="
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET settings → 200" 200 "$S"
+grep -q '"customIntakeGroups":\[\]' /tmp/body.json && echo "  ✓ customIntakeGroups defaults to []" || echo "  ✗ customIntakeGroups default: $(cat /tmp/body.json)"
+python3 - <<'PY'
+import json
+groups = [
+  {"id": "g_indiv_details", "name": "Client details", "appliesTo": "individual", "enabled": True,
+   "fields": [
+     {"key": "fleet_size", "label": "Fleet size", "kind": "text"},
+     {"key": "insured", "label": "Insured?", "kind": "yesno"},
+     {"key": "region", "label": "Region", "kind": "select", "options": ["East", "West"]}]},
+  {"id": "g_fleet_ops", "name": "Fleet ops", "appliesTo": "commercial", "enabled": True,
+   "fields": [
+     {"key": "po_number_req", "label": "PO number required?", "kind": "yesno"},
+     {"key": "fleet_region", "label": "Fleet region", "kind": "select", "options": ["North", "South"]}]},
+  {"id": "g_internal", "name": "Internal notes", "appliesTo": "both", "enabled": False,
+   "fields": [{"key": "internal_note", "label": "Internal note", "kind": "text"}]},
+]
+json.dump({"customIntakeGroups": groups}, open("/tmp/p3_groups.json", "w"))
+PY
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d @/tmp/p3_groups.json "$BASE/api/settings")
+check "PUT 3 custom intake groups → 200" 200 "$S"
+grep -q '"name":"Client details"' /tmp/body.json && grep -q '"appliesTo":"individual"' /tmp/body.json && grep -q '"enabled":false' /tmp/body.json && grep -q '"options":\["East","West"\]' /tmp/body.json && echo "  ✓ groups round-trip (name/appliesTo/enabled/options)" || echo "  ✗ PUT response: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET after groups PUT → 200" 200 "$S"
+grep -q '"key":"fleet_size"' /tmp/body.json && grep -q '"kind":"yesno"' /tmp/body.json && grep -q '"kind":"select"' /tmp/body.json && echo "  ✓ GET returns stored groups + typed fields" || echo "  ✗ GET groups: $(cat /tmp/body.json)"
+echo "-- 22b. customIntakeGroups validation =="
+check "PUT bad field kind → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"Bad","appliesTo":"both","enabled":true,"fields":[{"key":"when","label":"When","kind":"date"}]}]}' "$BASE/api/settings")
+check "PUT duplicate key across groups → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"A","appliesTo":"both","enabled":true,"fields":[{"key":"same","label":"One","kind":"text"}]},{"id":"g2","name":"B","appliesTo":"both","enabled":true,"fields":[{"key":"same","label":"Two","kind":"text"}]}]}' "$BASE/api/settings")
+check "PUT select without options → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"Sel","appliesTo":"both","enabled":true,"fields":[{"key":"pick","label":"Pick","kind":"select","options":[]}]}]}' "$BASE/api/settings")
+check "PUT bad key format → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"BadKey","appliesTo":"both","enabled":true,"fields":[{"key":"2bad","label":"Two","kind":"text"}]}]}' "$BASE/api/settings")
+check "PUT groups not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":"nope"}' "$BASE/api/settings")
+check "PUT invalid appliesTo → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"X","appliesTo":"everyone","enabled":true,"fields":[{"key":"a","label":"A","kind":"text"}]}]}' "$BASE/api/settings")
+check "PUT empty group name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"  ","appliesTo":"both","enabled":true,"fields":[{"key":"a","label":"A","kind":"text"}]}]}' "$BASE/api/settings")
+echo "-- 22b2. Key collision with tenant custom-field names (same value array) =="
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET settings for collision setup → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open("/tmp/body.json"))
+defs = d["settings"]["customFields"]
+json.dump({"customFields": defs + [{"name": "roster_size", "type": "text"}]}, open("/tmp/p3_defs_plus.json", "w"))
+json.dump({"customFields": defs}, open("/tmp/p3_defs_orig.json", "w"))
+PY
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d @/tmp/p3_defs_plus.json "$BASE/api/settings")
+check "PUT extended customFields → 200" 200 "$S"
+check "PUT group key colliding with custom field → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customIntakeGroups":[{"id":"g1","name":"Col","appliesTo":"both","enabled":true,"fields":[{"key":"roster_size","label":"Roster","kind":"text"}]}]}' "$BASE/api/settings")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d @/tmp/p3_defs_orig.json "$BASE/api/settings")
+check "PUT customFields restored → 200" 200 "$S"
+echo "-- 22c. Client create/update round-trip with custom group values =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"P3 Individual Co","contactName":"Riley Doe","clientType":"residential","customFields":[{"name":"fleet_size","value":"12"},{"name":"insured","value":true},{"name":"region","value":"West"}]}' "$BASE/api/clients")
+check "create individual client with group values → 201" 201 "$S"
+P3_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (created client id=$P3_ID)"
+grep -q '"name":"fleet_size","value":"12"' /tmp/body.json && grep -q '"name":"insured","value":"1"' /tmp/body.json && grep -q '"name":"region","value":"West"' /tmp/body.json && echo "  ✓ group values stored via custom_fields (yesno → 1)" || echo "  ✗ create response: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients/$P3_ID")
+check "GET client → 200" 200 "$S"
+grep -q '"name":"fleet_size","value":"12"' /tmp/body.json && grep -q '"name":"region","value":"West"' /tmp/body.json && echo "  ✓ values returned by GET (prefill on edit)" || echo "  ✗ GET client: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"P3 Individual Co","contactName":"Riley Doe","clientType":"residential","customFields":[{"name":"fleet_size","value":"14"},{"name":"insured","value":false},{"name":"region","value":"East"}]}' "$BASE/api/clients/$P3_ID")
+check "PUT updated group values → 200" 200 "$S"
+grep -q '"name":"fleet_size","value":"14"' /tmp/body.json && grep -q '"name":"insured","value":"0"' /tmp/body.json && grep -q '"name":"region","value":"East"' /tmp/body.json && echo "  ✓ update round-trip (yesno → 0)" || echo "  ✗ update response: $(cat /tmp/body.json)"
+check "unknown key → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad Key Co","clientType":"residential","customFields":[{"name":"ghost_key","value":"x"}]}' "$BASE/api/clients")
+check "disabled group key → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Disabled Co","clientType":"residential","customFields":[{"name":"internal_note","value":"x"}]}' "$BASE/api/clients")
+check "commercial-only key on individual client → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Wrong Type Co","clientType":"residential","customFields":[{"name":"po_number_req","value":"1"}]}' "$BASE/api/clients")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"P3 Commercial Co","contactName":"Sam Doe","clientType":"commercial","customFields":[{"name":"po_number_req","value":true},{"name":"fleet_region","value":"North"}]}' "$BASE/api/clients")
+check "commercial client with commercial group values → 201" 201 "$S"
+grep -q '"name":"po_number_req","value":"1"' /tmp/body.json && grep -q '"name":"fleet_region","value":"North"' /tmp/body.json && echo "  ✓ commercial group keys accepted for commercial client" || echo "  ✗ commercial client: $(cat /tmp/body.json)"
+echo "-- 22d. Cross-org isolation of custom intake groups =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Phase3 QA LLC","email":"p3qa@example.com","password":"p3qapass123"}' "$BASE/api/admin/orgs")
+check "admin provisions Phase3 isolation org → 201" 201 "$S"
+P3_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARP3=$(mktemp)
+S=$(code -c "$JARP3" -b "$JARP3" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"p3qa@example.com","password":"p3qapass123"}' "$BASE/api/auth/login")
+check "Phase3 org login → 200" 200 "$S"
+S=$(code -b "$JARP3" "$BASE/api/settings")
+check "Phase3 org GET settings → 200" 200 "$S"
+grep -q '"customIntakeGroups":\[\]' /tmp/body.json && echo "  ✓ other org has NO custom intake groups (owner groups invisible)" || echo "  ✗ other org sees groups: $(cat /tmp/body.json)"
+check "other org cannot use owner's group keys → 400" 400 $(code -b "$JARP3" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Leak Co","clientType":"residential","customFields":[{"name":"fleet_size","value":"99"}]}' "$BASE/api/clients")
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "owner settings still have groups → 200" 200 "$S"
+grep -q '"key":"fleet_size"' /tmp/body.json && echo "  ✓ owner groups unaffected by other org" || echo "  ✗ owner groups lost: $(cat /tmp/body.json)"
+check "admin deletes Phase3 org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$P3_ORG_ID")
+rm -f "$JARP3"
+# Cleanup: remove the owner's custom intake groups + restore vertical defaults
+# so a re-run of the suite on the same DB starts clean.
+code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"customIntakeGroups":[]}' "$BASE/api/settings" > /dev/null
 code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"serviceModel":"both","deliveryType":"both","industry":"","intakeOpts":[]}' "$BASE/api/settings" > /dev/null
 

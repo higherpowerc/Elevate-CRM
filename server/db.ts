@@ -34,6 +34,88 @@ export type DeliveryType = (typeof DELIVERY_TYPES)[number];
 export const INDUSTRIES = ["home_services", "mobile_personal", "professional", "other", ""] as const;
 export type Industry = (typeof INDUSTRIES)[number];
 
+/** Adaptive intake Phase 3 — custom conditional field groups. A tenant (any
+ *  industry, especially "other") defines its OWN intake groups in Settings:
+ *  a group has a name, which client type(s) it applies to, an enabled flag,
+ *  and an ordered list of fields (key / label / kind text|yesno|select, with
+ *  options for select). Stored as a JSON array on orgs.custom_intake_groups;
+ *  the adaptive modal renders the org's ENABLED groups whose appliesTo
+ *  matches the client type being filled in. */
+export const INTAKE_GROUP_APPLIES_TO = ["commercial", "individual", "both"] as const;
+export type IntakeGroupAppliesTo = (typeof INTAKE_GROUP_APPLIES_TO)[number];
+
+export const INTAKE_GROUP_FIELD_KINDS = ["text", "yesno", "select"] as const;
+export type IntakeGroupFieldKind = (typeof INTAKE_GROUP_FIELD_KINDS)[number];
+
+export function isIntakeGroupAppliesTo(v: unknown): v is IntakeGroupAppliesTo {
+  return typeof v === "string" && (INTAKE_GROUP_APPLIES_TO as readonly string[]).includes(v);
+}
+export function isIntakeGroupFieldKind(v: unknown): v is IntakeGroupFieldKind {
+  return typeof v === "string" && (INTAKE_GROUP_FIELD_KINDS as readonly string[]).includes(v);
+}
+
+/** A field inside a custom intake group (Phase 3). `key` is the stable,
+ *  snake_case identifier values are stored under (in clients.custom_fields,
+ *  as {name: key, value} — the same array the Settings custom fields use);
+ *  `label` is the display text; select fields carry their `options`. */
+export interface CustomIntakeField {
+  key: string;
+  label: string;
+  kind: IntakeGroupFieldKind;
+  options?: string[];
+}
+
+/** A tenant-defined custom intake group (Phase 3). */
+export interface CustomIntakeGroup {
+  id: string;
+  name: string;
+  appliesTo: IntakeGroupAppliesTo;
+  enabled: boolean;
+  fields: CustomIntakeField[];
+}
+
+/** Parse an org's stored custom-intake-group JSON → clean list of groups.
+ *  Defensive: drops malformed groups/fields, falls back to [] on anything
+ *  unusable ('' and '[]' both mean "no custom groups"). */
+export function parseCustomIntakeGroups(raw: string | null | undefined): CustomIntakeGroup[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: CustomIntakeGroup[] = [];
+    for (const g of parsed) {
+      if (g === null || typeof g !== "object" || Array.isArray(g)) continue;
+      const obj = g as Record<string, unknown>;
+      const id = typeof obj.id === "string" ? obj.id.trim() : "";
+      const name = typeof obj.name === "string" ? obj.name.trim() : "";
+      const appliesTo = obj.appliesTo;
+      const enabled = obj.enabled === true;
+      const fieldsRaw = obj.fields;
+      if (!id || !name || !isIntakeGroupAppliesTo(appliesTo) || !Array.isArray(fieldsRaw)) continue;
+      const fields: CustomIntakeField[] = [];
+      for (const f of fieldsRaw) {
+        if (f === null || typeof f !== "object" || Array.isArray(f)) continue;
+        const fo = f as Record<string, unknown>;
+        const key = typeof fo.key === "string" ? fo.key.trim() : "";
+        const label = typeof fo.label === "string" ? fo.label.trim() : "";
+        const kind = fo.kind;
+        if (!key || !label || !isIntakeGroupFieldKind(kind)) continue;
+        let options: string[] | undefined;
+        if (kind === "select" && Array.isArray(fo.options)) {
+          options = fo.options.filter((o): o is string => typeof o === "string" && o.trim() !== "");
+          if (options.length === 0) continue; // select needs options
+        }
+        fields.push({ key, label, kind, ...(options ? { options } : {}) });
+      }
+      if (fields.length === 0) continue;
+      out.push({ id, name, appliesTo, enabled, fields });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** Optional (➖ in the spec's Step 4 table) intake groups a tenant can
  *  enable/disable — stored as a JSON array on orgs.intake_opts. */
 export const INTAKE_OPT_GROUPS = [
@@ -432,6 +514,21 @@ db.exec(`
 }
 
 /**
+ * Adaptive intake Phase 3 migration (custom conditional field groups).
+ * Idempotent — safe on every boot. Adds orgs.custom_intake_groups (JSON
+ * array of {id, name, appliesTo, enabled, fields[]} — the groups a tenant
+ * defines in Settings and the adaptive modal renders per its rules).
+ * Default `[]` for all orgs, so existing tenants keep the exact intake form
+ * they had before.
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "custom_intake_groups")) {
+    db.exec(`ALTER TABLE orgs ADD COLUMN custom_intake_groups TEXT NOT NULL DEFAULT '[]'`);
+  }
+}
+
+/**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
@@ -457,13 +554,15 @@ export interface OrgRow {
   delivery_type: string;
   industry: string;
   intake_opts: string;
+  /** Adaptive intake Phase 3: tenant-defined custom conditional field groups. */
+  custom_intake_groups: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }
