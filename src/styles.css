@@ -23,6 +23,8 @@
   --amber: #ffc46b;
   --violet: #b9a6ff;
   --teal: #6fe3c1;
+  --green: #7ce38b;
+  --green-dim: rgba(124, 227, 139, 0.1);
   --radius: 14px;
   --radius-sm: 9px;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -772,6 +774,21 @@ legend.field-label {
   color: var(--muted-2);
 }
 
+/* Four-up KPI row (Finance) */
+.kpi-row-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.kpi-value.green {
+  color: var(--green);
+}
+
+.kpi-value.red {
+  color: var(--danger);
+}
+
 /* ── Stage grid ────────────────────────────────────────────── */
 
 .stage-grid {
@@ -904,6 +921,18 @@ legend.field-label {
   color: var(--teal);
   border-color: rgba(111, 227, 193, 0.35);
   background: rgba(111, 227, 193, 0.09);
+}
+
+.badge.tone-green {
+  color: var(--green);
+  border-color: rgba(124, 227, 139, 0.35);
+  background: var(--green-dim);
+}
+
+.badge.tone-red {
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.35);
+  background: var(--danger-dim);
 }
 
 .chips {
@@ -1276,9 +1305,10 @@ legend.field-label {
   }
 }
 
-/* ── Tasks ─────────────────────────────────────────────── */
+/* ── Tasks & Finance quick-add row (shared layout) ─────── */
 
-.task-add {
+.task-add,
+.inv-add {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1288,7 +1318,9 @@ legend.field-label {
 }
 
 .task-add input,
-.task-add select {
+.task-add select,
+.inv-add input,
+.inv-add select {
   background: var(--bg-soft);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -1301,16 +1333,20 @@ legend.field-label {
 }
 
 .task-add input:focus,
-.task-add select:focus {
+.task-add select:focus,
+.inv-add input:focus,
+.inv-add select:focus {
   border-color: var(--lime);
   box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
 }
 
-.task-add input::placeholder {
+.task-add input::placeholder,
+.inv-add input::placeholder {
   color: var(--muted-2);
 }
 
-.task-add select {
+.task-add select,
+.inv-add select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -1319,7 +1355,8 @@ legend.field-label {
   flex: 0 1 190px;
 }
 
-.task-add input[type="date"] {
+.task-add input[type="date"],
+.inv-add input[type="date"] {
   flex: 0 1 150px;
 }
 
@@ -1328,8 +1365,34 @@ legend.field-label {
   min-width: 0;
 }
 
-.task-add .btn {
+.task-add .btn,
+.inv-add .btn {
   flex: none;
+}
+
+/* $ prefix inside the invoice amount input */
+.inv-add-amount {
+  position: relative;
+  flex: 0 1 150px;
+}
+
+.inv-add-amount .inv-dollar {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-2);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.inv-add-amount input {
+  width: 100%;
+  padding-left: 26px;
+}
+
+.inv-add select[aria-label="Invoice status"] {
+  flex: 0 1 130px;
 }
 
 .task-list {
@@ -1432,6 +1495,88 @@ legend.field-label {
   color: var(--muted-2);
 }
 
+/* ── Finance invoice list ──────────────────────────────── */
+
+.inv-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.inv {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inv:last-child {
+  border-bottom: none;
+}
+
+.inv:hover {
+  background: rgba(242, 241, 236, 0.025);
+}
+
+.inv-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.inv-client {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.inv-noclient {
+  color: var(--muted-2);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.inv-notes {
+  color: var(--muted-2);
+  font-size: 12.5px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.inv-amount {
+  font-weight: 700;
+  font-size: 15.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inv-due {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.inv-due.overdue {
+  color: var(--danger);
+}
+
 /* ── Responsive ────────────────────────────────────────────── */
 
 @media (max-width: 1020px) {
@@ -1441,6 +1586,10 @@ legend.field-label {
 
   .kpi-row {
     grid-template-columns: 1fr;
+  }
+
+  .kpi-row-4 {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
@@ -1499,19 +1648,49 @@ legend.field-label {
     max-width: none;
   }
 
-  .task-add {
+  .task-add,
+  .inv-add {
     flex-direction: column;
     align-items: stretch;
   }
 
   .task-add input,
-  .task-add select {
+  .task-add select,
+  .inv-add input,
+  .inv-add select {
     flex: none;
     width: 100%;
   }
 
-  .task-add .btn {
+  .inv-add-amount {
+    flex: none;
     width: 100%;
+  }
+
+  .task-add .btn,
+  .inv-add .btn {
+    width: 100%;
+  }
+
+  .inv {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .inv-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .inv-meta {
+    margin-left: 0;
+  }
+
+  .inv-notes {
+    max-width: none;
+    white-space: normal;
   }
 
   /* Table → stacked cards */
@@ -1595,6 +1774,10 @@ legend.field-label {
 
   .kpi-value {
     font-size: 26px;
+  }
+
+  .kpi-row-4 {
+    grid-template-columns: 1fr;
   }
 
   .brand-text {

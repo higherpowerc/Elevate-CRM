@@ -1,4 +1,4 @@
-import type { Client, DashboardData, Task, User } from "./types";
+import type { Client, DashboardData, Invoice, InvoiceStatus, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -37,6 +37,9 @@ export type ClientInput = Omit<Client, "id" | "createdAt" | "updatedAt">;
 
 /** Writable task fields (server ignores unknown keys; client id optional). */
 export type TaskInput = Omit<Task, "id" | "clientName" | "createdAt" | "updatedAt">;
+
+/** Writable invoice fields (server ignores unknown keys; client id optional). */
+export type InvoiceInput = Omit<Invoice, "id" | "clientName" | "createdAt" | "updatedAt">;
 
 export const api = {
   me: () => request<{ user: User }>("/api/auth/me"),
@@ -79,4 +82,19 @@ export const api = {
     request<{ task: Task }>(`/api/tasks/${id}/toggle`, { method: "POST" }),
   deleteTask: (id: number) =>
     request<{ ok: true }>(`/api/tasks/${id}`, { method: "DELETE" }),
+
+  invoices: (status?: InvoiceStatus) =>
+    request<{ invoices: Invoice[] }>(`/api/invoices${status ? `?status=${status}` : ""}`),
+  createInvoice: (data: Partial<InvoiceInput>) =>
+    request<{ invoice: Invoice }>("/api/invoices", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateInvoice: (id: number, data: Partial<InvoiceInput>) =>
+    request<{ invoice: Invoice }>(`/api/invoices/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteInvoice: (id: number) =>
+    request<{ ok: true }>(`/api/invoices/${id}`, { method: "DELETE" }),
 };

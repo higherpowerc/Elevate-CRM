@@ -233,6 +233,62 @@ if (wantDemo) {
     });
     taskTx();
     console.log(`[seed] demo data: seeded ${DEMO_TASKS.length} tasks (linked to demo clients + one standalone).`);
+
+    // Demo invoices — linked to the seeded demo clients by company name so the
+    // Finance summary cards show every state: paid, outstanding, overdue, draft.
+    const DEMO_INVOICES = [
+      {
+        clientName: "Kestrel Logistics",
+        amount: 9000,
+        status: "sent",
+        dueDate: demoDate(4),
+        notes: "Website build — deposit, invoice 1 of 2.",
+      },
+      {
+        clientName: "Fable & Folk",
+        amount: 12000,
+        status: "paid",
+        dueDate: demoDate(-20),
+        notes: "Flagship site — paid in full.",
+      },
+      {
+        clientName: "Cedar & Sage Realty",
+        amount: 2400,
+        status: "sent",
+        dueDate: demoDate(-7),
+        notes: "Monthly SEO retainer — payment past due.",
+      },
+      {
+        clientName: "Northline Coffee",
+        amount: 4750,
+        status: "draft",
+        dueDate: demoDate(10),
+        notes: "Kickoff invoice — 50% upfront.",
+      },
+      {
+        clientName: "Willow & Stone Landscapes",
+        amount: 2100,
+        status: "sent",
+        dueDate: demoDate(21),
+        notes: "First milestone invoice.",
+      },
+    ];
+    const insertInvoice = db.prepare(
+      `INSERT INTO invoices (client_id, amount, status, due_date, notes) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const invoiceTx = db.transaction(() => {
+      for (const inv of DEMO_INVOICES) {
+        insertInvoice.run(
+          clientIdByName.get(inv.clientName) ?? null,
+          inv.amount,
+          inv.status,
+          inv.dueDate,
+          inv.notes,
+        );
+      }
+    });
+    invoiceTx();
+    console.log(`[seed] demo data: seeded ${DEMO_INVOICES.length} invoices (sent/paid/draft states across demo clients).`);
   }
 }
 

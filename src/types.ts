@@ -43,6 +43,21 @@ export interface Task {
   updatedAt: string;
 }
 
+export const INVOICE_STATUSES = ["draft", "sent", "paid"] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export interface Invoice {
+  id: number;
+  clientId: number | null;
+  clientName: string;
+  amount: number;
+  status: InvoiceStatus;
+  dueDate: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DashboardData {
   stageCounts: Record<Stage, number>;
   projectedPipeline: number;
@@ -65,6 +80,17 @@ export const STAGE_TONE: Record<Stage, string> = {
   Launch: "lime",
   Retainer: "teal",
 };
+
+/** Stored invoice status → badge tone. "Overdue" is not stored — it is
+ *  computed client-side when status === "sent" and dueDate < today. */
+export const INVOICE_STATUS_TONE: Record<InvoiceStatus, string> = {
+  draft: "gray",
+  sent: "blue",
+  paid: "green",
+};
+
+export const invoiceStatusLabel = (s: InvoiceStatus): string =>
+  s.charAt(0).toUpperCase() + s.slice(1);
 
 export const money = (n: number): string =>
   new Intl.NumberFormat("en-US", {

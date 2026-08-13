@@ -16,6 +16,13 @@ export function isStage(v: unknown): v is Stage {
   return typeof v === "string" && (STAGES as readonly string[]).includes(v);
 }
 
+export const INVOICE_STATUSES = ["draft", "sent", "paid"] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+export function isInvoiceStatus(v: unknown): v is InvoiceStatus {
+  return typeof v === "string" && (INVOICE_STATUSES as readonly string[]).includes(v);
+}
+
 export interface CustomField {
   label: string;
   value: string;
@@ -69,10 +76,24 @@ db.exec(`
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_clients_stage   ON clients(stage);
-  CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
-  CREATE INDEX IF NOT EXISTS idx_tasks_done      ON tasks(done);
-  CREATE INDEX IF NOT EXISTS idx_tasks_client_id ON tasks(client_id);
+  CREATE TABLE IF NOT EXISTS invoices (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id  INTEGER,
+    amount     REAL NOT NULL DEFAULT 0,
+    status     TEXT NOT NULL DEFAULT 'draft',
+    due_date   TEXT NOT NULL DEFAULT '',
+    notes      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_clients_stage     ON clients(stage);
+  CREATE INDEX IF NOT EXISTS idx_clients_updated   ON clients(updated_at);
+  CREATE INDEX IF NOT EXISTS idx_tasks_done        ON tasks(done);
+  CREATE INDEX IF NOT EXISTS idx_tasks_client_id   ON tasks(client_id);
+  CREATE INDEX IF NOT EXISTS idx_invoices_status   ON invoices(status);
+  CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
 `);
 
 // Simple migration for databases created before custom_fields existed:
@@ -108,6 +129,17 @@ export interface TaskRow {
   client_id: number | null;
   due_date: string;
   done: number;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InvoiceRow {
+  id: number;
+  client_id: number | null;
+  amount: number;
+  status: InvoiceStatus;
+  due_date: string;
   notes: string;
   created_at: string;
   updated_at: string;
