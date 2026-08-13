@@ -112,9 +112,15 @@ export default function Settings() {
 
   /* ── Adaptive intake (Phase 1): account-level vertical config ───── */
 
+  // UI-only list of optional intake groups shown as checkboxes. NOTE: this is
+  // deliberately NOT derived from server/db.ts INTAKE_OPT_GROUPS — we filter
+  // out "hoa_restrictions" here on purpose. Per the adaptive-intake spec Step 4,
+  // the Individual HOA flag is a per-client checkbox in the intake form, so an
+  // account-level HOA toggle gates nothing and would be a dead control. The
+  // server still accepts "hoa_restrictions" as a valid intake_opts id so orgs
+  // that already stored it keep round-tripping it without breaking.
   const INTAKE_OPT_LABELS: { id: string; label: string }[] = [
     { id: "business_llc_tab", label: "Business Name / LLC tab" },
-    { id: "hoa_restrictions", label: "HOA restrictions" },
     { id: "pet_on_premises", label: "Pet on premises" },
     { id: "parking_access", label: "Parking / access" },
   ];
@@ -596,8 +602,8 @@ export default function Settings() {
                 ))}
               </div>
               <span className="field-hint">
-                Optional groups are only available when they fit your industry — e.g. an HOA
-                field for home services, parking/pet fields for mobile personal services.
+                Optional groups are only available when they fit your industry — e.g.
+                parking/pet fields for mobile personal services.
               </span>
             </div>
             <div className="stage-save">
