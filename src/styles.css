@@ -692,7 +692,11 @@ legend.field-label {
 /* ── Page layout ───────────────────────────────────────────── */
 
 .page {
-  animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* 'backwards' (not 'both'): the end keyframe equals the natural style, so
+     nothing is retained after the animation. A lingering 'both' fill keeps a
+     non-none transform on .page, which becomes the containing block for the
+     fixed .overlay and mis-anchors modals off-screen (the cut-off bug). */
+  animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 .page-head {
@@ -1302,9 +1306,9 @@ legend.field-label {
   background: rgba(5, 5, 7, 0.72);
   backdrop-filter: blur(6px);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 5vh 18px 18px;
+  padding: 16px;
   overflow-y: auto;
   animation: fade 0.18s ease both;
 }
@@ -1325,12 +1329,16 @@ legend.field-label {
   box-shadow: var(--shadow);
   width: 100%;
   max-width: 640px;
+  /* Always fit inside the viewport (overlay has 16px padding, so a
+     dvh-capped modal can never clip top or bottom). vh line first as a
+     fallback for browsers without dvh support. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   animation: rise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .modal-lg {
   max-width: 720px;
-  max-height: 90vh;
   display: flex;
   flex-direction: column;
 }
@@ -1338,6 +1346,8 @@ legend.field-label {
 .modal-lg .modal-form {
   overflow-y: auto;
   padding-top: 16px;
+  padding-bottom: 0;
+  min-height: 0;
 }
 
 .modal-sm {
@@ -1359,14 +1369,63 @@ legend.field-label {
 }
 
 .modal-form {
-  padding: 20px 24px 24px;
+  padding: 20px 24px 0;
 }
 
+/* Visible scroll affordance on scrollable modal bodies (the tall client
+   form, and whole-modal scroll on mobile). Thin + always-visible so it's
+   obvious the body scrolls. */
+.modal-form,
+.modal {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.modal-form::-webkit-scrollbar,
+.modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-form::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-form::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+
+/* Always-visible actions bar: sticky footer pinned to the bottom of the
+   scroll region while the form body scrolls beneath it. */
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 10px;
-  padding-top: 4px;
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--line-strong);
+  padding: 14px 24px 16px;
+  margin-top: 12px;
+}
+
+/* Actions inside a padded form (Client/Task/Invoice): cancel the form's
+   side padding with horizontal-only negative margins so the footer spans
+   the full modal width and sits flush with its bottom edge (horizontal-only,
+   so the sticky vertical offset stays correct). */
+.modal-form > .modal-actions {
+  margin: 12px -24px 0;
+  border-radius: 0 0 18px 18px;
+}
+
+/* Actions as a direct modal child (ConfirmDialog): the modal has no
+   padding, so the bar already spans full width — just round the bottom
+   corners to match the modal. */
+.modal > .modal-actions {
+  border-radius: 0 0 18px 18px;
 }
 
 .confirm-body {
@@ -1864,12 +1923,22 @@ legend.field-label {
   .modal {
     border-radius: 20px 20px 0 0;
     max-height: 92vh;
+    max-height: 92dvh;
     overflow-y: auto;
   }
 
   .modal.modal-lg {
     max-height: 88vh;
+    max-height: 88dvh;
     overflow: hidden;
+  }
+
+  /* Bottom sheet has square bottom corners — the pinned actions bar
+     should match instead of showing rounded-corner gaps. (Must beat the
+     `.modal-form > .modal-actions` 18px-bottom rule, hence the higher
+     specificity selector.) */
+  .modal .modal-actions {
+    border-radius: 0;
   }
 }
 
