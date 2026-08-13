@@ -34,8 +34,13 @@ S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
 check "login correct creds → 200 + session cookie" 200 "$S"
 grep -q elevate_session "$JAR" && echo "  ✓ session cookie stored" || echo "  ✗ session cookie missing"
+grep -Fq "$ADMIN_EMAIL" /tmp/body.json && echo "  ✓ login returns owner email" || echo "  ✗ login email wrong"
+grep -q '"orgId":' /tmp/body.json && echo "  ✓ login returns orgId" || echo "  ✗ login missing orgId: $(cat /tmp/body.json)"
+grep -q '"role":"admin"' /tmp/body.json && echo "  ✓ login returns role admin" || echo "  ✗ login role wrong: $(cat /tmp/body.json)"
 check "me with cookie → 200" 200 $(code -b "$JAR" "$BASE/api/auth/me")
 grep -Fq "$ADMIN_EMAIL" /tmp/body.json && echo "  ✓ me returns owner email" || echo "  ✗ me email wrong"
+grep -q '"orgId":' /tmp/body.json && echo "  ✓ me returns orgId" || echo "  ✗ me missing orgId"
+grep -q '"role":"admin"' /tmp/body.json && echo "  ✓ me returns role admin" || echo "  ✗ me role wrong"
 
 echo "== 3. Dashboard (empty) =="
 S=$(code -b "$JAR" "$BASE/api/dashboard")
@@ -356,6 +361,130 @@ S=$(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/logout")
 check "logout → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/auth/me")
 check "me after logout → 401" 401 "$S"
+
+echo "== 16. Multi-tenant isolation =="
+# Phase 2 will add real account-provisioning endpoints; for now the second
+# org + member user are written directly into the DB (same pattern as the
+# demo seed), so the API can be proven org-isolated.
+MEMBER_EMAIL="member@acme.example"
+MEMBER_PASSWORD="memberpass123"
+MEMBER_SEED=$(bun -e '
+  import { db, DEFAULT_ORG_NAME } from "./server/db";
+  const main = async () => {
+    const orgName = "Acme Widgets LLC";
+    let org = db.query("SELECT id FROM orgs WHERE name = ?").get(orgName) as { id: number } | null;
+    if (!org) org = { id: Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(orgName).lastInsertRowid) };
+    const orgId = org.id;
+    db.query("DELETE FROM invoices WHERE org_id = ?").run(orgId);
+    db.query("DELETE FROM tasks WHERE org_id = ?").run(orgId);
+    db.query("DELETE FROM clients WHERE org_id = ?").run(orgId);
+    db.query("DELETE FROM users WHERE email = ?").run("member@acme.example");
+    const hash = await Bun.password.hash("memberpass123", { algorithm: "bcrypt", cost: 10 });
+    db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, ?)").run("member@acme.example", hash, orgId, "member");
+    const defaultOrg = db.query("SELECT id FROM orgs WHERE name = ?").get(DEFAULT_ORG_NAME) as { id: number };
+    console.log(JSON.stringify({ memberOrgId: orgId, defaultOrgId: defaultOrg.id }));
+  };
+  main();
+')
+ORG2_ID=$(echo "$MEMBER_SEED" | python3 -c "import json,sys; print(json.load(sys.stdin)['memberOrgId'])")
+DEFAULT_ORG_ID=$(echo "$MEMBER_SEED" | python3 -c "import json,sys; print(json.load(sys.stdin)['defaultOrgId'])")
+echo "    (member org id=$ORG2_ID, default org id=$DEFAULT_ORG_ID)"
+
+JAR2=$(mktemp)
+S=$(code -c "$JAR2" -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$MEMBER_EMAIL\",\"password\":\"$MEMBER_PASSWORD\"}" "$BASE/api/auth/login")
+check "second-org member login → 200" 200 "$S"
+grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && echo "  ✓ member login returns their orgId" || echo "  ✗ member orgId wrong: $(cat /tmp/body.json)"
+grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member login returns role member" || echo "  ✗ member role wrong: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/auth/me")
+check "member me → 200" 200 "$S"
+grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member me carries orgId + role member" || echo "  ✗ member me wrong: $(cat /tmp/body.json)"
+
+echo "-- 16a. Isolation: member sees an empty org =="
+S=$(code -b "$JAR2" "$BASE/api/clients")
+check "member clients list → 200" 200 "$S"
+grep -q '"clients":\[\]' /tmp/body.json && echo "  ✓ member sees NO default-org clients (isolation)" || echo "  ✗ member clients: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/tasks")
+check "member tasks list → 200" 200 "$S"
+grep -q '"tasks":\[\]' /tmp/body.json && echo "  ✓ member sees NO default-org tasks (isolation)" || echo "  ✗ member tasks: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/invoices")
+check "member invoices list → 200" 200 "$S"
+grep -q '"invoices":\[\]' /tmp/body.json && echo "  ✓ member sees NO default-org invoices (isolation)" || echo "  ✗ member invoices: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/dashboard")
+check "member dashboard → 200" 200 "$S"
+grep -q '"projectedPipeline":0' /tmp/body.json && grep -q '"totalClients":0' /tmp/body.json && echo "  ✓ member dashboard is empty (no cross-org stats)" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
+
+echo "-- 16b. Isolation: member cannot touch default-org rows (404) =="
+check "member GET default-org client → 404" 404 $(code -b "$JAR2" "$BASE/api/clients/$HVAC_ID")
+check "member PUT default-org client → 404" 404 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Hacked","dealValue":1}' "$BASE/api/clients/$HVAC_ID")
+check "member DELETE default-org client → 404" 404 $(code -b "$JAR2" -X DELETE "$BASE/api/clients/$HVAC_ID")
+check "member PUT default-org task → 404" 404 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
+  -d '{"title":"Hacked"}' "$BASE/api/tasks/$T1")
+check "member toggle default-org task → 404" 404 $(code -b "$JAR2" -X POST "$BASE/api/tasks/$T1/toggle")
+check "member DELETE default-org task → 404" 404 $(code -b "$JAR2" -X DELETE "$BASE/api/tasks/$T1")
+check "member PUT default-org invoice → 404" 404 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
+  -d '{"amount":1}' "$BASE/api/invoices/$I1")
+check "member DELETE default-org invoice → 404" 404 $(code -b "$JAR2" -X DELETE "$BASE/api/invoices/$I1")
+
+echo "-- 16c. Member data stays in their own org =="
+S=$(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Member Corp","contactName":"M","industry":"Testing","dealValue":5000,"stage":"Prospect"}' \
+  "$BASE/api/clients")
+check "member creates client → 201" 201 "$S"
+MC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (member client id=$MC_ID)"
+S=$(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Member follow-up\",\"clientId\":$MC_ID}" "$BASE/api/tasks")
+check "member creates task linked to own client → 201" 201 "$S"
+MT_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (member task id=$MT_ID)"
+S=$(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$MC_ID,\"amount\":777.77,\"status\":\"sent\"}" "$BASE/api/invoices")
+check "member creates invoice linked to own client → 201" 201 "$S"
+MI_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (member invoice id=$MI_ID)"
+S=$(code -b "$JAR2" "$BASE/api/clients")
+check "member clients list has own client → 200" 200 "$S"
+grep -q 'Member Corp' /tmp/body.json && echo "  ✓ member sees their own client" || echo "  ✗ member missing own client: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/tasks")
+check "member tasks list has own task → 200" 200 "$S"
+grep -q 'Member follow-up' /tmp/body.json && echo "  ✓ member sees their own task" || echo "  ✗ member missing own task: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/invoices")
+check "member invoices list has own invoice → 200" 200 "$S"
+grep -q '"amount":777.77' /tmp/body.json && echo "  ✓ member sees their own invoice" || echo "  ✗ member missing own invoice: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" "$BASE/api/dashboard")
+check "member dashboard counts own data → 200" 200 "$S"
+grep -q '"projectedPipeline":5000' /tmp/body.json && grep -q '"totalClients":1' /tmp/body.json && echo "  ✓ member dashboard counts only their own data" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
+
+echo "-- 16d. Default org cannot see member data =="
+S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "admin re-login → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "admin clients list → 200" 200 "$S"
+grep -qv 'Member Corp' /tmp/body.json && echo "  ✓ admin does NOT see member client" || echo "  ✗ member client leaked: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/tasks")
+check "admin tasks list → 200" 200 "$S"
+grep -qv 'Member follow-up' /tmp/body.json && echo "  ✓ admin does NOT see member task" || echo "  ✗ member task leaked: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/invoices")
+check "admin invoices list → 200" 200 "$S"
+grep -qv '"amount":777.77' /tmp/body.json && echo "  ✓ admin does NOT see member invoice" || echo "  ✗ member invoice leaked: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+check "admin dashboard → 200" 200 "$S"
+grep -qv 'Member Corp' /tmp/body.json && echo "  ✓ admin dashboard excludes member data" || echo "  ✗ member leaked into admin dashboard"
+
+echo "-- 16e. Cross-org links rejected =="
+check "member task with default-org client → 400" 400 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Cross-org task\",\"clientId\":$HVAC_ID}" "$BASE/api/tasks")
+check "member invoice with default-org client → 400" 400 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID,\"amount\":100}" "$BASE/api/invoices")
+check "member re-links own task to default-org client → 400" 400 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID}" "$BASE/api/tasks/$MT_ID")
+check "member re-links own invoice to default-org client → 400" 400 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID}" "$BASE/api/invoices/$MI_ID")
+check "member GET own client after failed re-links → 200 (data intact)" 200 $(code -b "$JAR2" "$BASE/api/clients/$MC_ID")
+rm -f "$JAR2"
 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"

@@ -9,10 +9,15 @@
  * table is empty (use `bun run db:reset` for a clean slate first).
  */
 import { ensureAdmin } from "./auth";
-import { db } from "./db";
+import { db, ensureDefaultOrg } from "./db";
 
 const result = await ensureAdmin();
 console.log(result.message);
+
+// All demo data lands in the default org ("Elevate Studio") — the org the
+// seeded admin belongs to, so a fresh deployment shows the demo under the
+// admin's own account.
+const demoOrgId = ensureDefaultOrg();
 
 const DEMO_CLIENTS = [
   {
@@ -143,19 +148,19 @@ const DEMO_CLIENTS = [
 
 const wantDemo = process.argv.includes("--demo") || process.env.SEED_DEMO === "1";
 if (wantDemo) {
-  const { c } = db.query("SELECT COUNT(*) AS c FROM clients").get() as { c: number };
+  const { c } = db.query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ?").get(demoOrgId) as { c: number };
   if (c > 0) {
-    console.log(`[seed] clients table already has ${c} rows — skipping demo seed (run \`bun run db:reset\` for a clean slate).`);
+    console.log(`[seed] default org already has ${c} clients — skipping demo seed (run \`bun run db:reset\` for a clean slate).`);
   } else {
     const insert = db.prepare(
       `INSERT INTO clients
-         (company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const tx = db.transaction(() => {
       for (const cl of DEMO_CLIENTS) {
         insert.run(
-          cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
+          demoOrgId, cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
           JSON.stringify(cl.services), JSON.stringify(cl.customFields), cl.dealValue,
           cl.stage, cl.nextAction, cl.notes,
         );
@@ -211,18 +216,19 @@ if (wantDemo) {
       },
     ];
     const clientIdByName = new Map<string, number>();
-    const clientRows = db.query("SELECT id, company_name FROM clients").all() as {
+    const clientRows = db.query("SELECT id, company_name FROM clients WHERE org_id = ?").all(demoOrgId) as {
       id: number;
       company_name: string;
     }[];
     for (const r of clientRows) clientIdByName.set(r.company_name, r.id);
 
     const insertTask = db.prepare(
-      `INSERT INTO tasks (title, client_id, due_date, done, notes) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO tasks (org_id, title, client_id, due_date, done, notes) VALUES (?, ?, ?, ?, ?, ?)`,
     );
     const taskTx = db.transaction(() => {
       for (const tk of DEMO_TASKS) {
         insertTask.run(
+          demoOrgId,
           tk.title,
           tk.clientName ? (clientIdByName.get(tk.clientName) ?? null) : null,
           tk.dueDate,
@@ -274,11 +280,12 @@ if (wantDemo) {
       },
     ];
     const insertInvoice = db.prepare(
-      `INSERT INTO invoices (client_id, amount, status, due_date, notes) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO invoices (org_id, client_id, amount, status, due_date, notes) VALUES (?, ?, ?, ?, ?, ?)`,
     );
     const invoiceTx = db.transaction(() => {
       for (const inv of DEMO_INVOICES) {
         insertInvoice.run(
+          demoOrgId,
           clientIdByName.get(inv.clientName) ?? null,
           inv.amount,
           inv.status,

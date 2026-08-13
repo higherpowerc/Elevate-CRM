@@ -69,6 +69,10 @@ export interface DashboardData {
 export interface User {
   id: number;
   email: string;
+  /** Org the user belongs to — every row the API returns is scoped to this. */
+  orgId: number;
+  /** Phase 1: `admin` behaves like `member` inside their own org. */
+  role: "admin" | "member";
   created_at?: string;
 }
 

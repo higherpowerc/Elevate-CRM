@@ -121,14 +121,20 @@ browser ──► Bun server (server/index.ts) :PORT
 - **Build:** `bun build ./index.html --outdir ./dist --minify` → hashed JS/CSS assets.
 
 ### Data model & storage
-
-SQLite file at `DATA_DIR/crm.db` (default `./data/crm.db`), WAL mode. Two tables:
+SQLite file at `DATA_DIR/crm.db` (default `./data/crm.db`), WAL mode. Multi-tenant
+(Phase 1): every data row belongs to an org, and every user belongs to exactly one org.
 
 ```sql
-users   (id, email UNIQUE, password_hash, created_at)
-clients (id, company_name, contact_name, email, phone, industry,
+orgs    (id, name, created_at)
+users   (id, email UNIQUE, password_hash, org_id → orgs.id, role TEXT admin|member,
+         created_at)
+clients (id, org_id → orgs.id, company_name, contact_name, email, phone, industry,
          services JSON text, custom_fields JSON text, deal_value REAL, stage TEXT,
          next_action, notes, archived INTEGER, created_at, updated_at)
+tasks    (id, org_id → orgs.id, title, client_id → clients.id (ON DELETE SET NULL),
+          due_date, done, notes, created_at, updated_at)
+invoices (id, org_id → orgs.id, client_id → clients.id (ON DELETE SET NULL),
+          amount REAL, status TEXT draft|sent|paid, due_date, notes, created_at, updated_at)
 ```
 
 `services` and `custom_fields` are stored as JSON string columns; `stage` is validated
@@ -136,6 +142,18 @@ against the six stages server-side. `services` is a free-form array of strings (
 industry — no picklist), and `custom_fields` is an array of `{label, value}` objects.
 The universal model means the app fits any company type — nothing is hardcoded to Elevate
 Studio's own service categories.
+
+**Multi-tenancy (Phase 1).** Each org's data is fully isolated: every API route scopes
+its queries by the authenticated user's `org_id` (from the session — never from the
+request body), so a user can only read/write rows inside their own org. Touching another
+org's row returns `404` (existence is not leaked). Tasks and invoices may only link to
+clients in the same org (cross-org links are rejected with `400`). The default org
+"Elevate Studio" is created automatically on boot; a pre-existing single-tenant database
+is migrated on boot by adding `org_id`/`role` columns and backfilling every row and user
+into the default org (idempotent, safe on every boot). The admin account from
+`ADMIN_EMAIL` lives in the default org with role `admin`. Role `admin` currently behaves
+like `member` inside its own org — cross-org admin access is Phase 2. Account
+provisioning (signup, per-tenant login) is Phase 2; the schema is ready for it.
 
 **Backup:** copy `data/crm.db` (with the WAL checkpointed — stop the server or use
 `sqlite3 data/crm.db ".backup out.db"`).

@@ -6,6 +6,7 @@ import {
   isInvoiceStatus,
   type ClientRow,
   type CustomField,
+  type Role,
   type Stage,
   type TaskRow,
   type InvoiceRow,
@@ -61,12 +62,23 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** Returns { userId } or a 401 Response. */
-function requireAuth(req: Request): { userId: number } | Response {
+/** Authenticated session context: who the user is AND which org they belong
+ *  to. Every data route scopes its queries by orgId — the org always comes
+ *  from the session, never from the request body. */
+interface AuthContext {
+  userId: number;
+  orgId: number;
+  role: Role;
+}
+
+/** Returns { userId, orgId, role } or a 401 Response. */
+function requireAuth(req: Request): AuthContext | Response {
   const token = getCookie(req, SESSION_COOKIE);
   const userId = verifySession(token);
   if (!userId) return err("Not signed in.", 401);
-  return { userId };
+  const user = getUserById(userId);
+  if (!user) return err("Not signed in.", 401);
+  return { userId: user.id, orgId: user.orgId, role: user.role };
 }
 
 /* ── Client row → API shape ─────────────────────────────────────────── */
@@ -220,8 +232,10 @@ const TASK_SELECT = `
   LEFT JOIN clients c ON c.id = t.client_id
 `;
 
-function fetchTask(id: number) {
-  const row = db.query(`${TASK_SELECT} WHERE t.id = ?`).get(id) as TaskRowJoined | null;
+function fetchTask(id: number, orgId: number) {
+  const row = db
+    .query(`${TASK_SELECT} WHERE t.id = ? AND t.org_id = ?`)
+    .get(id, orgId) as TaskRowJoined | null;
   return row ? toTask(row) : null;
 }
 
@@ -277,9 +291,9 @@ function parseTaskFields(
   return { ok: true, value: out };
 }
 
-/** 400 unless a (non-null) client id refers to a real client. */
-function ensureClientExists(clientId: number): Response | null {
-  const exists = db.query("SELECT id FROM clients WHERE id = ?").get(clientId);
+/** 400 unless a (non-null) client id refers to a real client IN THE SAME ORG. */
+function ensureClientExists(clientId: number, orgId: number): Response | null {
+  const exists = db.query("SELECT id FROM clients WHERE id = ? AND org_id = ?").get(clientId, orgId);
   if (!exists) return err("Client not found.", 400);
   return null;
 }
@@ -309,8 +323,10 @@ const INVOICE_SELECT = `
   LEFT JOIN clients c ON c.id = i.client_id
 `;
 
-function fetchInvoice(id: number) {
-  const row = db.query(`${INVOICE_SELECT} WHERE i.id = ?`).get(id) as InvoiceRowJoined | null;
+function fetchInvoice(id: number, orgId: number) {
+  const row = db
+    .query(`${INVOICE_SELECT} WHERE i.id = ? AND i.org_id = ?`)
+    .get(id, orgId) as InvoiceRowJoined | null;
   return row ? toInvoice(row) : null;
 }
 
@@ -400,7 +416,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
     const token = createSession(user.id);
     return json(
-      { user: { id: user.id, email: user.email }, ok: true },
+      { user: { id: user.id, email: user.email, orgId: user.org_id, role: user.role }, ok: true },
       200,
       { "Set-Cookie": sessionCookie(token) },
     );
@@ -423,29 +439,30 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   /* Everything below requires auth */
   const auth = requireAuth(req);
   if (auth instanceof Response) return auth;
+  const orgId = auth.orgId;
 
   /* Dashboard */
   if (pathname === "/api/dashboard" && method === "GET") {
     const stageCounts = {} as Record<Stage, number>;
     for (const s of STAGES) stageCounts[s] = 0;
     const rows = db
-      .query("SELECT stage, COUNT(*) AS c FROM clients WHERE archived = 0 GROUP BY stage")
-      .all() as { stage: Stage; c: number }[];
+      .query("SELECT stage, COUNT(*) AS c FROM clients WHERE org_id = ? AND archived = 0 GROUP BY stage")
+      .all(orgId) as { stage: Stage; c: number }[];
     for (const r of rows) stageCounts[r.stage] = r.c;
 
     const total = db
-      .query("SELECT COUNT(*) AS c FROM clients")
-      .get() as { c: number };
+      .query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ?")
+      .get(orgId) as { c: number };
     const archived = db
-      .query("SELECT COUNT(*) AS c FROM clients WHERE archived = 1")
-      .get() as { c: number };
+      .query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ? AND archived = 1")
+      .get(orgId) as { c: number };
     const value = db
-      .query("SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients WHERE archived = 0")
-      .get() as { v: number };
+      .query("SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients WHERE org_id = ? AND archived = 0")
+      .get(orgId) as { v: number };
     const recent = (
       db
-        .query("SELECT * FROM clients WHERE archived = 0 ORDER BY updated_at DESC, id DESC LIMIT 5")
-        .all() as ClientRow[]
+        .query("SELECT * FROM clients WHERE org_id = ? AND archived = 0 ORDER BY updated_at DESC, id DESC LIMIT 5")
+        .all(orgId) as ClientRow[]
     ).map(toClient);
 
     return json({
@@ -466,17 +483,18 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       rows = db
         .query(
           `SELECT * FROM clients
-           WHERE (archived = 0 OR ? = 1)
+           WHERE org_id = ?
+             AND (archived = 0 OR ? = 1)
              AND (LOWER(company_name) LIKE ? OR LOWER(contact_name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(industry) LIKE ?)
            ORDER BY updated_at DESC, id DESC`,
         )
-        .all(includeArchived ? 1 : 0, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`) as ClientRow[];
+        .all(orgId, includeArchived ? 1 : 0, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`) as ClientRow[];
     } else {
       rows = db
         .query(
-          `SELECT * FROM clients WHERE archived = 0 OR ? = 1 ORDER BY updated_at DESC, id DESC`,
+          `SELECT * FROM clients WHERE org_id = ? AND (archived = 0 OR ? = 1) ORDER BY updated_at DESC, id DESC`,
         )
-        .all(includeArchived ? 1 : 0) as ClientRow[];
+        .all(orgId, includeArchived ? 1 : 0) as ClientRow[];
     }
     return json({ clients: rows.map(toClient) });
   }
@@ -489,15 +507,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const c = v.value;
     const info = db
       .query(
-        `INSERT INTO clients (company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
+        orgId,
         c.companyName, c.contactName, c.email, c.phone, c.industry,
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
       );
-    const row = db.query("SELECT * FROM clients WHERE id = ?").get(info.lastInsertRowid) as ClientRow;
+    const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row) }, 201);
   }
 
@@ -505,7 +524,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   const itemMatch = pathname.match(/^\/api\/clients\/(\d+)$/);
   if (itemMatch) {
     const id = Number(itemMatch[1]);
-    const find = () => db.query("SELECT * FROM clients WHERE id = ?").get(id) as ClientRow | null;
+    const find = () => db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
 
     if (method === "GET") {
       const row = find();
@@ -526,20 +545,20 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
            company_name = ?, contact_name = ?, email = ?, phone = ?, industry = ?,
            services = ?, custom_fields = ?, deal_value = ?, stage = ?, next_action = ?, notes = ?, archived = ?,
            updated_at = datetime('now')
-         WHERE id = ?`,
+         WHERE id = ? AND org_id = ?`,
       ).run(
         c.companyName, c.contactName, c.email, c.phone, c.industry,
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
-        c.archived ? 1 : 0, id,
+        c.archived ? 1 : 0, id, orgId,
       );
-      const updated = db.query("SELECT * FROM clients WHERE id = ?").get(id) as ClientRow;
+      const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
       return json({ client: toClient(updated) });
     }
 
     if (method === "DELETE") {
       const row = find();
       if (!row) return err("Client not found.", 404);
-      db.query("DELETE FROM clients WHERE id = ?").run(id);
+      db.query("DELETE FROM clients WHERE id = ? AND org_id = ?").run(id, orgId);
       return json({ ok: true });
     }
 
@@ -550,15 +569,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   if (pathname === "/api/tasks" && method === "GET") {
     const doneParam = url.searchParams.get("done");
     const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
+    const clauses: string[] = ["t.org_id = ?"];
+    const params: (string | number)[] = [orgId];
     if (doneParam === "0") clauses.push("t.done = 0");
     else if (doneParam === "1") clauses.push("t.done = 1");
     if (q) {
       clauses.push("LOWER(t.title) LIKE ?");
       params.push(`%${q}%`);
     }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const where = `WHERE ${clauses.join(" AND ")}`;
     const rows = db
       .query(
         `${TASK_SELECT}
@@ -577,22 +596,23 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (!v.value.title) return err("Title is required.", 400);
     const clientId = v.value.clientId ?? null;
     if (clientId !== null) {
-      const bad = ensureClientExists(clientId);
+      const bad = ensureClientExists(clientId, orgId);
       if (bad) return bad;
     }
     const info = db
       .query(
-        `INSERT INTO tasks (title, client_id, due_date, done, notes)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (org_id, title, client_id, due_date, done, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
+        orgId,
         v.value.title,
         clientId,
         v.value.dueDate ?? "",
         v.value.done ? 1 : 0,
         v.value.notes ?? "",
       );
-    const task = fetchTask(Number(info.lastInsertRowid));
+    const task = fetchTask(Number(info.lastInsertRowid), orgId);
     return json({ task }, 201);
   }
 
@@ -602,18 +622,19 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   if (taskToggleMatch && method === "POST") {
     const id = Number(taskToggleMatch[1]);
-    const row = db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | null;
+    const row = db.query("SELECT * FROM tasks WHERE id = ? AND org_id = ?").get(id, orgId) as TaskRow | null;
     if (!row) return err("Task not found.", 404);
-    db.query("UPDATE tasks SET done = ?, updated_at = datetime('now') WHERE id = ?").run(
+    db.query("UPDATE tasks SET done = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?").run(
       row.done ? 0 : 1,
       id,
+      orgId,
     );
-    return json({ task: fetchTask(id) });
+    return json({ task: fetchTask(id, orgId) });
   }
 
   if (taskMatch) {
     const id = Number(taskMatch[1]);
-    const find = () => db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | null;
+    const find = () => db.query("SELECT * FROM tasks WHERE id = ? AND org_id = ?").get(id, orgId) as TaskRow | null;
 
     if (method === "PUT") {
       const row = find();
@@ -624,14 +645,14 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       if (!v.ok) return err(v.error, 400);
       const f = v.value;
       if (f.clientId !== undefined && f.clientId !== null) {
-        const bad = ensureClientExists(f.clientId);
+        const bad = ensureClientExists(f.clientId, orgId);
         if (bad) return bad;
       }
       db.query(
         `UPDATE tasks SET
            title = ?, client_id = ?, due_date = ?, done = ?, notes = ?,
            updated_at = datetime('now')
-         WHERE id = ?`,
+         WHERE id = ? AND org_id = ?`,
       ).run(
         f.title ?? row.title,
         f.clientId !== undefined ? f.clientId : row.client_id,
@@ -639,14 +660,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         f.done !== undefined ? (f.done ? 1 : 0) : row.done,
         f.notes ?? row.notes,
         id,
+        orgId,
       );
-      return json({ task: fetchTask(id) });
+      return json({ task: fetchTask(id, orgId) });
     }
 
     if (method === "DELETE") {
       const row = find();
       if (!row) return err("Task not found.", 404);
-      db.query("DELETE FROM tasks WHERE id = ?").run(id);
+      db.query("DELETE FROM tasks WHERE id = ? AND org_id = ?").run(id, orgId);
       return json({ ok: true });
     }
 
@@ -657,8 +679,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   if (pathname === "/api/invoices" && method === "GET") {
     const statusParam = url.searchParams.get("status");
     const clientParam = url.searchParams.get("clientId");
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
+    const clauses: string[] = ["i.org_id = ?"];
+    const params: (string | number)[] = [orgId];
     if (statusParam !== null) {
       if (!isInvoiceStatus(statusParam)) {
         return err(`Status must be one of: ${INVOICE_STATUSES.join(", ")}.`, 400);
@@ -672,7 +694,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       clauses.push("i.client_id = ?");
       params.push(cid);
     }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const where = `WHERE ${clauses.join(" AND ")}`;
     const rows = db
       .query(
         `${INVOICE_SELECT}
@@ -695,22 +717,23 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (v.value.amount === undefined) return err("Amount is required.", 400);
     const clientId = v.value.clientId ?? null;
     if (clientId !== null) {
-      const bad = ensureClientExists(clientId);
+      const bad = ensureClientExists(clientId, orgId);
       if (bad) return bad;
     }
     const info = db
       .query(
-        `INSERT INTO invoices (client_id, amount, status, due_date, notes)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO invoices (org_id, client_id, amount, status, due_date, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
+        orgId,
         clientId,
         v.value.amount,
         v.value.status ?? "draft",
         v.value.dueDate ?? "",
         v.value.notes ?? "",
       );
-    const invoice = fetchInvoice(Number(info.lastInsertRowid));
+    const invoice = fetchInvoice(Number(info.lastInsertRowid), orgId);
     return json({ invoice }, 201);
   }
 
@@ -719,7 +742,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   if (invoiceMatch) {
     const id = Number(invoiceMatch[1]);
-    const find = () => db.query("SELECT * FROM invoices WHERE id = ?").get(id) as InvoiceRow | null;
+    const find = () => db.query("SELECT * FROM invoices WHERE id = ? AND org_id = ?").get(id, orgId) as InvoiceRow | null;
 
     if (method === "PUT") {
       const row = find();
@@ -730,14 +753,14 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       if (!v.ok) return err(v.error, 400);
       const f = v.value;
       if (f.clientId !== undefined && f.clientId !== null) {
-        const bad = ensureClientExists(f.clientId);
+        const bad = ensureClientExists(f.clientId, orgId);
         if (bad) return bad;
       }
       db.query(
         `UPDATE invoices SET
            client_id = ?, amount = ?, status = ?, due_date = ?, notes = ?,
            updated_at = datetime('now')
-         WHERE id = ?`,
+         WHERE id = ? AND org_id = ?`,
       ).run(
         f.clientId !== undefined ? f.clientId : row.client_id,
         f.amount ?? row.amount,
@@ -745,14 +768,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         f.dueDate ?? row.due_date,
         f.notes ?? row.notes,
         id,
+        orgId,
       );
-      return json({ invoice: fetchInvoice(id) });
+      return json({ invoice: fetchInvoice(id, orgId) });
     }
 
     if (method === "DELETE") {
       const row = find();
       if (!row) return err("Invoice not found.", 404);
-      db.query("DELETE FROM invoices WHERE id = ?").run(id);
+      db.query("DELETE FROM invoices WHERE id = ? AND org_id = ?").run(id, orgId);
       return json({ ok: true });
     }
 
