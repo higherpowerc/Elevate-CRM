@@ -127,7 +127,7 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.companyName.trim()) {
-      setError("Company name is required.");
+      setError(form.clientType === "commercial" ? "Company name is required." : "Name is required.");
       return;
     }
     // Phase 3e: the segmented toggle must be one of the two types — a choice
@@ -187,11 +187,13 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
           </div>
           <div className="form-grid">
             <label className="field">
-              <span className="field-label">Company name *</span>
+              <span className="field-label">
+                {form.clientType === "commercial" ? "Company name *" : "Name *"}
+              </span>
               <input
                 value={form.companyName}
                 onChange={(e) => set("companyName", e.target.value)}
-                placeholder="Acme Studio"
+                placeholder={form.clientType === "commercial" ? "e.g. Acme Landscaping" : "e.g. Jane Doe"}
                 required
                 autoFocus
               />
