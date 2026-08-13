@@ -1,4 +1,4 @@
-import type { Client, DashboardData, Invoice, InvoiceStatus, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, DashboardData, Invoice, InvoiceStatus, Org, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -97,4 +97,15 @@ export const api = {
     }),
   deleteInvoice: (id: number) =>
     request<{ ok: true }>(`/api/invoices/${id}`, { method: "DELETE" }),
+
+  /* Owner-only admin endpoints (Phase 2 — tenant provisioning). A member
+     calling these gets a 403 from the server. */
+  adminOrgs: () => request<{ orgs: Org[] }>("/api/admin/orgs"),
+  adminCreateOrg: (data: { name: string; email: string; password: string }) =>
+    request<{ org: CreatedOrg; user: CreatedOrgUser }>("/api/admin/orgs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  adminDeleteOrg: (id: number) =>
+    request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
 };

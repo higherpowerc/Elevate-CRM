@@ -4,6 +4,8 @@ import {
   isStage,
   INVOICE_STATUSES,
   isInvoiceStatus,
+  DEFAULT_ORG_NAME,
+  ensureDefaultOrg,
   type ClientRow,
   type CustomField,
   type Role,
@@ -19,6 +21,8 @@ import {
   getUserByEmail,
   getUserById,
   userCount,
+  hashPassword,
+  toUser,
 } from "./auth";
 
 export const SESSION_COOKIE = "elevate_session";
@@ -79,6 +83,14 @@ function requireAuth(req: Request): AuthContext | Response {
   const user = getUserById(userId);
   if (!user) return err("Not signed in.", 401);
   return { userId: user.id, orgId: user.orgId, role: user.role };
+}
+
+/** requireAuth + the user must be an `admin` (owner). Members get 403. */
+function requireAdmin(req: Request): AuthContext | Response {
+  const auth = requireAuth(req);
+  if (auth instanceof Response) return auth;
+  if (auth.role !== "admin") return err("Forbidden.", 403);
+  return auth;
 }
 
 /* ── Client row → API shape ─────────────────────────────────────────── */
@@ -386,6 +398,56 @@ function parseInvoiceFields(
   return { ok: true, value: out };
 }
 
+/* ── Admin (owner-only) org provisioning ───────────────────── */
+
+interface OrgRow {
+  id: number;
+  name: string;
+  created_at: string;
+  user_count: number;
+  client_count: number;
+}
+
+function toOrg(row: OrgRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    userCount: row.user_count,
+    clientCount: row.client_count,
+  };
+}
+
+interface NewOrgInput {
+  name: string;
+  email: string;
+  password: string;
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Validates the "create client account" payload: org name, the client's
+ *  login email (must look like an email, unique across ALL users), and a
+ *  temp password ≥ 8 chars. */
+function validateNewOrg(
+  body: Record<string, unknown>,
+): { ok: true; value: NewOrgInput } | { ok: false; error: string } {
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return { ok: false, error: "Company name is required." };
+  if (name.length > 200) return { ok: false, error: "Company name must be under 200 characters." };
+
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  if (!email) return { ok: false, error: "Client email is required." };
+  if (email.length > 254) return { ok: false, error: "Email must be under 254 characters." };
+  if (!EMAIL_RE.test(email)) return { ok: false, error: "Enter a valid email address." };
+
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!password) return { ok: false, error: "Password is required." };
+  if (password.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
+
+  return { ok: true, value: { name, email, password } };
+}
+
 /* ── Routes ─────────────────────────────────────────────────────────── */
 
 async function handleApi(req: Request, url: URL): Promise<Response> {
@@ -416,7 +478,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
     const token = createSession(user.id);
     return json(
-      { user: { id: user.id, email: user.email, orgId: user.org_id, role: user.role }, ok: true },
+      { user: toUser(user), ok: true },
       200,
       { "Set-Cookie": sessionCookie(token) },
     );
@@ -440,6 +502,81 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   const auth = requireAuth(req);
   if (auth instanceof Response) return auth;
   const orgId = auth.orgId;
+
+  /* Admin (owner-only): tenant provisioning */
+  if (pathname === "/api/admin/orgs" && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const rows = db
+      .query(
+        `SELECT o.id, o.name, o.created_at,
+                COUNT(DISTINCT u.id) AS user_count,
+                COUNT(DISTINCT c.id) AS client_count
+         FROM orgs o
+         LEFT JOIN users u   ON u.org_id = o.id
+         LEFT JOIN clients c ON c.org_id = o.id
+         GROUP BY o.id
+         ORDER BY o.id ASC`,
+      )
+      .all() as OrgRow[];
+    return json({ orgs: rows.map(toOrg) });
+  }
+
+  if (pathname === "/api/admin/orgs" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const v = validateNewOrg(body);
+    if (!v.ok) return err(v.error, 400);
+    const taken = db.query("SELECT id FROM users WHERE email = ?").get(v.value.email);
+    if (taken) return err("An account with this email already exists.", 400);
+
+    const hash = await hashPassword(v.value.password);
+    const tx = db.transaction(() => {
+      const orgIdNew = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(v.value.name).lastInsertRowid);
+      const userId = Number(
+        db
+          .query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')")
+          .run(v.value.email, hash, orgIdNew).lastInsertRowid,
+      );
+      return { orgId: orgIdNew, userId };
+    });
+    const { orgId: newOrgId, userId } = tx();
+    const org = db.query("SELECT id, name, created_at FROM orgs WHERE id = ?").get(newOrgId) as {
+      id: number;
+      name: string;
+      created_at: string;
+    };
+    return json(
+      {
+        org: { id: org.id, name: org.name, createdAt: org.created_at },
+        user: { id: userId, email: v.value.email, orgId: newOrgId, role: "member" as Role },
+      },
+      201,
+    );
+  }
+
+  const adminOrgMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)$/);
+  if (adminOrgMatch && method === "DELETE") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminOrgMatch[1]);
+    const org = db.query("SELECT id, name FROM orgs WHERE id = ?").get(id) as
+      | { id: number; name: string }
+      | null;
+    if (!org) return err("Org not found.", 404);
+    // The default org is the owner's own org ("Elevate Studio") — never deletable.
+    if (org.id === ensureDefaultOrg()) return err("Cannot delete the owner org.", 400);
+    db.transaction(() => {
+      db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
+      db.query("DELETE FROM tasks WHERE org_id = ?").run(id);
+      db.query("DELETE FROM clients WHERE org_id = ?").run(id);
+      db.query("DELETE FROM users WHERE org_id = ?").run(id);
+      db.query("DELETE FROM orgs WHERE id = ?").run(id);
+    })();
+    return json({ ok: true });
+  }
 
   /* Dashboard */
   if (pathname === "/api/dashboard" && method === "GET") {

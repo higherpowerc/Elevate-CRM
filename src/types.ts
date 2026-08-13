@@ -73,7 +73,32 @@ export interface User {
   orgId: number;
   /** Phase 1: `admin` behaves like `member` inside their own org. */
   role: "admin" | "member";
+  /** Tenant display name (e.g. "Elevate Studio") — shown next to the email in the nav. */
+  orgName?: string;
   created_at?: string;
+}
+
+/** A tenant (org) as listed in the owner's Admin view. */
+export interface Org {
+  id: number;
+  name: string;
+  createdAt: string;
+  userCount: number;
+  clientCount: number;
+}
+
+/** Tenant created through the Admin "create client account" form. */
+export interface CreatedOrg {
+  id: number;
+  name: string;
+  createdAt: string;
+}
+
+export interface CreatedOrgUser {
+  id: number;
+  email: string;
+  orgId: number;
+  role: "admin" | "member";
 }
 
 export const STAGE_TONE: Record<Stage, string> = {

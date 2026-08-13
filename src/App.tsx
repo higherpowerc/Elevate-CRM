@@ -4,10 +4,11 @@ import Dashboard from "./Dashboard";
 import Clients from "./Clients";
 import Tasks from "./Tasks";
 import Finance from "./Finance";
+import Admin from "./Admin";
 import { api } from "./api";
 import type { User } from "./types";
 
-type View = "dashboard" | "clients" | "tasks" | "finance";
+type View = "dashboard" | "clients" | "tasks" | "finance" | "admin";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -94,10 +95,19 @@ export default function App() {
             >
               Finance
             </button>
+            {user.role === "admin" && (
+              <button
+                className={view === "admin" ? "tab active" : "tab"}
+                onClick={() => setView("admin")}
+              >
+                Admin
+              </button>
+            )}
           </nav>
           <div className="nav-right">
             <span className="nav-user" title={user.email}>
               {user.email}
+              {user.orgName ? ` · ${user.orgName}` : ""}
             </span>
             <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
               Sign out
@@ -112,8 +122,10 @@ export default function App() {
           <Clients />
         ) : view === "tasks" ? (
           <Tasks />
-        ) : (
+        ) : view === "finance" ? (
           <Finance />
+        ) : (
+          <Admin ownerOrgId={user.orgId} />
         )}
       </main>
       <footer className="foot">Elevate Studio CRM · product build · v0.1</footer>

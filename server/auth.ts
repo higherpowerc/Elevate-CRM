@@ -71,6 +71,7 @@ export interface User {
   email: string;
   orgId: number;
   role: Role;
+  orgName: string;
   created_at: string;
 }
 
@@ -82,8 +83,19 @@ interface UserRow {
   created_at: string;
 }
 
-function toUser(row: UserRow): User {
-  return { id: row.id, email: row.email, orgId: row.org_id, role: row.role, created_at: row.created_at };
+/** Map a users row to the API shape; orgName lets the shell show which tenant
+ *  the signed-in user belongs to (helps the owner tell tenants apart when
+ *  testing client logins). */
+export function toUser(row: UserRow): User {
+  const org = db.query("SELECT name FROM orgs WHERE id = ?").get(row.org_id) as { name: string } | null;
+  return {
+    id: row.id,
+    email: row.email,
+    orgId: row.org_id,
+    role: row.role,
+    orgName: org?.name ?? "",
+    created_at: row.created_at,
+  };
 }
 
 export function getUserById(id: number): User | null {
@@ -102,6 +114,12 @@ export function getUserByEmail(email: string): (UserRow & { password_hash: strin
 
 export function userCount(): number {
   return (db.query("SELECT COUNT(*) AS c FROM users").get() as { c: number }).c;
+}
+
+/** bcrypt-hash a password (cost 10) — the one hashing helper for every user
+ *  (admin seeding + Phase 2 admin-provisioned member accounts). */
+export function hashPassword(password: string): Promise<string> {
+  return Bun.password.hash(password, { algorithm: "bcrypt", cost: 10 });
 }
 
 /**
@@ -127,7 +145,7 @@ export async function ensureAdmin(): Promise<{ created: boolean; message: string
       message: "[auth] ADMIN_PASSWORD is too short (< 8 chars). Choose a longer password.",
     };
   }
-  const hash = await Bun.password.hash(password, { algorithm: "bcrypt", cost: 10 });
+  const hash = await hashPassword(password);
   const orgId = ensureDefaultOrg();
   const existing = db.query("SELECT id FROM users WHERE email = ?").get(email);
   if (existing) {
