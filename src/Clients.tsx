@@ -1,0 +1,293 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { api, type ClientInput } from "./api";
+import { STAGES, money, fmtDate, type Client, type Stage } from "./types";
+import { StageBadge, ServiceChips } from "./bits";
+import ClientModal from "./ClientModal";
+import ConfirmDialog from "./ConfirmDialog";
+
+type Filter = "active" | "archived" | "all";
+
+export default function Clients() {
+  const [clients, setClients] = useState<Client[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("active");
+  const [query, setQuery] = useState("");
+  const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
+  const [deleting, setDeleting] = useState<Client | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async (includeArchived = false) => {
+    setError(null);
+    try {
+      const { clients } = await api.clients(includeArchived);
+      setClients(clients);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load clients.");
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const visible = useMemo(() => {
+    if (!clients) return [];
+    const q = query.trim().toLowerCase();
+    return clients.filter((c) => {
+      const matchFilter =
+        filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
+      if (!matchFilter) return false;
+      if (!q) return true;
+      return [c.companyName, c.contactName, c.email, c.industry]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [clients, filter, query]);
+
+  const totalValue = useMemo(
+    () => visible.filter((c) => !c.archived).reduce((sum, c) => sum + (c.dealValue || 0), 0),
+    [visible],
+  );
+
+  async function handleSave(input: ClientInput, editing?: Client) {
+    setBusy(true);
+    setError(null);
+    try {
+      if (editing) await api.updateClient(editing.id, input);
+      else await api.createClient(input);
+      setModal(null);
+      await load(filter === "all");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleting) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteClient(deleting.id);
+      setDeleting(null);
+      await load(filter === "all");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleStageMove(c: Client, stage: Stage) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateClient(c.id, { ...c, stage });
+      await load(filter === "all");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Move failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleArchive(c: Client) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateClient(c.id, { ...c, archived: !c.archived });
+      await load(filter === "all");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Archive failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!clients) {
+    return error ? (
+      <div className="alert alert-error">{error}</div>
+    ) : (
+      <div className="skeleton-block" aria-label="Loading clients" />
+    );
+  }
+
+  const counts = {
+    active: clients.filter((c) => !c.archived).length,
+    archived: clients.filter((c) => c.archived).length,
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1>
+            Client <em className="serif">book</em>
+          </h1>
+          <p className="page-sub">
+            {counts.active} active · {counts.archived} archived · active book value{" "}
+            <strong>{money(totalValue)}</strong>
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
+          + New client
+        </button>
+      </div>
+
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="toolbar">
+        <div className="seg">
+          {(["active", "archived", "all"] as Filter[]).map((f) => (
+            <button
+              key={f}
+              className={filter === f ? "seg-btn active" : "seg-btn"}
+              onClick={() => setFilter(f)}
+            >
+              {f === "active" ? "Active" : f === "archived" ? "Archived" : "All"}
+              <span className="seg-count">
+                {f === "active" ? counts.active : f === "archived" ? counts.archived : clients.length}
+              </span>
+            </button>
+          ))}
+        </div>
+        <input
+          className="search"
+          type="search"
+          placeholder="Search company, contact, industry…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search clients"
+        />
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="card empty">
+          <p className="empty-title">{clients.length === 0 ? "No clients yet" : "Nothing matches"}</p>
+          <p className="empty-sub">
+            {clients.length === 0
+              ? "Add your first client to start tracking the pipeline."
+              : "Try a different search or filter."}
+          </p>
+          {clients.length === 0 && (
+            <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
+              Add a client
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="card table-wrap">
+          <table className="table clients-table">
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Contact</th>
+                <th>Services</th>
+                <th className="num">Deal</th>
+                <th>Stage</th>
+                <th>Next action</th>
+                <th className="actions-th">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => (
+                <tr key={c.id} className={c.archived ? "row-archived" : ""}>
+                  <td className="cell-strong">
+                    <div className="cell-company">
+                      {c.companyName}
+                      {c.archived && <span className="chip chip-archived">archived</span>}
+                    </div>
+                    {c.industry && <div className="cell-sub">{c.industry}</div>}
+                  </td>
+                  <td>
+                    <div className="cell-contact">
+                      {c.contactName || "—"}
+                      {c.email && <div className="cell-sub">{c.email}</div>}
+                    </div>
+                  </td>
+                  <td>
+                    <ServiceChips services={c.services} />
+                  </td>
+                  <td className="num cell-strong">{money(c.dealValue)}</td>
+                  <td>
+                    <div className="stage-cell">
+                      <StageBadge stage={c.stage} />
+                      <select
+                        className="stage-select"
+                        value={c.stage}
+                        aria-label={`Move ${c.companyName} to stage`}
+                        onChange={(e) => handleStageMove(c, e.target.value as Stage)}
+                        disabled={busy}
+                      >
+                        {STAGES.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </td>
+                  <td className="cell-muted cell-next">{c.nextAction || "—"}</td>
+                  <td>
+                    <div className="row-actions">
+                      <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
+                        Edit
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title={c.archived ? "Unarchive" : "Archive"}
+                        aria-label={c.archived ? "Unarchive" : "Archive"}
+                        onClick={() => handleArchive(c)}
+                      >
+                        {c.archived ? "Restore" : "Archive"}
+                      </button>
+                      <button
+                        className="icon-btn danger"
+                        title="Delete"
+                        aria-label={`Delete ${c.companyName}`}
+                        onClick={() => setDeleting(c)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <ClientModal
+          client={modal.mode === "edit" ? modal.client : undefined}
+          busy={busy}
+          onClose={() => setModal(null)}
+          onSave={handleSave}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="Delete client?"
+          body={
+            <>
+              <strong>{deleting.companyName}</strong> will be permanently removed from the
+              pipeline. This cannot be undone. (Archive instead if you want to keep the record.)
+            </>
+          }
+          confirmLabel="Delete permanently"
+          danger
+          busy={busy}
+          onCancel={() => setDeleting(null)}
+          onConfirm={handleDelete}
+        />
+      )}
+    </div>
+  );
+}

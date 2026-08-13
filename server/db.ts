@@ -1,0 +1,81 @@
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+export const STAGES = [
+  "Prospect",
+  "Intake",
+  "Kickoff",
+  "Build",
+  "Launch",
+  "Retainer",
+] as const;
+export type Stage = (typeof STAGES)[number];
+
+export const SERVICES = [
+  "Premium Website",
+  "SEO",
+  "Paid Campaigns",
+  "Analytics",
+] as const;
+export type Service = (typeof SERVICES)[number];
+
+export function isStage(v: unknown): v is Stage {
+  return typeof v === "string" && (STAGES as readonly string[]).includes(v);
+}
+
+/** Data dir: $DATA_DIR env, else ./data next to the server directory. */
+const dataDir = process.env.DATA_DIR ?? join(import.meta.dir, "..", "data");
+mkdirSync(dataDir, { recursive: true });
+
+export const db = new Database(join(dataDir, "crm.db"));
+
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA foreign_keys = ON");
+db.exec("PRAGMA busy_timeout = 3000");
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS clients (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name TEXT NOT NULL,
+    contact_name TEXT NOT NULL DEFAULT '',
+    email        TEXT NOT NULL DEFAULT '',
+    phone        TEXT NOT NULL DEFAULT '',
+    industry     TEXT NOT NULL DEFAULT '',
+    services     TEXT NOT NULL DEFAULT '[]',
+    deal_value   REAL NOT NULL DEFAULT 0,
+    stage        TEXT NOT NULL DEFAULT 'Prospect',
+    next_action  TEXT NOT NULL DEFAULT '',
+    notes        TEXT NOT NULL DEFAULT '',
+    archived     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_clients_stage   ON clients(stage);
+  CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
+`);
+
+export interface ClientRow {
+  id: number;
+  company_name: string;
+  contact_name: string;
+  email: string;
+  phone: string;
+  industry: string;
+  services: string;
+  deal_value: number;
+  stage: Stage;
+  next_action: string;
+  notes: string;
+  archived: number;
+  created_at: string;
+  updated_at: string;
+}
