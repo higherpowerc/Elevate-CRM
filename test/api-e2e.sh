@@ -104,7 +104,44 @@ S=$(code -b "$JAR" "$BASE/api/clients")
 check "list after delete → 200" 200 "$S"
 grep -qv 'Acme Legal' /tmp/body.json && echo "  ✓ Acme gone from list" || echo "  ✗ Acme still listed"
 
-echo "== 10. Logout =="
+echo "== 10. Custom fields + free-form services + decimal deal value =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"+1 415 555 0131","industry":"HVAC","services":["Installation","Repair","Maintenance"],"dealValue":9500.50,"stage":"Prospect","nextAction":"Send quote","notes":"","customFields":[{"label":"License #","value":"CA-88213"},{"label":"Service area","value":"Greater Bay Area"},{"label":"Fleet size","value":"12"}]}' \
+  "$BASE/api/clients")
+check "create HVAC client with 2+ custom fields → 201" 201 "$S"
+HVAC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (created client id=$HVAC_ID)"
+grep -q '"customFields":\[{"label":"License #","value":"CA-88213"}' /tmp/body.json && echo "  ✓ create returns custom fields" || echo "  ✗ custom fields missing on create: $(cat /tmp/body.json)"
+grep -q '"dealValue":9500.5' /tmp/body.json && echo "  ✓ decimal deal value returned" || echo "  ✗ deal value mismatch: $(cat /tmp/body.json)"
+grep -q '"services":\["Installation","Repair","Maintenance"\]' /tmp/body.json && echo "  ✓ free-form services returned" || echo "  ✗ services mismatch: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients/$HVAC_ID")
+check "GET HVAC client → 200" 200 "$S"
+grep -q '"Fleet size"' /tmp/body.json && echo "  ✓ GET returns all custom fields" || echo "  ✗ custom fields missing on GET: $(cat /tmp/body.json)"
+
+echo "== 11. Custom field update round-trip =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Kickoff","nextAction":"","notes":"","customFields":[{"label":"License #","value":"CA-88213"}]}' \
+  "$BASE/api/clients/$HVAC_ID")
+check "update HVAC → 200" 200 "$S"
+grep -q '"customFields":\[{"label":"License #","value":"CA-88213"}\]' /tmp/body.json && echo "  ✓ update removed a custom field" || echo "  ✗ custom fields after update: $(cat /tmp/body.json)"
+grep -q '"dealValue":12345.67' /tmp/body.json && echo "  ✓ updated decimal deal value" || echo "  ✗ updated deal: $(cat /tmp/body.json)"
+grep -q '"AC Tune-Up"' /tmp/body.json && echo "  ✓ updated free-form service" || echo "  ✗ services after update: $(cat /tmp/body.json)"
+
+echo "== 12. Custom field validation + landscaping demo =="
+check "empty custom field label → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"label":"","value":"x"}]}' "$BASE/api/clients")
+check "non-object custom field → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":["License"]}' "$BASE/api/clients")
+check "custom fields not a list → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":{"label":"x","value":"y"}}' "$BASE/api/clients")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Build","nextAction":"Site visit","notes":"","customFields":[{"label":"Crew size","value":"6"},{"label":"Seasonal contract","value":"Yes — Apr to Oct"},{"label":"Service radius","value":"40 mi"}]}' \
+  "$BASE/api/clients")
+check "create landscaping client → 201" 201 "$S"
+LS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+grep -q '"Crew size"' /tmp/body.json && echo "  ✓ landscaping custom fields returned" || echo "  ✗ missing: $(cat /tmp/body.json)"
+
+echo "== 13. Logout =="
 S=$(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/logout")
 check "logout → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/auth/me")
