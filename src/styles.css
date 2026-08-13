@@ -2243,7 +2243,6 @@ legend.field-label {
 .cfdef-card {
   grid-column: 1 / -1;
 }
-
 .cfdef-empty {
   margin: 10px 0 2px;
   max-width: 46em;
@@ -2339,6 +2338,36 @@ legend.field-label {
 
 .cfdef-add input::placeholder {
   color: var(--muted-2);
+}
+/* ── Adaptive intake (Phase 1): Settings vertical-config controls ── */
+.intake-seg {
+  display: flex;
+  flex-wrap: wrap;
+}
+.intake-seg .seg-btn {
+  justify-content: center;
+}
+.intake-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 2px 0;
+}
+.intake-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.intake-opt input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--lime);
+  cursor: pointer;
+  flex: none;
 }
 
 /* Client modal — typed custom field values (one labeled control per def) */

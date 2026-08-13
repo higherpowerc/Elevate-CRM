@@ -26,6 +26,12 @@ export default function Settings() {
   const [newFieldType, setNewFieldType] = useState<CustomFieldType>("text");
   const [confirmRemoveField, setConfirmRemoveField] = useState<number | null>(null);
 
+  /* Adaptive intake (Phase 1): account-level vertical config */
+  const [serviceModel, setServiceModel] = useState<OrgSettings["serviceModel"]>("both");
+  const [deliveryType, setDeliveryType] = useState<OrgSettings["deliveryType"]>("both");
+  const [industry, setIndustry] = useState<OrgSettings["industry"]>("");
+  const [intakeOpts, setIntakeOpts] = useState<string[]>([]);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -38,6 +44,10 @@ export default function Settings() {
       setOrgName(settings.orgName);
       setAccentColor(settings.accentColor);
       setCustomFields(settings.customFields);
+      setServiceModel(settings.serviceModel);
+      setDeliveryType(settings.deliveryType);
+      setIndustry(settings.industry);
+      setIntakeOpts(settings.intakeOpts);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -56,6 +66,45 @@ export default function Settings() {
       await api.updateSettings({ orgName: orgName.trim(), accentColor });
       setSaved("Workspace branding saved.");
       await load(); // refresh orgName/accent from the server
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Adaptive intake (Phase 1): account-level vertical config ───── */
+
+  const INTAKE_OPT_LABELS: { id: string; label: string }[] = [
+    { id: "business_llc_tab", label: "Business Name / LLC tab" },
+    { id: "hoa_restrictions", label: "HOA restrictions" },
+    { id: "pet_on_premises", label: "Pet on premises" },
+    { id: "parking_access", label: "Parking / access" },
+  ];
+
+  function toggleIntakeOpt(id: string) {
+    setError(null);
+    setSaved(null);
+    setIntakeOpts((list) =>
+      list.includes(id) ? list.filter((g) => g !== id) : [...list, id],
+    );
+  }
+
+  async function saveIntakeSetup() {
+    setError(null);
+    setSaved(null);
+    setBusy(true);
+    try {
+      // '' is "unspecified" — persist the explicit enum 'other' instead so the
+      // select and the stored value always agree after a save.
+      await api.updateSettings({
+        serviceModel,
+        deliveryType,
+        industry: industry === "" ? "other" : industry,
+        intakeOpts,
+      });
+      setSaved("Account setup saved.");
+      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed.");
     } finally {
@@ -204,6 +253,115 @@ export default function Settings() {
               {busy ? "Saving…" : "Save branding"}
             </button>
           </form>
+        </div>
+
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Account setup</h2>
+            <p className="admin-card-sub">
+              How your business works — the intake form adapts to this so your team only ever
+              sees the fields that matter. Set once when you set up your workspace.
+            </p>
+          </div>
+          <div className="form">
+            <div className="field">
+              <span className="field-label">Service model</span>
+              <div className="seg intake-seg" role="radiogroup" aria-label="Service model">
+                {(
+                  [
+                    ["residential_only", "Residential only"],
+                    ["commercial_only", "Commercial only"],
+                    ["both", "Both"],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    role="radio"
+                    aria-checked={serviceModel === val}
+                    className={serviceModel === val ? "seg-btn active" : "seg-btn"}
+                    onClick={() => {
+                      setError(null);
+                      setSaved(null);
+                      setServiceModel(val);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
+              <span className="field-label">Delivery type</span>
+              <div className="seg intake-seg" role="radiogroup" aria-label="Delivery type">
+                {(
+                  [
+                    ["client_comes", "Client comes to us"],
+                    ["we_go", "We go to client"],
+                    ["both", "Both"],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    role="radio"
+                    aria-checked={deliveryType === val}
+                    className={deliveryType === val ? "seg-btn active" : "seg-btn"}
+                    onClick={() => {
+                      setError(null);
+                      setSaved(null);
+                      setDeliveryType(val);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="intake-industry">
+                Industry
+              </label>
+              <select
+                id="intake-industry"
+                value={industry === "" ? "other" : industry}
+                onChange={(e) => {
+                  setError(null);
+                  setSaved(null);
+                  setIndustry(e.target.value as OrgSettings["industry"]);
+                }}
+              >
+                <option value="home_services">Home services</option>
+                <option value="mobile_personal">Mobile personal services</option>
+                <option value="professional">Professional services</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="field">
+              <span className="field-label">Optional intake fields</span>
+              <div className="intake-opts">
+                {INTAKE_OPT_LABELS.map((g) => (
+                  <label className="intake-opt" key={g.id}>
+                    <input
+                      type="checkbox"
+                      checked={intakeOpts.includes(g.id)}
+                      onChange={() => toggleIntakeOpt(g.id)}
+                    />
+                    <span>{g.label}</span>
+                  </label>
+                ))}
+              </div>
+              <span className="field-hint">
+                Optional groups are only available when they fit your industry — e.g. an HOA
+                field for home services, parking/pet fields for mobile personal services.
+              </span>
+            </div>
+            <div className="stage-save">
+              <button className="btn btn-primary" disabled={busy} onClick={saveIntakeSetup}>
+                {busy ? "Saving…" : "Save account setup"}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="card admin-table">

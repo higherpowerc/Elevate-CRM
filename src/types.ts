@@ -58,6 +58,34 @@ export interface Client {
   zip: string;
   website: string;
   leadSource: string;
+  /** Adaptive intake Phase 1: optional billing + intake fields (all
+   *  optional — the intake form drives which ones a tenant actually uses;
+   *  the server always returns them, defaulting to '' / false). */
+  billingAddress?: string;
+  billingCity?: string;
+  billingState?: string;
+  billingZip?: string;
+  billingSame?: boolean;
+  preferredContactMethod?: string;
+  businessType?: string;
+  taxIdEin?: string;
+  apContact?: string;
+  poRequired?: boolean;
+  unitsLocations?: string;
+  propertyManagerName?: string;
+  propertyManagerContact?: string;
+  hoaName?: string;
+  hoaContact?: string;
+  accessInstructions?: string;
+  coiRequired?: boolean;
+  serviceContract?: string;
+  dbaName?: string;
+  einSsn?: string;
+  homeownerRenter?: string;
+  hoaRestrictions?: string;
+  parkingAccess?: string;
+  petOnPremises?: boolean;
+  preferredServiceLocation?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,6 +187,15 @@ export interface OrgSettings {
   /** The tenant's custom-field definitions (Phase 3b) — drive the client
    *  form fields and how values are rendered. */
   customFields: CustomFieldDef[];
+  /** Adaptive intake Phase 1: account-level vertical config (set once per
+   *  CRM account; drives which conditional intake fields the form shows). */
+  serviceModel: "residential_only" | "commercial_only" | "both";
+  deliveryType: "client_comes" | "we_go" | "both";
+  /** '' means unspecified/other. */
+  industry: "home_services" | "mobile_personal" | "professional" | "other" | "";
+  /** Enabled optional (➖) intake groups: business_llc_tab, hoa_restrictions,
+   *  pet_on_premises, parking_access. */
+  intakeOpts: string[];
 }
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is

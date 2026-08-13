@@ -119,14 +119,19 @@ export const api = {
   impersonateReturn: () =>
     request<MeResponse>("/api/auth/impersonate-return", { method: "POST" }),
 
-  /* Org settings (Phase 3a/3b — branding, per-tenant stages, custom fields).
-     Any signed-in member of the org can read/update their own org's settings. */
+  /* Org settings (Phase 3a/3b — branding, per-tenant stages, custom fields;
+     Phase 1 adaptive intake — vertical config). Any signed-in member of the
+     org can read/update their own org's settings. */
   settings: () => request<{ settings: OrgSettings }>("/api/settings"),
   updateSettings: (data: {
     orgName?: string;
     accentColor?: string;
     stages?: string[];
     customFields?: CustomFieldDef[];
+    serviceModel?: OrgSettings["serviceModel"];
+    deliveryType?: OrgSettings["deliveryType"];
+    industry?: OrgSettings["industry"];
+    intakeOpts?: string[];
   }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",
