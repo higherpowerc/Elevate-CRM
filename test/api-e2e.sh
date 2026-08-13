@@ -906,6 +906,51 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found — run \`bun run build\` before the suite"
 fi
 
+echo "== 20. Archived clients round-trip (Clients tab visibility fix) =="
+# The Clients tab fetches ALL clients (?archived=1) so archived ones show on
+# the Archived/All tabs. This section locks the server contract the UI now
+# relies on: default GET excludes archived, ?archived=1 includes them, and a
+# PUT archived=false restores a client to the default list.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Prospect"}' \
+  "$BASE/api/clients")
+check "create round-trip client → 201" 201 "$S"
+RT_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (created client id=$RT_ID)"
+grep -q '"archived":false' /tmp/body.json && echo "  ✓ new client starts active" || echo "  ✗ new client archived flag: $(cat /tmp/body.json)"
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+P0=$(python3 -c "import json;d=json.load(open('/tmp/body.json'));print(d['stageCounts'].get('Prospect',0))")
+V0=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['projectedPipeline'])")
+A0=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['archivedClients'])")
+echo "    (before archive: Prospect=$P0 pipeline=$V0 archivedClients=$A0)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Prospect","archived":true}' \
+  "$BASE/api/clients/$RT_ID")
+check "PUT archived=true → 200" 200 "$S"
+grep -q '"archived":true' /tmp/body.json && echo "  ✓ response archived=true" || echo "  ✗ archive failed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "default list after archive → 200" 200 "$S"
+grep -qv 'Archive Round Trip Co' /tmp/body.json && echo "  ✓ archived hidden in default GET" || echo "  ✗ archived still in default GET"
+S=$(code -b "$JAR" "$BASE/api/clients?archived=1")
+check "archived=1 list → 200" 200 "$S"
+grep -q 'Archive Round Trip Co' /tmp/body.json && echo "  ✓ archived present in ?archived=1" || echo "  ✗ archived missing from ?archived=1"
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+grep -q "\"Prospect\":$((P0-1))" /tmp/body.json && echo "  ✓ stageCounts Prospect=$((P0-1)) (archived excluded from stage counts)" || echo "  ✗ stageCounts after archive: $(cat /tmp/body.json)"
+python3 -c "import json,sys;sys.exit(0 if abs(json.load(open('/tmp/body.json'))['projectedPipeline']-($V0-7777))<0.01 else 1)" && echo "  ✓ projectedPipeline excludes the archived 7777 deal" || echo "  ✗ pipeline after archive: $(cat /tmp/body.json)"
+grep -q "\"archivedClients\":$((A0+1))" /tmp/body.json && echo "  ✓ archivedClients=$((A0+1)) (incremented)" || echo "  ✗ archivedClients after archive: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Prospect","archived":false}' \
+  "$BASE/api/clients/$RT_ID")
+check "PUT archived=false (restore) → 200" 200 "$S"
+grep -q '"archived":false' /tmp/body.json && echo "  ✓ response archived=false (restored)" || echo "  ✗ restore failed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "default list after restore → 200" 200 "$S"
+grep -q 'Archive Round Trip Co' /tmp/body.json && echo "  ✓ restored client back in default GET" || echo "  ✗ restored client missing from default GET"
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+grep -q "\"Prospect\":$P0" /tmp/body.json && echo "  ✓ stageCounts Prospect=$P0 again (restored counts as active)" || echo "  ✗ stageCounts after restore: $(cat /tmp/body.json)"
+python3 -c "import json,sys;sys.exit(0 if abs(json.load(open('/tmp/body.json'))['projectedPipeline']-$V0)<0.01 else 1)" && echo "  ✓ projectedPipeline back to $V0 (restored deal counted)" || echo "  ✗ pipeline after restore: $(cat /tmp/body.json)"
+grep -q "\"archivedClients\":$A0" /tmp/body.json && echo "  ✓ archivedClients back to $A0" || echo "  ✗ archivedClients after restore: $(cat /tmp/body.json)"
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json
