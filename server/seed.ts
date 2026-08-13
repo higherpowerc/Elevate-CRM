@@ -43,6 +43,13 @@ const DEMO_CLIENTS = [
     email: "sam@northline.example",
     phone: "+1 415 555 0127",
     industry: "Hospitality",
+    clientType: "commercial",
+    address: "4120 Mission St",
+    city: "San Francisco",
+    state: "CA",
+    zip: "94112",
+    website: "northlinecoffee.example",
+    leadSource: "Referral",
     services: ["Premium Website", "SEO"],
     customFields: [
       { name: "Locations", value: "3" },
@@ -59,6 +66,12 @@ const DEMO_CLIENTS = [
     email: "maya@harborvine.example",
     phone: "",
     industry: "Retail",
+    clientType: "commercial",
+    address: "88 Pier Ave",
+    city: "Seattle",
+    state: "WA",
+    zip: "98101",
+    leadSource: "Website",
     services: ["Paid Campaigns", "Analytics"],
     customFields: [],
     dealValue: 6400,
@@ -72,6 +85,13 @@ const DEMO_CLIENTS = [
     email: "owen@brightline.example",
     phone: "+1 312 555 0190",
     industry: "Healthcare",
+    clientType: "commercial",
+    address: "2210 N Clark St",
+    city: "Chicago",
+    state: "IL",
+    zip: "60614",
+    website: "brightlinedental.example",
+    leadSource: "Walk-in",
     services: ["SEO"],
     customFields: [
       { name: "Locations", value: "2" },
@@ -88,6 +108,13 @@ const DEMO_CLIENTS = [
     email: "priya@kestrel.example",
     phone: "",
     industry: "Transport",
+    clientType: "commercial",
+    address: "900 Dravus St",
+    city: "Seattle",
+    state: "WA",
+    zip: "98109",
+    website: "kestrellogistics.example",
+    leadSource: "Referral",
     services: ["Premium Website", "Paid Campaigns", "Analytics"],
     customFields: [
       { name: "Fleet size", value: "22" },
@@ -104,6 +131,13 @@ const DEMO_CLIENTS = [
     email: "theo@fablefolk.example",
     phone: "",
     industry: "E-commerce",
+    clientType: "commercial",
+    address: "",
+    city: "Portland",
+    state: "OR",
+    zip: "97205",
+    website: "fablefolk.example",
+    leadSource: "Website",
     services: ["Premium Website", "SEO", "Analytics"],
     customFields: [],
     dealValue: 12000,
@@ -117,6 +151,12 @@ const DEMO_CLIENTS = [
     email: "leah@cedarsage.example",
     phone: "",
     industry: "Real Estate",
+    clientType: "commercial",
+    address: "1501 4th Ave",
+    city: "Seattle",
+    state: "WA",
+    zip: "98101",
+    leadSource: "Referral",
     services: ["SEO", "Paid Campaigns"],
     customFields: [
       { name: "Agents", value: "8" },
@@ -133,6 +173,12 @@ const DEMO_CLIENTS = [
     email: "ray@summit.example",
     phone: "+1 415 555 0131",
     industry: "HVAC",
+    clientType: "residential",
+    address: "4820 Geary Blvd",
+    city: "San Francisco",
+    state: "CA",
+    zip: "94118",
+    leadSource: "Referral",
     services: ["Installation", "Repair", "Maintenance"],
     customFields: [
       { name: "License #", value: "CA-88213" },
@@ -150,6 +196,13 @@ const DEMO_CLIENTS = [
     email: "dana@willowstone.example",
     phone: "+1 206 555 0144",
     industry: "Landscaping",
+    clientType: "commercial",
+    address: "3327 22nd Ave S",
+    city: "Seattle",
+    state: "WA",
+    zip: "98144",
+    website: "willowstone.example",
+    leadSource: "Website",
     services: ["Mowing", "Design", "Irrigation"],
     customFields: [
       { name: "Crew size", value: "6" },
@@ -184,8 +237,8 @@ if (wantDemo) {
   } else {
     const insert = db.prepare(
       `INSERT INTO clients
-         (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, client_type, address, city, state, zip, website, lead_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const tx = db.transaction(() => {
       for (const cl of DEMO_CLIENTS) {
@@ -193,6 +246,8 @@ if (wantDemo) {
           demoOrgId, cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
           JSON.stringify(cl.services), JSON.stringify(cl.customFields), cl.dealValue,
           cl.stage, cl.nextAction, cl.notes,
+          cl.clientType ?? "residential", cl.address ?? "", cl.city ?? "", cl.state ?? "", cl.zip ?? "",
+          cl.website ?? "", cl.leadSource ?? "",
         );
       }
     });
@@ -357,6 +412,12 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     email: "pat@greenlawn.example",
     phone: "+1 602 555 0173",
     industry: "Property Management",
+    clientType: "commercial",
+    address: "1845 W Greenway Rd",
+    city: "Phoenix",
+    state: "AZ",
+    zip: "85023",
+    leadSource: "Referral",
     services: ["Weekly mowing", "Fertilization", "Irrigation"],
     customFields: [
       { name: "Crew size", value: "4" },
@@ -373,6 +434,12 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     email: "miguel@cactusridge.example",
     phone: "",
     industry: "Property Management",
+    clientType: "commercial",
+    address: "6120 E Cactus Rd",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85254",
+    leadSource: "Website",
     services: ["Seasonal cleanup", "Tree trimming"],
     customFields: [{ name: "Crew size", value: "2" }],
     dealValue: 1800,
@@ -386,6 +453,13 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     email: "elena@sonoranstone.example",
     phone: "+1 520 555 0188",
     industry: "Hardscaping",
+    clientType: "commercial",
+    address: "4410 E Grant Rd",
+    city: "Tucson",
+    state: "AZ",
+    zip: "85712",
+    website: "sonoranstone.example",
+    leadSource: "Referral",
     services: ["Paver patios", "Retaining walls", "Design"],
     customFields: [
       { name: "Crew size", value: "6" },
@@ -423,14 +497,16 @@ if (wantDemo) {
       );
       const insertClient = db.prepare(
         `INSERT INTO clients
-           (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, client_type, address, city, state, zip, website, lead_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const cl of DEMO_CLIENT_ORG_CLIENTS) {
         insertClient.run(
           orgId, cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
           JSON.stringify(cl.services), JSON.stringify(cl.customFields), cl.dealValue,
           cl.stage, cl.nextAction, cl.notes,
+          cl.clientType ?? "residential", cl.address ?? "", cl.city ?? "", cl.state ?? "", cl.zip ?? "",
+          cl.website ?? "", cl.leadSource ?? "",
         );
       }
       return orgId;

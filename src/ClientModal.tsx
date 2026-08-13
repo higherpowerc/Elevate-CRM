@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { Client, CustomFieldDef, CustomField, Stage } from "./types";
+import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
 
 interface Props {
   client?: Client;
@@ -28,6 +28,13 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
     nextAction: "",
     notes: "",
     archived: false,
+    clientType: "residential",
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    website: "",
+    leadSource: "",
   });
   const [form, setForm] = useState(() =>
     client
@@ -44,6 +51,13 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
           nextAction: client.nextAction,
           notes: client.notes,
           archived: client.archived,
+          clientType: client.clientType,
+          address: client.address,
+          city: client.city,
+          state: client.state,
+          zip: client.zip,
+          website: client.website,
+          leadSource: client.leadSource,
         }
       : empty(),
   );
@@ -116,6 +130,12 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
       setError("Company name is required.");
       return;
     }
+    // Phase 3e: the segmented toggle must be one of the two types — a choice
+    // is forced before saving (the server enforces it too).
+    if (form.clientType !== "commercial" && form.clientType !== "residential") {
+      setError("Choose Commercial or Residential.");
+      return;
+    }
     // Build the payload custom fields from the tenant's definitions: every
     // checkbox is sent (0/1); text/number/date fields are sent only when they
     // have a value (empty values are omitted — the server treats them as
@@ -148,6 +168,23 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
               {error}
             </div>
           )}
+          <div className="field">
+            <span className="field-label">Client type *</span>
+            <div className="seg seg-type" role="radiogroup" aria-label="Client type">
+              {(["commercial", "residential"] as ClientType[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.clientType === t}
+                  className={form.clientType === t ? "seg-btn active" : "seg-btn"}
+                  onClick={() => set("clientType", t)}
+                >
+                  {t === "commercial" ? "Commercial" : "Residential"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="form-grid">
             <label className="field">
               <span className="field-label">Company name *</span>
@@ -220,6 +257,69 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
                 value={form.nextAction}
                 onChange={(e) => set("nextAction", e.target.value)}
                 placeholder="e.g. Send proposal by Friday"
+              />
+            </label>
+          </div>
+
+          <fieldset className="field addr-group">
+            <legend className="field-label">Address</legend>
+            <div className="field">
+              <input
+                value={form.address}
+                onChange={(e) => set("address", e.target.value)}
+                placeholder="Street address"
+                maxLength={200}
+              />
+            </div>
+            <div className="form-row-3">
+              <label className="field">
+                <span className="field-label">City</span>
+                <input
+                  value={form.city}
+                  onChange={(e) => set("city", e.target.value)}
+                  placeholder="Seattle"
+                  maxLength={100}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">State</span>
+                <input
+                  value={form.state}
+                  onChange={(e) => set("state", e.target.value)}
+                  placeholder="WA"
+                  maxLength={50}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">ZIP / postal</span>
+                <input
+                  value={form.zip}
+                  onChange={(e) => set("zip", e.target.value)}
+                  placeholder="98101"
+                  maxLength={20}
+                />
+              </label>
+            </div>
+          </fieldset>
+
+          <div className="form-grid">
+            <label className="field">
+              <span className="field-label">Website</span>
+              <input
+                type="url"
+                value={form.website}
+                onChange={(e) => set("website", e.target.value)}
+                placeholder="https://acme.com"
+                maxLength={200}
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Lead source</span>
+              <input
+                value={form.leadSource}
+                onChange={(e) => set("leadSource", e.target.value)}
+                placeholder="Referral, Website, Walk-in…"
+                maxLength={100}
               />
             </label>
           </div>

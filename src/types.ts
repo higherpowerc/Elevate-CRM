@@ -33,6 +33,10 @@ export interface CustomField {
   value: string;
 }
 
+/** Phase 3e: every client is Commercial or Residential (required on create
+ *  and edit; existing rows backfilled to residential). */
+export type ClientType = "commercial" | "residential";
+
 export interface Client {
   id: number;
   companyName: string;
@@ -47,6 +51,13 @@ export interface Client {
   nextAction: string;
   notes: string;
   archived: boolean;
+  clientType: ClientType;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  website: string;
+  leadSource: string;
   createdAt: string;
   updatedAt: string;
 }

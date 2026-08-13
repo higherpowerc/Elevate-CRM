@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { CUSTOM_FIELD_TYPES, DEFAULT_STAGES, type CustomFieldDef, type CustomFieldType, type OrgSettings } from "./types";
+import { CUSTOM_FIELD_TYPES, type CustomFieldDef, type CustomFieldType, type OrgSettings } from "./types";
+import StageEditor from "./StageEditor";
 
 const MAX_CUSTOM_FIELDS = 20;
 
 /**
  * Settings (Phase 3a/3b): per-tenant branding (workspace name + accent color),
- * the tenant's own pipeline stages, and the tenant's own custom fields (name +
- * type per field — these show up on every client). Any signed-in member of the
- * org can edit these — it is their CRM. All writes are session-org scoped
- * server-side.
+ * the tenant's own pipeline stages (via the shared StageEditor), and the
+ * tenant's own custom fields (name + type per field — these show up on every
+ * client). Any signed-in member of the org can edit these — it is their CRM.
+ * All writes are session-org scoped server-side.
  */
 export default function Settings() {
   const [settings, setSettings] = useState<OrgSettings | null>(null);
@@ -18,9 +19,6 @@ export default function Settings() {
   /* Workspace (branding) */
   const [orgName, setOrgName] = useState("");
   const [accentColor, setAccentColor] = useState("#d6ff3f");
-
-  /* Pipeline stages */
-  const [stages, setStages] = useState<string[]>(DEFAULT_STAGES);
 
   /* Custom fields (Phase 3b) */
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
@@ -39,7 +37,6 @@ export default function Settings() {
       setSettings(settings);
       setOrgName(settings.orgName);
       setAccentColor(settings.accentColor);
-      setStages(settings.stages);
       setCustomFields(settings.customFields);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
@@ -50,34 +47,6 @@ export default function Settings() {
     load();
   }, [load]);
 
-  const stageCount = (s: string): number => settings?.stageCounts?.[s] ?? 0;
-
-  function setStageAt(i: number, value: string) {
-    setStages((list) => list.map((s, j) => (j === i ? value : s)));
-  }
-
-  function removeStage(i: number) {
-    setStages((list) => list.filter((_, j) => j !== i));
-  }
-
-  function addStage() {
-    setStages((list) => [...list, ""]);
-  }
-
-  function validateStages(list: string[]): string | null {
-    const trimmed = list.map((s) => s.trim());
-    if (trimmed.length === 0) return "At least one stage is required.";
-    if (trimmed.length > 12) return "Keep the pipeline to 12 stages or fewer.";
-    if (trimmed.some((s) => !s)) return "Every stage needs a name (or remove the empty row).";
-    const seen = new Set<string>();
-    for (const s of trimmed) {
-      const key = s.toLowerCase();
-      if (seen.has(key)) return `Duplicate stage name: ${s}.`;
-      seen.add(key);
-    }
-    return null;
-  }
-
   async function saveWorkspace(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -87,27 +56,6 @@ export default function Settings() {
       await api.updateSettings({ orgName: orgName.trim(), accentColor });
       setSaved("Workspace branding saved.");
       await load(); // refresh orgName/accent from the server
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveStages(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setSaved(null);
-    const problem = validateStages(stages);
-    if (problem) {
-      setError(problem);
-      return;
-    }
-    setBusy(true);
-    try {
-      await api.updateSettings({ stages: stages.map((s) => s.trim()) });
-      setSaved("Pipeline stages saved.");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed.");
     } finally {
@@ -266,46 +214,7 @@ export default function Settings() {
               its clients; removing one is blocked while clients are still in it.
             </p>
           </div>
-          <form onSubmit={saveStages}>
-            <div className="stage-list">
-              {stages.map((s, i) => {
-                const count = stageCount(s.trim());
-                return (
-                  <div className="stage-row" key={i}>
-                    <span className="stage-idx">{String(i + 1).padStart(2, "0")}</span>
-                    <input
-                      value={s}
-                      onChange={(e) => setStageAt(i, e.target.value)}
-                      maxLength={60}
-                      placeholder={`Stage ${i + 1} name`}
-                      aria-label={`Stage ${i + 1} name`}
-                    />
-                    <span className={`stage-count-chip${count > 0 ? " has" : ""}`} title={`${count} client${count === 1 ? "" : "s"} in this stage`}>
-                      {count} client{count === 1 ? "" : "s"}
-                    </span>
-                    <button
-                      type="button"
-                      className="icon-btn danger"
-                      disabled={busy || count > 0}
-                      title={count > 0 ? `Move the ${count} client${count === 1 ? "" : "s"} out of "${s.trim()}" before removing it` : "Remove stage"}
-                      aria-label={`Remove stage ${s.trim() || i + 1}`}
-                      onClick={() => removeStage(i)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            <button type="button" className="btn btn-ghost btn-sm stage-add" onClick={addStage}>
-              + Add stage
-            </button>
-            <div className="stage-save">
-              <button className="btn btn-primary" disabled={busy} type="submit">
-                {busy ? "Saving…" : "Save stages"}
-              </button>
-            </div>
-          </form>
+          <StageEditor initialStages={settings.stages} stageCounts={settings.stageCounts} />
         </div>
 
         <div className="card admin-table cfdef-card">
