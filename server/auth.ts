@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, ensureDefaultOrg, type Role } from "./db";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -69,20 +69,34 @@ export function verifySession(token: string | null | undefined): number | null {
 export interface User {
   id: number;
   email: string;
+  orgId: number;
+  role: Role;
   created_at: string;
+}
+
+interface UserRow {
+  id: number;
+  email: string;
+  org_id: number;
+  role: Role;
+  created_at: string;
+}
+
+function toUser(row: UserRow): User {
+  return { id: row.id, email: row.email, orgId: row.org_id, role: row.role, created_at: row.created_at };
 }
 
 export function getUserById(id: number): User | null {
   const row = db
-    .query("SELECT id, email, created_at FROM users WHERE id = ?")
-    .get(id) as User | null;
-  return row;
+    .query("SELECT id, email, org_id, role, created_at FROM users WHERE id = ?")
+    .get(id) as UserRow | null;
+  return row ? toUser(row) : null;
 }
 
-export function getUserByEmail(email: string): { id: number; email: string; password_hash: string } | null {
+export function getUserByEmail(email: string): (UserRow & { password_hash: string }) | null {
   const row = db
-    .query("SELECT id, email, password_hash FROM users WHERE email = ?")
-    .get(email) as { id: number; email: string; password_hash: string } | null;
+    .query("SELECT id, email, org_id, role, password_hash, created_at FROM users WHERE email = ?")
+    .get(email) as (UserRow & { password_hash: string }) | null;
   return row;
 }
 
@@ -95,6 +109,7 @@ export function userCount(): number {
  * No hardcoded defaults — if the env vars are unset, no admin is created and
  * the login API returns a clear "setup required" response.
  * Password is bcrypt-hashed with Bun.password (cost 10).
+ * The admin lives in the default org ("Elevate Studio") with role `admin`.
  */
 export async function ensureAdmin(): Promise<{ created: boolean; message: string }> {
   const email = (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
@@ -113,12 +128,21 @@ export async function ensureAdmin(): Promise<{ created: boolean; message: string
     };
   }
   const hash = await Bun.password.hash(password, { algorithm: "bcrypt", cost: 10 });
+  const orgId = ensureDefaultOrg();
   const existing = db.query("SELECT id FROM users WHERE email = ?").get(email);
   if (existing) {
-    db.query("UPDATE users SET password_hash = ? WHERE email = ?").run(hash, email);
+    // Keep an existing org assignment (Phase 2 may move users between orgs);
+    // only backfill org_id when it is still unset (0).
+    db.query(
+      `UPDATE users SET password_hash = ?, org_id = CASE WHEN org_id = 0 THEN ? ELSE org_id END, role = 'admin' WHERE email = ?`,
+    ).run(hash, orgId, email);
     return { created: false, message: `[auth] Admin ${email} already exists — password hash refreshed from env.` };
   }
-  db.query("INSERT INTO users (email, password_hash) VALUES (?, ?)").run(email, hash);
+  db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'admin')").run(
+    email,
+    hash,
+    orgId,
+  );
   return { created: true, message: `[auth] Seeded admin account: ${email}` };
 }
 
