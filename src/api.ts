@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, DashboardData, Invoice, InvoiceStatus, Org, OrgSettings, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, DashboardData, Invoice, InvoiceStatus, Org, OrgSettings, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -109,10 +109,15 @@ export const api = {
   adminDeleteOrg: (id: number) =>
     request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
 
-  /* Org settings (Phase 3a — branding + per-tenant stages). Any signed-in
-     member of the org can read/update their own org's settings. */
+  /* Org settings (Phase 3a/3b — branding, per-tenant stages, custom fields).
+     Any signed-in member of the org can read/update their own org's settings. */
   settings: () => request<{ settings: OrgSettings }>("/api/settings"),
-  updateSettings: (data: { orgName?: string; accentColor?: string; stages?: string[] }) =>
+  updateSettings: (data: {
+    orgName?: string;
+    accentColor?: string;
+    stages?: string[];
+    customFields?: CustomFieldDef[];
+  }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(data),

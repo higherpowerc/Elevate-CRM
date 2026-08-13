@@ -54,9 +54,54 @@ export type Role = "admin" | "member";
 
 export const DEFAULT_ORG_NAME = "Elevate Studio";
 
+/** The four custom-field value types a tenant can define (Phase 3b). */
+export const CUSTOM_FIELD_TYPES = ["text", "number", "date", "checkbox"] as const;
+export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
+
+export function isCustomFieldType(v: unknown): v is CustomFieldType {
+  return typeof v === "string" && (CUSTOM_FIELD_TYPES as readonly string[]).includes(v);
+}
+
+/** A tenant's custom-field DEFINITION (orgs.custom_fields entry): the field's
+ *  display name and its value type. Tenants define these in Settings. */
+export interface CustomFieldDef {
+  name: string;
+  type: CustomFieldType;
+}
+
+/** A client's stored custom-field VALUE: the field name (must match one of the
+ *  tenant's definitions — enforced server-side) and its value as a string. */
 export interface CustomField {
-  label: string;
+  name: string;
   value: string;
+}
+
+/** Parse an org's stored custom-field definitions JSON → clean list of
+ *  {name, type}. Defensive: drops malformed entries and case-insensitive
+ *  duplicates (keeps the first), falls back to [] on anything unusable. */
+export function parseCustomFields(raw: string | null | undefined): CustomFieldDef[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: CustomFieldDef[] = [];
+    const seen = new Set<string>();
+    for (const f of parsed) {
+      if (f === null || typeof f !== "object" || Array.isArray(f)) continue;
+      const obj = f as Record<string, unknown>;
+      const name = typeof obj.name === "string" ? obj.name.trim() : "";
+      if (!name || name.length > 50) continue;
+      const type = obj.type;
+      if (!isCustomFieldType(type)) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name, type });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** Data dir: $DATA_DIR env, else ./data next to the server directory. */
@@ -227,6 +272,20 @@ db.exec(`
 }
 
 /**
+ * Per-tenant custom fields migration (Phase 3b). Idempotent — safe on every
+ * boot. Adds orgs.custom_fields (JSON array of {name, type} — the fields the
+ * tenant defines in Settings and that show up on every client). Default `[]`
+ * for all orgs, so tenants that never touch it keep the exact client shape
+ * they had before.
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "custom_fields")) {
+    db.exec(`ALTER TABLE orgs ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '[]'`);
+  }
+}
+
+/**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
@@ -238,19 +297,21 @@ export function ensureDefaultOrg(): number {
   return Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(DEFAULT_ORG_NAME).lastInsertRowid);
 }
 
-/** Full org row (branding + pipeline settings). Every settings read/write is
- *  scoped to the session org — there is no cross-org addressing on these. */
+/** Full org row (branding + pipeline + custom-field settings). Every settings
+ *  read/write is scoped to the session org — there is no cross-org addressing
+ *  on these. */
 export interface OrgRow {
   id: number;
   name: string;
   stages: string;
   accent_color: string;
+  custom_fields: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
-    .query("SELECT id, name, stages, accent_color, created_at FROM orgs WHERE id = ?")
+    .query("SELECT id, name, stages, accent_color, custom_fields, created_at FROM orgs WHERE id = ?")
     .get(orgId) as OrgRow | null;
 }
 

@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { DEFAULT_STAGES, type OrgSettings } from "./types";
+import { CUSTOM_FIELD_TYPES, DEFAULT_STAGES, type CustomFieldDef, type CustomFieldType, type OrgSettings } from "./types";
+
+const MAX_CUSTOM_FIELDS = 20;
 
 /**
- * Settings (Phase 3a): per-tenant branding (workspace name + accent color)
- * and the tenant's own pipeline stages. Any signed-in member of the org can
- * edit these — it is their CRM. All writes are session-org scoped server-side.
+ * Settings (Phase 3a/3b): per-tenant branding (workspace name + accent color),
+ * the tenant's own pipeline stages, and the tenant's own custom fields (name +
+ * type per field — these show up on every client). Any signed-in member of the
+ * org can edit these — it is their CRM. All writes are session-org scoped
+ * server-side.
  */
 export default function Settings() {
   const [settings, setSettings] = useState<OrgSettings | null>(null);
@@ -17,6 +21,12 @@ export default function Settings() {
 
   /* Pipeline stages */
   const [stages, setStages] = useState<string[]>(DEFAULT_STAGES);
+
+  /* Custom fields (Phase 3b) */
+  const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
+  const [newFieldName, setNewFieldName] = useState("");
+  const [newFieldType, setNewFieldType] = useState<CustomFieldType>("text");
+  const [confirmRemoveField, setConfirmRemoveField] = useState<number | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +40,7 @@ export default function Settings() {
       setOrgName(settings.orgName);
       setAccentColor(settings.accentColor);
       setStages(settings.stages);
+      setCustomFields(settings.customFields);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -96,6 +107,75 @@ export default function Settings() {
     try {
       await api.updateSettings({ stages: stages.map((s) => s.trim()) });
       setSaved("Pipeline stages saved.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Custom fields (Phase 3b) ─────────────────────────────────── */
+
+  function validateCustomFieldList(list: CustomFieldDef[]): string | null {
+    if (list.length > MAX_CUSTOM_FIELDS) {
+      return `Keep custom fields to ${MAX_CUSTOM_FIELDS} or fewer.`;
+    }
+    const seen = new Set<string>();
+    for (const f of list) {
+      const key = f.name.trim().toLowerCase();
+      if (seen.has(key)) return `Duplicate custom field: ${f.name}.`;
+      seen.add(key);
+    }
+    return null;
+  }
+
+  function addField() {
+    setError(null);
+    setSaved(null);
+    const name = newFieldName.trim();
+    if (!name) {
+      setError("Field name is required.");
+      return;
+    }
+    if (name.length > 50) {
+      setError("Field names must be under 51 characters.");
+      return;
+    }
+    if (customFields.length >= MAX_CUSTOM_FIELDS) {
+      setError(`You can define up to ${MAX_CUSTOM_FIELDS} custom fields.`);
+      return;
+    }
+    const problem = validateCustomFieldList([...customFields, { name, type: newFieldType }]);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setCustomFields((list) => [...list, { name, type: newFieldType }]);
+    setNewFieldName("");
+  }
+
+  function removeField(i: number) {
+    setError(null);
+    setSaved(null);
+    setConfirmRemoveField(null);
+    setCustomFields((list) => list.filter((_, j) => j !== i));
+  }
+
+  async function saveCustomFields() {
+    setError(null);
+    setSaved(null);
+    const problem = validateCustomFieldList(customFields);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateSettings({
+        customFields: customFields.map((f) => ({ name: f.name.trim(), type: f.type })),
+      });
+      setSaved("Custom fields saved.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed.");
@@ -226,6 +306,97 @@ export default function Settings() {
               </button>
             </div>
           </form>
+        </div>
+
+        <div className="card admin-table cfdef-card">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Custom fields</h2>
+            <p className="admin-card-sub">
+              Fields every client record shows, tailored to your business — an HVAC company might
+              track "Furnace age", a realtor "Listing price". Values live per client; removing a
+              field here hides it, and existing client values are kept intact.
+            </p>
+          </div>
+          {customFields.length === 0 ? (
+            <p className="field-hint cfdef-empty">
+              No custom fields yet — add one below (e.g. "License #" as text, "Deal score" as
+              number, "Contract start" as date, "Insured" as a checkbox).
+            </p>
+          ) : (
+            <div className="cfdef-list">
+              {customFields.map((f, i) => (
+                <div className="cfdef-row" key={i}>
+                  <span className="cfdef-name">{f.name}</span>
+                  <span className="badge tone-gray cfdef-type">{f.type}</span>
+                  {confirmRemoveField === i ? (
+                    <span className="cfdef-confirm">
+                      <span className="cfdef-confirm-q">Remove — clients keep their values?</span>
+                      <button
+                        type="button"
+                        className="icon-btn danger"
+                        onClick={() => removeField(i)}
+                        disabled={busy}
+                      >
+                        Yes, remove
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => setConfirmRemoveField(null)}
+                        disabled={busy}
+                      >
+                        Keep
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      onClick={() => setConfirmRemoveField(i)}
+                      disabled={busy}
+                      aria-label={`Remove custom field ${f.name}`}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="cfdef-add">
+            <input
+              value={newFieldName}
+              onChange={(e) => setNewFieldName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addField();
+                }
+              }}
+              maxLength={50}
+              placeholder="Field name (e.g. License #)"
+              aria-label="New custom field name"
+            />
+            <select
+              value={newFieldType}
+              onChange={(e) => setNewFieldType(e.target.value as CustomFieldType)}
+              aria-label="New custom field type"
+            >
+              {CUSTOM_FIELD_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={addField}>
+              + Add field
+            </button>
+          </div>
+          <div className="stage-save">
+            <button className="btn btn-primary" disabled={busy} onClick={saveCustomFields}>
+              {busy ? "Saving…" : "Save custom fields"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type InvoiceInput } from "./api";
 import {
   INVOICE_STATUSES,
@@ -39,6 +39,7 @@ export default function Finance() {
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [status, setStatus] = useState<InvoiceStatus>("draft");
+  const amountRef = useRef<HTMLInputElement>(null);
 
   const [editing, setEditing] = useState<Invoice | null>(null);
   const [deleting, setDeleting] = useState<Invoice | null>(null);
@@ -228,6 +229,7 @@ export default function Finance() {
           </span>
           <input
             type="number"
+            ref={amountRef}
             min="0.01"
             step="0.01"
             inputMode="decimal"
@@ -284,6 +286,17 @@ export default function Finance() {
               ? "Add your first invoice above — link it to a client or keep it standalone."
               : "Try a different status tab."}
           </p>
+          {totalCount === 0 && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setFilter("all");
+                amountRef.current?.focus();
+              }}
+            >
+              Add an invoice
+            </button>
+          )}
         </div>
       ) : (
         <ul className="card inv-list">

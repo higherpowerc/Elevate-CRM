@@ -19,6 +19,23 @@ console.log(result.message);
 // admin's own account.
 const demoOrgId = ensureDefaultOrg();
 
+// Custom-field definitions for the default org (Phase 3b). Every value stored
+// on a demo client must reference one of these names — they are what the UI
+// renders on the client form and rows.
+const DEMO_ORG_FIELDS = [
+  { name: "Locations", type: "number" },
+  { name: "Roastery", type: "text" },
+  { name: "New-patient flow", type: "text" },
+  { name: "Fleet size", type: "number" },
+  { name: "Service area", type: "text" },
+  { name: "Agents", type: "number" },
+  { name: "Markets", type: "text" },
+  { name: "License #", type: "text" },
+  { name: "Crew size", type: "number" },
+  { name: "Seasonal contract", type: "text" },
+  { name: "Service radius", type: "text" },
+];
+
 const DEMO_CLIENTS = [
   {
     companyName: "Northline Coffee",
@@ -28,8 +45,8 @@ const DEMO_CLIENTS = [
     industry: "Hospitality",
     services: ["Premium Website", "SEO"],
     customFields: [
-      { label: "Locations", value: "3" },
-      { label: "Roastery", value: "In-house" },
+      { name: "Locations", value: "3" },
+      { name: "Roastery", value: "In-house" },
     ],
     dealValue: 9500,
     stage: "Kickoff",
@@ -57,8 +74,8 @@ const DEMO_CLIENTS = [
     industry: "Healthcare",
     services: ["SEO"],
     customFields: [
-      { label: "Locations", value: "2" },
-      { label: "New-patient flow", value: "Referrals + Google" },
+      { name: "Locations", value: "2" },
+      { name: "New-patient flow", value: "Referrals + Google" },
     ],
     dealValue: 3600,
     stage: "Intake",
@@ -73,8 +90,8 @@ const DEMO_CLIENTS = [
     industry: "Transport",
     services: ["Premium Website", "Paid Campaigns", "Analytics"],
     customFields: [
-      { label: "Fleet size", value: "22" },
-      { label: "Service area", value: "PNW" },
+      { name: "Fleet size", value: "22" },
+      { name: "Service area", value: "PNW" },
     ],
     dealValue: 18500,
     stage: "Build",
@@ -102,8 +119,8 @@ const DEMO_CLIENTS = [
     industry: "Real Estate",
     services: ["SEO", "Paid Campaigns"],
     customFields: [
-      { label: "Agents", value: "8" },
-      { label: "Markets", value: "Seattle / Tacoma" },
+      { name: "Agents", value: "8" },
+      { name: "Markets", value: "Seattle / Tacoma" },
     ],
     dealValue: 7200,
     stage: "Retainer",
@@ -118,9 +135,9 @@ const DEMO_CLIENTS = [
     industry: "HVAC",
     services: ["Installation", "Repair", "Maintenance"],
     customFields: [
-      { label: "License #", value: "CA-88213" },
-      { label: "Service area", value: "Greater Bay Area" },
-      { label: "Fleet size", value: "12" },
+      { name: "License #", value: "CA-88213" },
+      { name: "Service area", value: "Greater Bay Area" },
+      { name: "Fleet size", value: "12" },
     ],
     dealValue: 9500.5,
     stage: "Prospect",
@@ -135,9 +152,9 @@ const DEMO_CLIENTS = [
     industry: "Landscaping",
     services: ["Mowing", "Design", "Irrigation"],
     customFields: [
-      { label: "Crew size", value: "6" },
-      { label: "Seasonal contract", value: "Yes — Apr to Oct" },
-      { label: "Service radius", value: "40 mi" },
+      { name: "Crew size", value: "6" },
+      { name: "Seasonal contract", value: "Yes — Apr to Oct" },
+      { name: "Service radius", value: "40 mi" },
     ],
     dealValue: 4200,
     stage: "Build",
@@ -148,6 +165,19 @@ const DEMO_CLIENTS = [
 
 const wantDemo = process.argv.includes("--demo") || process.env.SEED_DEMO === "1";
 if (wantDemo) {
+  // Phase 3b: define the default org's custom fields (idempotent — only set
+  // when the org has none yet, so an owner who customized settings isn't
+  // overwritten on redeploy).
+  const orgRow = db.query("SELECT custom_fields FROM orgs WHERE id = ?").get(demoOrgId) as
+    | { custom_fields: string }
+    | null;
+  if (orgRow && (!orgRow.custom_fields || orgRow.custom_fields === "[]")) {
+    db.query("UPDATE orgs SET custom_fields = ? WHERE id = ?").run(
+      JSON.stringify(DEMO_ORG_FIELDS),
+      demoOrgId,
+    );
+    console.log(`[seed] demo data: default org custom fields defined (${DEMO_ORG_FIELDS.length} fields).`);
+  }
   const { c } = db.query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ?").get(demoOrgId) as { c: number };
   if (c > 0) {
     console.log(`[seed] default org already has ${c} clients — skipping demo seed (run \`bun run db:reset\` for a clean slate).`);
@@ -311,6 +341,13 @@ const DEMO_CLIENT_ORG = {
   email: "acme@demo.example",
   password: "AcmeDemo123!",
   stages: ["Lead", "Site Visit", "Estimate", "Contract", "Active", "Completed"],
+  // Phase 3b: the demo tenant's own custom fields — landscaping-specific.
+  customFields: [
+    { name: "Crew size", type: "number" },
+    { name: "Contract", type: "text" },
+    { name: "License #", type: "text" },
+    { name: "Yearly contract", type: "checkbox" },
+  ],
 };
 
 const DEMO_CLIENT_ORG_CLIENTS = [
@@ -322,8 +359,8 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     industry: "Property Management",
     services: ["Weekly mowing", "Fertilization", "Irrigation"],
     customFields: [
-      { label: "Crew size", value: "4" },
-      { label: "Contract", value: "Year-round" },
+      { name: "Crew size", value: "4" },
+      { name: "Contract", value: "Year-round" },
     ],
     dealValue: 3200,
     stage: "Contract",
@@ -337,7 +374,7 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     phone: "",
     industry: "Property Management",
     services: ["Seasonal cleanup", "Tree trimming"],
-    customFields: [{ label: "Crew size", value: "2" }],
+    customFields: [{ name: "Crew size", value: "2" }],
     dealValue: 1800,
     stage: "Lead",
     nextAction: "Send seasonal quote",
@@ -351,8 +388,8 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     industry: "Hardscaping",
     services: ["Paver patios", "Retaining walls", "Design"],
     customFields: [
-      { label: "Crew size", value: "6" },
-      { label: "License #", value: "AZ-44209" },
+      { name: "Crew size", value: "6" },
+      { name: "License #", value: "AZ-44209" },
     ],
     dealValue: 12400,
     stage: "Active",
@@ -372,8 +409,12 @@ if (wantDemo) {
     const tx = db.transaction(() => {
       const orgId = Number(
         db
-          .query("INSERT INTO orgs (name, stages) VALUES (?, ?)")
-          .run(DEMO_CLIENT_ORG.name, JSON.stringify(DEMO_CLIENT_ORG.stages)).lastInsertRowid,
+          .query("INSERT INTO orgs (name, stages, custom_fields) VALUES (?, ?, ?)")
+          .run(
+            DEMO_CLIENT_ORG.name,
+            JSON.stringify(DEMO_CLIENT_ORG.stages),
+            JSON.stringify(DEMO_CLIENT_ORG.customFields),
+          ).lastInsertRowid,
       );
       db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')").run(
         DEMO_CLIENT_ORG.email,
