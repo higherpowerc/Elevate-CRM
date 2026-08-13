@@ -33,6 +33,7 @@ export default function Finance() {
   const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
 
   // Quick-add row
   const [clientId, setClientId] = useState("");
@@ -62,8 +63,17 @@ export default function Finance() {
 
   const visible = useMemo(() => {
     if (!invoices) return [];
-    return filter === "all" ? invoices : invoices.filter((i) => i.status === filter);
-  }, [invoices, filter]);
+    const q = query.trim().toLowerCase();
+    return invoices.filter((i) => {
+      const matchFilter = filter === "all" || i.status === filter;
+      if (!matchFilter) return false;
+      if (!q) return true;
+      // Match by client name (case-insensitive); invoices with no client
+      // surface only under the "unassigned" keyword.
+      if (i.clientName) return i.clientName.toLowerCase().includes(q);
+      return q === "unassigned";
+    });
+  }, [invoices, filter, query]);
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: invoices?.length ?? 0, draft: 0, sent: 0, paid: 0 };
@@ -274,23 +284,40 @@ export default function Finance() {
             </button>
           ))}
         </div>
+        <input
+          className="search"
+          type="search"
+          placeholder="Search clients…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search clients"
+        />
       </div>
 
       {visible.length === 0 ? (
         <div className="card empty">
           <p className="empty-title">
-            {totalCount === 0 ? "No invoices yet" : filter === "all" ? "Nothing here" : `No ${filter} invoices`}
+            {totalCount === 0
+              ? "No invoices yet"
+              : query.trim()
+                ? "Nothing matches"
+                : filter === "all"
+                  ? "Nothing here"
+                  : `No ${filter} invoices`}
           </p>
           <p className="empty-sub">
             {totalCount === 0
               ? "Add your first invoice above — link it to a client or keep it standalone."
-              : "Try a different status tab."}
+              : query.trim()
+                ? "Try a different search or status."
+                : "Try a different status tab."}
           </p>
           {totalCount === 0 && (
             <button
               className="btn btn-primary"
               onClick={() => {
                 setFilter("all");
+                setQuery("");
                 amountRef.current?.focus();
               }}
             >
