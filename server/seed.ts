@@ -163,6 +163,76 @@ if (wantDemo) {
     });
     tx();
     console.log(`[seed] demo data: seeded ${DEMO_CLIENTS.length} clients (incl. HVAC + Landscaping with custom fields).`);
+
+    // Demo tasks — linked to the seeded clients by company name (dates are
+    // relative to today so the Task board shows overdue/today states).
+    const demoDate = (offsetDays: number): string => {
+      const d = new Date();
+      d.setDate(d.getDate() + offsetDays);
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${m}-${day}`;
+    };
+    const DEMO_TASKS = [
+      {
+        title: "Send quote",
+        clientName: "Summit Heating & Air",
+        dueDate: demoDate(-3),
+        done: 0,
+        notes: "Itemized proposal for full install + maintenance plan.",
+      },
+      {
+        title: "Deliver first design concepts",
+        clientName: "Northline Coffee",
+        dueDate: demoDate(0),
+        done: 0,
+        notes: "Two homepage directions + typography exploration.",
+      },
+      {
+        title: "Collect analytics access",
+        clientName: "Brightline Dental",
+        dueDate: demoDate(-1),
+        done: 1,
+        notes: "GA4 + Search Console permissions.",
+      },
+      {
+        title: "Monthly report due",
+        clientName: "Cedar & Sage Realty",
+        dueDate: demoDate(14),
+        done: 0,
+        notes: "SEO + paid performance summary.",
+      },
+      {
+        title: "Review competitor landing pages",
+        clientName: "",
+        dueDate: "",
+        done: 0,
+        notes: "Standalone research before the next proposal.",
+      },
+    ];
+    const clientIdByName = new Map<string, number>();
+    const clientRows = db.query("SELECT id, company_name FROM clients").all() as {
+      id: number;
+      company_name: string;
+    }[];
+    for (const r of clientRows) clientIdByName.set(r.company_name, r.id);
+
+    const insertTask = db.prepare(
+      `INSERT INTO tasks (title, client_id, due_date, done, notes) VALUES (?, ?, ?, ?, ?)`,
+    );
+    const taskTx = db.transaction(() => {
+      for (const tk of DEMO_TASKS) {
+        insertTask.run(
+          tk.title,
+          tk.clientName ? (clientIdByName.get(tk.clientName) ?? null) : null,
+          tk.dueDate,
+          tk.done,
+          tk.notes,
+        );
+      }
+    });
+    taskTx();
+    console.log(`[seed] demo data: seeded ${DEMO_TASKS.length} tasks (linked to demo clients + one standalone).`);
   }
 }
 

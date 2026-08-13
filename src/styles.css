@@ -1276,6 +1276,162 @@ legend.field-label {
   }
 }
 
+/* ── Tasks ─────────────────────────────────────────────── */
+
+.task-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.task-add input,
+.task-add select {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  height: 40px;
+}
+
+.task-add input:focus,
+.task-add select:focus {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+
+.task-add input::placeholder {
+  color: var(--muted-2);
+}
+
+.task-add select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 30px;
+  flex: 0 1 190px;
+}
+
+.task-add input[type="date"] {
+  flex: 0 1 150px;
+}
+
+.task-add-title {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.task-add .btn {
+  flex: none;
+}
+
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.task {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.task:last-child {
+  border-bottom: none;
+}
+
+.task:hover {
+  background: rgba(242, 241, 236, 0.025);
+}
+
+.task-check {
+  background: none;
+  border: none;
+  padding: 1px 0 0;
+  flex: none;
+}
+
+.task-checkbox {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line-strong);
+  color: var(--lime-ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.task-check:hover .task-checkbox {
+  border-color: var(--lime);
+}
+
+.task-checkbox.on {
+  background: var(--lime);
+  border-color: var(--lime);
+}
+
+.task-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-title-text {
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.task-done .task-title-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.task-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.task-due {
+  font-weight: 600;
+}
+
+.task-due.overdue {
+  color: var(--danger);
+}
+
+.task-due.today {
+  color: var(--amber);
+}
+
+.task-notes {
+  color: var(--muted-2);
+}
+
 /* ── Responsive ────────────────────────────────────────────── */
 
 @media (max-width: 1020px) {
@@ -1341,6 +1497,21 @@ legend.field-label {
 
   .search {
     max-width: none;
+  }
+
+  .task-add {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-add input,
+  .task-add select {
+    flex: none;
+    width: 100%;
+  }
+
+  .task-add .btn {
+    width: 100%;
   }
 
   /* Table → stacked cards */
