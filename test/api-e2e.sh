@@ -26,6 +26,7 @@ check "me without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/auth/me")
 check "clients without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/clients")
 check "tasks without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/tasks")
 check "invoices without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/invoices")
+check "admin orgs without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/admin/orgs")
 check "login wrong password → 401" 401 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"owner@elevate.studio","password":"nope"}' "$BASE/api/auth/login")
 
@@ -362,45 +363,54 @@ check "logout → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/auth/me")
 check "me after logout → 401" 401 "$S"
 
-echo "== 16. Multi-tenant isolation =="
-# Phase 2 will add real account-provisioning endpoints; for now the second
-# org + member user are written directly into the DB (same pattern as the
-# demo seed), so the API can be proven org-isolated.
+echo "== 16. Admin provisioning (Phase 2) + multi-tenant isolation =="
 MEMBER_EMAIL="member@acme.example"
 MEMBER_PASSWORD="memberpass123"
-MEMBER_SEED=$(bun -e '
-  import { db, DEFAULT_ORG_NAME } from "./server/db";
-  const main = async () => {
-    const orgName = "Acme Widgets LLC";
-    let org = db.query("SELECT id FROM orgs WHERE name = ?").get(orgName) as { id: number } | null;
-    if (!org) org = { id: Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(orgName).lastInsertRowid) };
-    const orgId = org.id;
-    db.query("DELETE FROM invoices WHERE org_id = ?").run(orgId);
-    db.query("DELETE FROM tasks WHERE org_id = ?").run(orgId);
-    db.query("DELETE FROM clients WHERE org_id = ?").run(orgId);
-    db.query("DELETE FROM users WHERE email = ?").run("member@acme.example");
-    const hash = await Bun.password.hash("memberpass123", { algorithm: "bcrypt", cost: 10 });
-    db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, ?)").run("member@acme.example", hash, orgId, "member");
-    const defaultOrg = db.query("SELECT id FROM orgs WHERE name = ?").get(DEFAULT_ORG_NAME) as { id: number };
-    console.log(JSON.stringify({ memberOrgId: orgId, defaultOrgId: defaultOrg.id }));
-  };
-  main();
-')
-ORG2_ID=$(echo "$MEMBER_SEED" | python3 -c "import json,sys; print(json.load(sys.stdin)['memberOrgId'])")
-DEFAULT_ORG_ID=$(echo "$MEMBER_SEED" | python3 -c "import json,sys; print(json.load(sys.stdin)['defaultOrgId'])")
-echo "    (member org id=$ORG2_ID, default org id=$DEFAULT_ORG_ID)"
-
 JAR2=$(mktemp)
+# Section 15 logged the admin out — sign back in to provision tenants.
+S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "admin re-login for provisioning → 200" 200 "$S"
+# The owner (admin) provisions a client org + member login through the admin
+# API — no direct DB access. This is exactly what the Admin tab does.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Acme Widgets LLC","email":"member@acme.example","password":"memberpass123"}' "$BASE/api/admin/orgs")
+check "admin creates org+user → 201" 201 "$S"
+ORG2_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+MEMBER_USER_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+echo "    (member org id=$ORG2_ID, member user id=$MEMBER_USER_ID)"
+grep -q '"name":"Acme Widgets LLC"' /tmp/body.json && echo "  ✓ create returns org name" || echo "  ✗ org name missing: $(cat /tmp/body.json)"
+grep -q '"createdAt":' /tmp/body.json && echo "  ✓ create returns org createdAt" || echo "  ✗ createdAt missing"
+grep -q '"email":"member@acme.example"' /tmp/body.json && echo "  ✓ create returns member email" || echo "  ✗ member email missing"
+grep -q '"role":"member"' /tmp/body.json && echo "  ✓ create returns role member" || echo "  ✗ member role wrong"
+grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && echo "  ✓ user.orgId matches the new org" || echo "  ✗ user.orgId wrong: $(cat /tmp/body.json)"
+grep -q '"password"' /tmp/body.json && echo "  ✗ PASSWORD LEAKED in response" || echo "  ✓ no password in create response"
+
+echo "-- 16a. Admin API validation =="
+check "duplicate email → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Another Co","email":"member@acme.example","password":"whatever123"}' "$BASE/api/admin/orgs")
+check "missing company name → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"","email":"fresh@acme.example","password":"whatever123"}' "$BASE/api/admin/orgs")
+check "malformed email → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Bad Email Co","email":"not-an-email","password":"whatever123"}' "$BASE/api/admin/orgs")
+check "short password → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Short Pass Co","email":"shorty@acme.example","password":"short"}' "$BASE/api/admin/orgs")
+
+echo "-- 16b. Member login sees their own (empty) org =="
 S=$(code -c "$JAR2" -b "$JAR2" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$MEMBER_EMAIL\",\"password\":\"$MEMBER_PASSWORD\"}" "$BASE/api/auth/login")
-check "second-org member login → 200" 200 "$S"
+check "provisioned member login → 200" 200 "$S"
 grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && echo "  ✓ member login returns their orgId" || echo "  ✗ member orgId wrong: $(cat /tmp/body.json)"
 grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member login returns role member" || echo "  ✗ member role wrong: $(cat /tmp/body.json)"
 S=$(code -b "$JAR2" "$BASE/api/auth/me")
 check "member me → 200" 200 "$S"
 grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member me carries orgId + role member" || echo "  ✗ member me wrong: $(cat /tmp/body.json)"
+echo "-- 16c. Members are forbidden from admin endpoints =="
+check "member GET /api/admin/orgs → 403" 403 $(code -b "$JAR2" "$BASE/api/admin/orgs")
+check "member POST /api/admin/orgs → 403" 403 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Hacked Co","email":"hacked@acme.example","password":"whatever123"}' "$BASE/api/admin/orgs")
+check "member DELETE /api/admin/orgs/:id → 403" 403 $(code -b "$JAR2" -X DELETE "$BASE/api/admin/orgs/$ORG2_ID")
 
-echo "-- 16a. Isolation: member sees an empty org =="
 S=$(code -b "$JAR2" "$BASE/api/clients")
 check "member clients list → 200" 200 "$S"
 grep -q '"clients":\[\]' /tmp/body.json && echo "  ✓ member sees NO default-org clients (isolation)" || echo "  ✗ member clients: $(cat /tmp/body.json)"
@@ -414,7 +424,23 @@ S=$(code -b "$JAR2" "$BASE/api/dashboard")
 check "member dashboard → 200" 200 "$S"
 grep -q '"projectedPipeline":0' /tmp/body.json && grep -q '"totalClients":0' /tmp/body.json && echo "  ✓ member dashboard is empty (no cross-org stats)" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
 
-echo "-- 16b. Isolation: member cannot touch default-org rows (404) =="
+echo "-- 16d. Admin org list has the new tenant with correct counts =="
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "admin lists orgs → 200" 200 "$S"
+DEFAULT_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(next(o['id'] for o in d['orgs'] if o['name'] == 'Elevate Studio'))")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+orgs = {o['name']: o for o in d['orgs']}
+assert 'Elevate Studio' in orgs and 'Acme Widgets LLC' in orgs, [o['name'] for o in d['orgs']]
+assert orgs['Elevate Studio']['userCount'] == 1, orgs['Elevate Studio']
+assert orgs['Acme Widgets LLC']['userCount'] == 1, orgs['Acme Widgets LLC']
+assert orgs['Acme Widgets LLC']['clientCount'] == 0, orgs['Acme Widgets LLC']
+assert orgs['Elevate Studio']['createdAt'], orgs['Elevate Studio']
+print("  ✓ list includes owner org + new tenant (userCount 1, clientCount 0)")
+PY
+
+echo "-- 16e. Isolation: member cannot touch default-org rows (404) =="
 check "member GET default-org client → 404" 404 $(code -b "$JAR2" "$BASE/api/clients/$HVAC_ID")
 check "member PUT default-org client → 404" 404 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
   -d '{"companyName":"Hacked","dealValue":1}' "$BASE/api/clients/$HVAC_ID")
@@ -427,7 +453,7 @@ check "member PUT default-org invoice → 404" 404 $(code -b "$JAR2" -X PUT -H '
   -d '{"amount":1}' "$BASE/api/invoices/$I1")
 check "member DELETE default-org invoice → 404" 404 $(code -b "$JAR2" -X DELETE "$BASE/api/invoices/$I1")
 
-echo "-- 16c. Member data stays in their own org =="
+echo "-- 16f. Member data stays in their own org =="
 S=$(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Member Corp","contactName":"M","industry":"Testing","dealValue":5000,"stage":"Prospect"}' \
   "$BASE/api/clients")
@@ -457,7 +483,7 @@ S=$(code -b "$JAR2" "$BASE/api/dashboard")
 check "member dashboard counts own data → 200" 200 "$S"
 grep -q '"projectedPipeline":5000' /tmp/body.json && grep -q '"totalClients":1' /tmp/body.json && echo "  ✓ member dashboard counts only their own data" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
 
-echo "-- 16d. Default org cannot see member data =="
+echo "-- 16g. Default org cannot see member data =="
 S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
 check "admin re-login → 200" 200 "$S"
@@ -474,7 +500,7 @@ S=$(code -b "$JAR" "$BASE/api/dashboard")
 check "admin dashboard → 200" 200 "$S"
 grep -qv 'Member Corp' /tmp/body.json && echo "  ✓ admin dashboard excludes member data" || echo "  ✗ member leaked into admin dashboard"
 
-echo "-- 16e. Cross-org links rejected =="
+echo "-- 16h. Cross-org links rejected =="
 check "member task with default-org client → 400" 400 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
   -d "{\"title\":\"Cross-org task\",\"clientId\":$HVAC_ID}" "$BASE/api/tasks")
 check "member invoice with default-org client → 400" 400 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
@@ -484,6 +510,26 @@ check "member re-links own task to default-org client → 400" 400 $(code -b "$J
 check "member re-links own invoice to default-org client → 400" 400 $(code -b "$JAR2" -X PUT -H 'Content-Type: application/json' \
   -d "{\"clientId\":$HVAC_ID}" "$BASE/api/invoices/$MI_ID")
 check "member GET own client after failed re-links → 200 (data intact)" 200 $(code -b "$JAR2" "$BASE/api/clients/$MC_ID")
+
+echo "-- 16i. Admin deletes a tenant =="
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "admin lists orgs after member data → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+o = next(o for o in d['orgs'] if o['name'] == 'Acme Widgets LLC')
+assert o['clientCount'] == 1 and o['userCount'] == 1, o
+print("  ✓ tenant now shows clientCount 1 (member's client counted, scoped)")
+PY
+check "admin deletes tenant → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$ORG2_ID")
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "admin lists orgs after delete → 200" 200 "$S"
+grep -qv 'Acme Widgets LLC' /tmp/body.json && echo "  ✓ deleted tenant gone from list" || echo "  ✗ tenant still listed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$MEMBER_EMAIL\",\"password\":\"$MEMBER_PASSWORD\"}" "$BASE/api/auth/login")
+check "deleted tenant user login → 401" 401 "$S"
+check "delete owner org → 400" 400 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$DEFAULT_ORG_ID")
+check "delete missing org → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/999999")
 rm -f "$JAR2"
 
 echo ""

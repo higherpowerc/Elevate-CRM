@@ -8,7 +8,7 @@
  * deployment has something to look at. Safe: it only inserts when the clients
  * table is empty (use `bun run db:reset` for a clean slate first).
  */
-import { ensureAdmin } from "./auth";
+import { ensureAdmin, hashPassword } from "./auth";
 import { db, ensureDefaultOrg } from "./db";
 
 const result = await ensureAdmin();
@@ -296,6 +296,101 @@ if (wantDemo) {
     });
     invoiceTx();
     console.log(`[seed] demo data: seeded ${DEMO_INVOICES.length} invoices (sent/paid/draft states across demo clients).`);
+  }
+}
+
+// Demo CLIENT ORG (Phase 2 — per-tenant login demo). A separate org with its
+// own member login, so the owner can immediately test the product's multi-
+// tenancy: log out → log in as acme@demo.example / AcmeDemo123! → see ONLY
+// Acme Landscaping's data (nothing from Elevate Studio's own org).
+// Idempotent: skipped if the org already exists.
+const DEMO_CLIENT_ORG = {
+  name: "Acme Landscaping",
+  email: "acme@demo.example",
+  password: "AcmeDemo123!",
+};
+
+const DEMO_CLIENT_ORG_CLIENTS = [
+  {
+    companyName: "Greenlawn Estates HOA",
+    contactName: "Pat Alvarez",
+    email: "pat@greenlawn.example",
+    phone: "+1 602 555 0173",
+    industry: "Property Management",
+    services: ["Weekly mowing", "Fertilization", "Irrigation"],
+    customFields: [
+      { label: "Crew size", value: "4" },
+      { label: "Contract", value: "Year-round" },
+    ],
+    dealValue: 3200,
+    stage: "Kickoff",
+    nextAction: "Walk the property with the HOA board",
+    notes: "Demo account — client org QA data",
+  },
+  {
+    companyName: "Cactus Ridge HOA",
+    contactName: "Miguel Sandoval",
+    email: "miguel@cactusridge.example",
+    phone: "",
+    industry: "Property Management",
+    services: ["Seasonal cleanup", "Tree trimming"],
+    customFields: [{ label: "Crew size", value: "2" }],
+    dealValue: 1800,
+    stage: "Prospect",
+    nextAction: "Send seasonal quote",
+    notes: "Demo account — client org QA data",
+  },
+  {
+    companyName: "Sonoran Stoneworks",
+    contactName: "Elena Vasquez",
+    email: "elena@sonoranstone.example",
+    phone: "+1 520 555 0188",
+    industry: "Hardscaping",
+    services: ["Paver patios", "Retaining walls", "Design"],
+    customFields: [
+      { label: "Crew size", value: "6" },
+      { label: "License #", value: "AZ-44209" },
+    ],
+    dealValue: 12400,
+    stage: "Build",
+    nextAction: "Deliver paver samples",
+    notes: "Demo account — client org QA data",
+  },
+];
+
+if (wantDemo) {
+  const existing = db.query("SELECT id FROM orgs WHERE name = ?").get(DEMO_CLIENT_ORG.name) as
+    | { id: number }
+    | null;
+  if (existing) {
+    console.log(`[seed] demo client org "${DEMO_CLIENT_ORG.name}" already exists — skipping.`);
+  } else {
+    const hash = await hashPassword(DEMO_CLIENT_ORG.password);
+    const tx = db.transaction(() => {
+      const orgId = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(DEMO_CLIENT_ORG.name).lastInsertRowid);
+      db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')").run(
+        DEMO_CLIENT_ORG.email,
+        hash,
+        orgId,
+      );
+      const insertClient = db.prepare(
+        `INSERT INTO clients
+           (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const cl of DEMO_CLIENT_ORG_CLIENTS) {
+        insertClient.run(
+          orgId, cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
+          JSON.stringify(cl.services), JSON.stringify(cl.customFields), cl.dealValue,
+          cl.stage, cl.nextAction, cl.notes,
+        );
+      }
+      return orgId;
+    });
+    const clientOrgId = tx();
+    console.log(
+      `[seed] demo data: client org "${DEMO_CLIENT_ORG.name}" (org id ${clientOrgId}, ${DEMO_CLIENT_ORG_CLIENTS.length} clients) — login ${DEMO_CLIENT_ORG.email}`,
+    );
   }
 }
 
