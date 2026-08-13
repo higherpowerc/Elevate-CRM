@@ -449,6 +449,29 @@ grep -q '"id":'"$I6" /tmp/body.json && grep -q '"clientId":null' /tmp/body.json 
 check "delete I2 → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/$I2")
 check "delete I2 again → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/$I2")
 
+echo "-- 14a. Invoice ↔ client re-link (Finance picker + edit-modal flows) =="
+# The quick-add row and the edit modal both submit clientId ("" = no client).
+# This locks the server contract they rely on: linking an invoice to a client
+# joins clientName (what the row chip renders) and sending clientId null
+# unlinks it back to standalone.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":1111,"status":"draft","notes":"Re-link QA"}' "$BASE/api/invoices")
+check "create standalone invoice for re-link → 201" 201 "$S"
+I7=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+grep -q '"clientId":null' /tmp/body.json && grep -q '"clientName":""' /tmp/body.json && echo "  ✓ standalone invoice starts unlinked" || echo "  ✗ standalone: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID}" "$BASE/api/invoices/$I7")
+check "link invoice to HVAC via PUT → 200" 200 "$S"
+grep -q '"clientName":"Summit Heating & Air"' /tmp/body.json && echo "  ✓ linked invoice carries clientName (row chip data)" || echo "  ✗ link failed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/invoices?clientId=$HVAC_ID")
+check "clientId filter includes the re-linked invoice → 200" 200 "$S"
+grep -q "\"id\":$I7" /tmp/body.json && echo "  ✓ re-linked invoice appears under the client's filter" || echo "  ✗ filter missing: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"clientId":null}' "$BASE/api/invoices/$I7")
+check "clear clientId (null) → 200" 200 "$S"
+grep -q '"clientId":null' /tmp/body.json && grep -q '"clientName":""' /tmp/body.json && echo "  ✓ unlink clears clientName (standalone again)" || echo "  ✗ unlink failed: $(cat /tmp/body.json)"
+check "delete re-link QA invoice → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/$I7")
+
 echo "== 15. Logout =="
 S=$(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/logout")
 check "logout → 200" 200 "$S"
@@ -906,6 +929,11 @@ if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
     PASS=$((PASS+1)); echo "  ✓ Phase 3 custom-intake-group editor + key hints present in the bundle"
   else
     FAIL=$((FAIL+1)); echo "  ✗ Phase 3 custom-intake-group strings missing from $NEWEST_JS"
+  fi
+  if grep -q "invoices appear here once linked to a client" "$NEWEST_JS" && grep -q "unassigned" "$NEWEST_JS" && grep -q "No clients match" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ Finance client picker (combobox) + search empty-state hint present in the bundle"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ Finance client picker / search-hint strings missing from $NEWEST_JS"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found — run \`bun run build\` before the suite"
