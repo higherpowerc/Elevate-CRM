@@ -38,16 +38,29 @@ function sign(data: string, secret: string): string {
   return new Bun.CryptoHasher("sha256").update(secret + "::" + data).digest("base64url");
 }
 
-/** Create a signed session token for a user. */
-export function createSession(userId: number): string {
-  const payload = Buffer.from(
-    JSON.stringify({ uid: userId, exp: Date.now() + SESSION_TTL_MS }),
-  ).toString("base64url");
+/**
+ * Create a signed session token for a user. When `impersonatedFrom` is set the
+ * session is an owner impersonation (Phase 3d): the `imp` field records the
+ * admin user id who started it, inside the signed payload — only the server can
+ * create or alter it. `/api/auth/me` reads it to flag the banner, and
+ * `/api/auth/impersonate-return` uses it to restore the admin's own session.
+ */
+export function createSession(userId: number, opts: { impersonatedFrom?: number } = {}): string {
+  const data: Record<string, number> = { uid: userId, exp: Date.now() + SESSION_TTL_MS };
+  if (opts.impersonatedFrom) data.imp = opts.impersonatedFrom;
+  const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
   return `${payload}.${sign(payload, getSecret())}`;
 }
 
-/** Verify a session token; returns the user id or null. */
-export function verifySession(token: string | null | undefined): number | null {
+export interface SessionPayload {
+  uid: number;
+  exp: number;
+  /** Set only on impersonation sessions: the admin user id who started it. */
+  imp?: number;
+}
+
+/** Verify a session token and return its full payload (uid, exp, optional imp). */
+export function verifySessionPayload(token: string | null | undefined): SessionPayload | null {
   if (!token) return null;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return null;
@@ -60,10 +73,17 @@ export function verifySession(token: string | null | undefined): number | null {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (typeof data.uid !== "number" || typeof data.exp !== "number") return null;
     if (data.exp < Date.now()) return null;
-    return data.uid;
+    const out: SessionPayload = { uid: data.uid, exp: data.exp };
+    if (typeof data.imp === "number") out.imp = data.imp;
+    return out;
   } catch {
     return null;
   }
+}
+
+/** Verify a session token; returns the user id or null. */
+export function verifySession(token: string | null | undefined): number | null {
+  return verifySessionPayload(token)?.uid ?? null;
 }
 
 export interface User {

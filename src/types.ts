@@ -112,6 +112,16 @@ export interface Org {
   clientCount: number;
 }
 
+/** Shape of /api/auth/me, /api/auth/login, /api/admin/impersonate and
+ *  /api/auth/impersonate-return responses (Phase 3d). `impersonating` is
+ *  always present; `impersonatedFrom` (the admin user id) is set only while
+ *  the current session is an owner impersonation. */
+export interface MeResponse {
+  user: User;
+  impersonating: boolean;
+  impersonatedFrom?: number;
+}
+
 /** Tenant created through the Admin "create client account" form. */
 export interface CreatedOrg {
   id: number;

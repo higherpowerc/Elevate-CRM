@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, DashboardData, Invoice, InvoiceStatus, Org, OrgSettings, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -42,9 +42,9 @@ export type TaskInput = Omit<Task, "id" | "clientName" | "createdAt" | "updatedA
 export type InvoiceInput = Omit<Invoice, "id" | "clientName" | "createdAt" | "updatedAt">;
 
 export const api = {
-  me: () => request<{ user: User }>("/api/auth/me"),
+  me: () => request<MeResponse>("/api/auth/me"),
   login: (email: string, password: string) =>
-    request<{ user: User }>("/api/auth/login", {
+    request<MeResponse>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
@@ -108,6 +108,16 @@ export const api = {
     }),
   adminDeleteOrg: (id: number) =>
     request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
+  /* Phase 3d — owner impersonation: swap the owner's session into a tenant
+     workspace (response is that tenant's user + impersonating: true), and
+     swap back to the owner's own session. */
+  adminImpersonate: (orgId: number) =>
+    request<MeResponse>("/api/admin/impersonate", {
+      method: "POST",
+      body: JSON.stringify({ orgId }),
+    }),
+  impersonateReturn: () =>
+    request<MeResponse>("/api/auth/impersonate-return", { method: "POST" }),
 
   /* Org settings (Phase 3a/3b — branding, per-tenant stages, custom fields).
      Any signed-in member of the org can read/update their own org's settings. */
