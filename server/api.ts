@@ -162,9 +162,25 @@ function toClient(row: ClientRow) {
     nextAction: row.next_action,
     notes: row.notes,
     archived: row.archived === 1,
+    clientType: row.client_type,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    website: row.website,
+    leadSource: row.lead_source,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** Phase 3e: every client is Commercial or Residential — required on create
+ *  and on edit. Existing records were backfilled to 'residential'. */
+export const CLIENT_TYPES = ["commercial", "residential"] as const;
+export type ClientType = (typeof CLIENT_TYPES)[number];
+
+export function isClientType(v: unknown): v is ClientType {
+  return typeof v === "string" && (CLIENT_TYPES as readonly string[]).includes(v);
 }
 
 interface ClientInput {
@@ -180,6 +196,13 @@ interface ClientInput {
   nextAction: string;
   notes: string;
   archived: boolean;
+  clientType: ClientType;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  website: string;
+  leadSource: string;
 }
 
 /**
@@ -198,6 +221,45 @@ function validateClient(
 
   const companyName = str(body.companyName, 200);
   if (!companyName) return { ok: false, error: "Company name is required." };
+
+  // Phase 3e: client type is REQUIRED on create AND edit — exactly one of
+  // "commercial" / "residential" (the migration backfilled old rows).
+  if (!isClientType(body.clientType)) {
+    return { ok: false, error: "Client type is required — choose commercial or residential." };
+  }
+  const clientType = body.clientType;
+
+  // Phase 3e: bounded text fields. All optional, but provided values must
+  // respect their length caps (rejected, not silently truncated).
+  const bounded = (
+    v: unknown,
+    max: number,
+    label: string,
+  ): { ok: true; value: string } | { ok: false; error: string } => {
+    if (v === undefined || v === null) return { ok: true, value: "" };
+    if (typeof v !== "string") return { ok: false, error: `${label} must be text.` };
+    const t = v.trim();
+    if (t.length > max) return { ok: false, error: `${label} must be under ${max + 1} characters.` };
+    return { ok: true, value: t };
+  };
+  const address = bounded(body.address, 200, "Address");
+  if (!address.ok) return address;
+  const city = bounded(body.city, 100, "City");
+  if (!city.ok) return city;
+  const state = bounded(body.state, 50, "State");
+  if (!state.ok) return state;
+  const zip = bounded(body.zip, 20, "ZIP / postal code");
+  if (!zip.ok) return zip;
+  const leadSource = bounded(body.leadSource, 100, "Lead source");
+  if (!leadSource.ok) return leadSource;
+  const website = bounded(body.website, 200, "Website");
+  if (!website.ok) return website;
+  // Loose URL check: a bare domain ("acme.com") or a full URL is fine, with
+  // optional scheme and optional path — just not random text.
+  const LOOSE_URL_RE = /^(https?:\/\/)?([\w-]+\.)+[a-zA-Z]{2,}([/?#][^\s]*)?$/;
+  if (website.value && !LOOSE_URL_RE.test(website.value)) {
+    return { ok: false, error: "Website must be a valid URL like https://acme.com." };
+  }
 
   let services: string[] = [];
   if (body.services !== undefined) {
@@ -298,6 +360,13 @@ function validateClient(
       nextAction: str(body.nextAction, 500),
       notes: str(body.notes, 10000),
       archived: body.archived === true,
+      clientType,
+      address: address.value,
+      city: city.value,
+      state: state.value,
+      zip: zip.value,
+      website: website.value,
+      leadSource: leadSource.value,
     },
   };
 }
@@ -905,8 +974,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
             .query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ? AND stage = ?")
             .get(orgId, r) as { c: number };
           if (c > 0) {
+            // Phase 3e: the guard counts from the org's own data and tells the
+            // user the actionable next step (the old message was a bare error).
             return err(
-              `Stage "${r}" has ${c} client${c === 1 ? "" : "s"} — reassign or archive them before removing it.`,
+              `Stage "${r}" has ${c} client${c === 1 ? "" : "s"} — move or archive ${c === 1 ? "it" : "them"} first.`,
               400,
             );
           }
@@ -961,10 +1032,21 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
           `SELECT * FROM clients
            WHERE org_id = ?
              AND (archived = 0 OR ? = 1)
-             AND (LOWER(company_name) LIKE ? OR LOWER(contact_name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(industry) LIKE ?)
+             AND (LOWER(company_name) LIKE ? OR LOWER(contact_name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(industry) LIKE ?
+                  OR LOWER(address) LIKE ? OR LOWER(city) LIKE ? OR LOWER(phone) LIKE ?)
            ORDER BY updated_at DESC, id DESC`,
         )
-        .all(orgId, includeArchived ? 1 : 0, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`) as ClientRow[];
+        .all(
+          orgId,
+          includeArchived ? 1 : 0,
+          `%${q}%`,
+          `%${q}%`,
+          `%${q}%`,
+          `%${q}%`,
+          `%${q}%`,
+          `%${q}%`,
+          `%${q}%`,
+        ) as ClientRow[];
     } else {
       rows = db
         .query(
@@ -988,14 +1070,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const c = v.value;
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         orgId,
         c.companyName, c.contactName, c.email, c.phone, c.industry,
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
+        c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row) }, 201);
@@ -1030,12 +1113,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         `UPDATE clients SET
            company_name = ?, contact_name = ?, email = ?, phone = ?, industry = ?,
            services = ?, custom_fields = ?, deal_value = ?, stage = ?, next_action = ?, notes = ?, archived = ?,
+           client_type = ?, address = ?, city = ?, state = ?, zip = ?, website = ?, lead_source = ?,
            updated_at = datetime('now')
          WHERE id = ? AND org_id = ?`,
       ).run(
         c.companyName, c.contactName, c.email, c.phone, c.industry,
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
-        c.archived ? 1 : 0, id, orgId,
+        c.archived ? 1 : 0,
+        c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
+        id, orgId,
       );
       const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
       return json({ client: toClient(updated) });

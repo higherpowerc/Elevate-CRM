@@ -286,6 +286,30 @@ db.exec(`
 }
 
 /**
+ * Rich client records migration (Phase 3e). Idempotent — safe on every boot.
+ * Adds the Commercial/Residential type (client_type) plus the full address
+ * block, website and lead source to clients. All are plain TEXT columns with
+ * DEFAULTs, so no FK games are needed. Existing clients backfill to
+ * 'residential' via the ALTER's DEFAULT, and the new text fields default to ''
+ * for every row.
+ */
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${ddl}`);
+    }
+  };
+  addCol("client_type", "client_type TEXT NOT NULL DEFAULT 'residential'");
+  addCol("address", "address TEXT NOT NULL DEFAULT ''");
+  addCol("city", "city TEXT NOT NULL DEFAULT ''");
+  addCol("state", "state TEXT NOT NULL DEFAULT ''");
+  addCol("zip", "zip TEXT NOT NULL DEFAULT ''");
+  addCol("website", "website TEXT NOT NULL DEFAULT ''");
+  addCol("lead_source", "lead_source TEXT NOT NULL DEFAULT ''");
+}
+
+/**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
@@ -330,6 +354,14 @@ export interface ClientRow {
   next_action: string;
   notes: string;
   archived: number;
+  /** Phase 3e: "commercial" | "residential" (backfilled to residential). */
+  client_type: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  website: string;
+  lead_source: string;
   created_at: string;
   updated_at: string;
 }
