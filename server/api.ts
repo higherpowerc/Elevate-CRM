@@ -1,4 +1,4 @@
-import { db, STAGES, isStage, type ClientRow, type CustomField, type Stage } from "./db";
+import { db, STAGES, isStage, type ClientRow, type CustomField, type Stage, type TaskRow } from "./db";
 import {
   createSession,
   verifySession,
@@ -183,6 +183,95 @@ function validateClient(body: Record<string, unknown>): { ok: true; value: Clien
   };
 }
 
+/* ── Task row → API shape ──────────────────────────────── */
+
+/** Row shape for task queries: tasks row joined with the client name. */
+type TaskRowJoined = TaskRow & { client_name: string | null };
+
+function toTask(row: TaskRowJoined) {
+  return {
+    id: row.id,
+    title: row.title,
+    clientId: row.client_id ?? null,
+    clientName: row.client_name ?? "",
+    dueDate: row.due_date,
+    done: row.done === 1,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const TASK_SELECT = `
+  SELECT t.*, c.company_name AS client_name
+  FROM tasks t
+  LEFT JOIN clients c ON c.id = t.client_id
+`;
+
+function fetchTask(id: number) {
+  const row = db.query(`${TASK_SELECT} WHERE t.id = ?`).get(id) as TaskRowJoined | null;
+  return row ? toTask(row) : null;
+}
+
+interface TaskInput {
+  title: string;
+  clientId: number | null;
+  dueDate: string;
+  done: boolean;
+  notes: string;
+}
+
+/**
+ * Validates the writable task fields. Every field is optional (partial
+ * updates); create routes additionally require `title`.
+ */
+function parseTaskFields(
+  body: Record<string, unknown>,
+): { ok: true; value: Partial<TaskInput> } | { ok: false; error: string } {
+  const out: Partial<TaskInput> = {};
+
+  if (body.title !== undefined) {
+    const t = typeof body.title === "string" ? body.title.trim() : "";
+    if (!t) return { ok: false, error: "Title is required." };
+    if (t.length > 200) return { ok: false, error: "Title must be under 200 characters." };
+    out.title = t;
+  }
+
+  if (body.clientId !== undefined && body.clientId !== null && body.clientId !== "") {
+    const id = Number(body.clientId);
+    if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "Client id must be a positive integer." };
+    out.clientId = id;
+  } else if (body.clientId !== undefined) {
+    out.clientId = null; // explicitly unlinked
+  }
+
+  if (body.dueDate !== undefined) {
+    const d = typeof body.dueDate === "string" ? body.dueDate.trim() : "";
+    if (d.length > 20) return { ok: false, error: "Due date must be under 20 characters." };
+    out.dueDate = d;
+  }
+
+  if (body.done !== undefined) {
+    if (typeof body.done !== "boolean") return { ok: false, error: "done must be a boolean." };
+    out.done = body.done;
+  }
+
+  if (body.notes !== undefined) {
+    const n = typeof body.notes === "string" ? body.notes : "";
+    if (n.length > 2000) return { ok: false, error: "Notes must be under 2000 characters." };
+    out.notes = n;
+  }
+
+  return { ok: true, value: out };
+}
+
+/** 400 unless a (non-null) client id refers to a real client. */
+function ensureClientExists(clientId: number): Response | null {
+  const exists = db.query("SELECT id FROM clients WHERE id = ?").get(clientId);
+  if (!exists) return err("Client not found.", 400);
+  return null;
+}
+
 /* ── Routes ─────────────────────────────────────────────────────────── */
 
 async function handleApi(req: Request, url: URL): Promise<Response> {
@@ -353,6 +442,113 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const row = find();
       if (!row) return err("Client not found.", 404);
       db.query("DELETE FROM clients WHERE id = ?").run(id);
+      return json({ ok: true });
+    }
+
+    return err("Method not allowed.", 405);
+  }
+
+  /* Tasks collection */
+  if (pathname === "/api/tasks" && method === "GET") {
+    const doneParam = url.searchParams.get("done");
+    const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (doneParam === "0") clauses.push("t.done = 0");
+    else if (doneParam === "1") clauses.push("t.done = 1");
+    if (q) {
+      clauses.push("LOWER(t.title) LIKE ?");
+      params.push(`%${q}%`);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = db
+      .query(
+        `${TASK_SELECT}
+         ${where}
+         ORDER BY t.done ASC, (t.due_date = '') ASC, t.due_date ASC, t.created_at DESC, t.id DESC`,
+      )
+      .all(...params) as TaskRowJoined[];
+    return json({ tasks: rows.map(toTask) });
+  }
+
+  if (pathname === "/api/tasks" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const v = parseTaskFields(body);
+    if (!v.ok) return err(v.error, 400);
+    if (!v.value.title) return err("Title is required.", 400);
+    const clientId = v.value.clientId ?? null;
+    if (clientId !== null) {
+      const bad = ensureClientExists(clientId);
+      if (bad) return bad;
+    }
+    const info = db
+      .query(
+        `INSERT INTO tasks (title, client_id, due_date, done, notes)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        v.value.title,
+        clientId,
+        v.value.dueDate ?? "",
+        v.value.done ? 1 : 0,
+        v.value.notes ?? "",
+      );
+    const task = fetchTask(Number(info.lastInsertRowid));
+    return json({ task }, 201);
+  }
+
+  /* Task item + toggle */
+  const taskMatch = pathname.match(/^\/api\/tasks\/(\d+)$/);
+  const taskToggleMatch = pathname.match(/^\/api\/tasks\/(\d+)\/toggle$/);
+
+  if (taskToggleMatch && method === "POST") {
+    const id = Number(taskToggleMatch[1]);
+    const row = db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | null;
+    if (!row) return err("Task not found.", 404);
+    db.query("UPDATE tasks SET done = ?, updated_at = datetime('now') WHERE id = ?").run(
+      row.done ? 0 : 1,
+      id,
+    );
+    return json({ task: fetchTask(id) });
+  }
+
+  if (taskMatch) {
+    const id = Number(taskMatch[1]);
+    const find = () => db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | null;
+
+    if (method === "PUT") {
+      const row = find();
+      if (!row) return err("Task not found.", 404);
+      const body = await readBody(req);
+      if (!body) return err("Invalid JSON body.", 400);
+      const v = parseTaskFields(body);
+      if (!v.ok) return err(v.error, 400);
+      const f = v.value;
+      if (f.clientId !== undefined && f.clientId !== null) {
+        const bad = ensureClientExists(f.clientId);
+        if (bad) return bad;
+      }
+      db.query(
+        `UPDATE tasks SET
+           title = ?, client_id = ?, due_date = ?, done = ?, notes = ?,
+           updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(
+        f.title ?? row.title,
+        f.clientId !== undefined ? f.clientId : row.client_id,
+        f.dueDate ?? row.due_date,
+        f.done !== undefined ? (f.done ? 1 : 0) : row.done,
+        f.notes ?? row.notes,
+        id,
+      );
+      return json({ task: fetchTask(id) });
+    }
+
+    if (method === "DELETE") {
+      const row = find();
+      if (!row) return err("Task not found.", 404);
+      db.query("DELETE FROM tasks WHERE id = ?").run(id);
       return json({ ok: true });
     }
 

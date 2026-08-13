@@ -31,6 +31,18 @@ export interface Client {
   updatedAt: string;
 }
 
+export interface Task {
+  id: number;
+  title: string;
+  clientId: number | null;
+  clientName: string;
+  dueDate: string;
+  done: boolean;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DashboardData {
   stageCounts: Record<Stage, number>;
   projectedPipeline: number;

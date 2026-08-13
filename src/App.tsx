@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import Login from "./Login";
 import Dashboard from "./Dashboard";
 import Clients from "./Clients";
+import Tasks from "./Tasks";
 import { api } from "./api";
 import type { User } from "./types";
 
-type View = "dashboard" | "clients";
+type View = "dashboard" | "clients" | "tasks";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -80,6 +81,12 @@ export default function App() {
             >
               Clients
             </button>
+            <button
+              className={view === "tasks" ? "tab active" : "tab"}
+              onClick={() => setView("tasks")}
+            >
+              Tasks
+            </button>
           </nav>
           <div className="nav-right">
             <span className="nav-user" title={user.email}>
@@ -94,8 +101,10 @@ export default function App() {
       <main className="main">
         {view === "dashboard" ? (
           <Dashboard onGoToClients={() => setView("clients")} />
-        ) : (
+        ) : view === "clients" ? (
           <Clients />
+        ) : (
+          <Tasks />
         )}
       </main>
       <footer className="foot">Elevate Studio CRM · product build · v0.1</footer>

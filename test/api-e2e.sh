@@ -24,6 +24,7 @@ code() { curl -s -o /tmp/body.json -w "%{http_code}" "$@"; }
 echo "== 1. Auth guards =="
 check "me without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/auth/me")
 check "clients without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/clients")
+check "tasks without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/tasks")
 check "login wrong password → 401" 401 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"owner@elevate.studio","password":"nope"}' "$BASE/api/auth/login")
 
@@ -141,7 +142,83 @@ check "create landscaping client → 201" 201 "$S"
 LS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 grep -q '"Crew size"' /tmp/body.json && echo "  ✓ landscaping custom fields returned" || echo "  ✗ missing: $(cat /tmp/body.json)"
 
-echo "== 13. Logout =="
+echo "== 13. Tasks =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Send quote\",\"clientId\":$HVAC_ID,\"dueDate\":\"2026-08-20\",\"notes\":\"Itemized proposal\"}" \
+  "$BASE/api/tasks")
+check "create task linked to HVAC client → 201" 201 "$S"
+T1=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (created task id=$T1)"
+grep -q '"clientName":"Summit Heating & Air"' /tmp/body.json && echo "  ✓ client name joined into task" || echo "  ✗ clientName missing: $(cat /tmp/body.json)"
+grep -q '"done":false' /tmp/body.json && echo "  ✓ done defaults to false" || echo "  ✗ done mismatch: $(cat /tmp/body.json)"
+check "create task without title → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"dueDate":"2026-08-20"}' "$BASE/api/tasks")
+check "create task with missing client → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Ghost task","clientId":999999}' "$BASE/api/tasks")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Review competitor landing pages","notes":"Standalone research"}' "$BASE/api/tasks")
+check "create standalone task → 201" 201 "$S"
+T2=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+grep -q '"clientName":""' /tmp/body.json && echo "  ✓ standalone task has empty clientName" || echo "  ✗ clientName: $(cat /tmp/body.json)"
+
+S=$(code -b "$JAR" "$BASE/api/tasks")
+check "list tasks → 200" 200 "$S"
+grep -q 'Send quote' /tmp/body.json && echo "  ✓ linked task listed" || echo "  ✗ linked task missing: $(cat /tmp/body.json)"
+grep -q 'Review competitor landing pages' /tmp/body.json && echo "  ✓ standalone task listed" || echo "  ✗ standalone missing"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+titles = [t['title'] for t in d['tasks']]
+assert titles.index('Send quote') < titles.index('Review competitor landing pages'), titles
+print("  ✓ open tasks sorted by due date, empty due dates last")
+PY
+
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Collect analytics access\",\"clientId\":$LS_ID,\"dueDate\":\"2026-08-12\",\"done\":true}" \
+  "$BASE/api/tasks")
+check "create done task → 201" 201 "$S"
+T3=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+grep -q '"done":true' /tmp/body.json && echo "  ✓ done=true honored on create" || echo "  ✗ done mismatch: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/tasks?done=1")
+check "list done=1 → 200" 200 "$S"
+grep -q 'Collect analytics access' /tmp/body.json && ! grep -q 'Send quote' /tmp/body.json && echo "  ✓ done filter returns only done tasks" || echo "  ✗ done filter failed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/tasks?done=0")
+check "list done=0 → 200" 200 "$S"
+grep -q 'Send quote' /tmp/body.json && ! grep -q 'Collect analytics access' /tmp/body.json && echo "  ✓ open filter returns only open tasks" || echo "  ✗ open filter failed"
+S=$(code -b "$JAR" "$BASE/api/tasks?q=quote")
+check "search q=quote → 200" 200 "$S"
+grep -q 'Send quote' /tmp/body.json && ! grep -q 'Collect analytics' /tmp/body.json && echo "  ✓ title search works" || echo "  ✗ search failed: $(cat /tmp/body.json)"
+
+S=$(code -b "$JAR" -X POST "$BASE/api/tasks/$T1/toggle")
+check "toggle T1 → 200" 200 "$S"
+grep -q '"done":true' /tmp/body.json && echo "  ✓ toggle marks task done" || echo "  ✗ toggle failed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"title":"Send revised quote","dueDate":"2026-08-25","notes":"Updated pricing"}' "$BASE/api/tasks/$T1")
+check "partial update T1 → 200" 200 "$S"
+grep -q '"title":"Send revised quote"' /tmp/body.json && grep -q '"dueDate":"2026-08-25"' /tmp/body.json && echo "  ✓ partial update applied" || echo "  ✗ update failed: $(cat /tmp/body.json)"
+grep -q '"done":true' /tmp/body.json && echo "  ✓ done preserved across partial update" || echo "  ✗ done lost: $(cat /tmp/body.json)"
+check "update missing task → 404" 404 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"title":"Nope"}' "$BASE/api/tasks/999999")
+
+# ON DELETE SET NULL: deleting a client keeps its tasks, unlinked.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Temp Co For Tasks","contactName":"T","industry":"Testing","dealValue":0,"stage":"Prospect"}' \
+  "$BASE/api/clients")
+check "create temp client → 201" 201 "$S"
+TEMP=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Follow up with temp client\",\"clientId\":$TEMP}" "$BASE/api/tasks")
+check "create task linked to temp client → 201" 201 "$S"
+T4=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+check "delete temp client → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/clients/$TEMP")
+code -b "$JAR" "$BASE/api/tasks?q=temp" > /dev/null
+grep -q '"Follow up with temp client"' /tmp/body.json && grep -q '"clientId":null' /tmp/body.json && echo "  ✓ ON DELETE SET NULL — task survives, clientId null" || echo "  ✗ SET NULL failed: $(cat /tmp/body.json)"
+
+check "delete T2 → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T2")
+check "delete T2 again → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T2")
+check "toggle missing task → 404" 404 $(code -b "$JAR" -X POST "$BASE/api/tasks/999999/toggle")
+
+echo "== 14. Logout =="
 S=$(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/logout")
 check "logout → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/auth/me")

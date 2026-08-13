@@ -1,4 +1,4 @@
-import type { Client, DashboardData, User } from "./types";
+import type { Client, DashboardData, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -35,6 +35,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export type ClientInput = Omit<Client, "id" | "createdAt" | "updatedAt">;
 
+/** Writable task fields (server ignores unknown keys; client id optional). */
+export type TaskInput = Omit<Task, "id" | "clientName" | "createdAt" | "updatedAt">;
+
 export const api = {
   me: () => request<{ user: User }>("/api/auth/me"),
   login: (email: string, password: string) =>
@@ -59,4 +62,21 @@ export const api = {
     }),
   deleteClient: (id: number) =>
     request<{ ok: true }>(`/api/clients/${id}`, { method: "DELETE" }),
+
+  tasks: (done?: "0" | "1") =>
+    request<{ tasks: Task[] }>(`/api/tasks${done ? `?done=${done}` : ""}`),
+  createTask: (data: Partial<TaskInput>) =>
+    request<{ task: Task }>("/api/tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateTask: (id: number, data: Partial<TaskInput>) =>
+    request<{ task: Task }>(`/api/tasks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  toggleTask: (id: number) =>
+    request<{ task: Task }>(`/api/tasks/${id}/toggle`, { method: "POST" }),
+  deleteTask: (id: number) =>
+    request<{ ok: true }>(`/api/tasks/${id}`, { method: "DELETE" }),
 };

@@ -57,8 +57,22 @@ db.exec(`
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS tasks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL,
+    client_id  INTEGER,
+    due_date   TEXT NOT NULL DEFAULT '',
+    done       INTEGER NOT NULL DEFAULT 0,
+    notes      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_clients_stage   ON clients(stage);
   CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
+  CREATE INDEX IF NOT EXISTS idx_tasks_done      ON tasks(done);
+  CREATE INDEX IF NOT EXISTS idx_tasks_client_id ON tasks(client_id);
 `);
 
 // Simple migration for databases created before custom_fields existed:
@@ -84,6 +98,17 @@ export interface ClientRow {
   next_action: string;
   notes: string;
   archived: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskRow {
+  id: number;
+  title: string;
+  client_id: number | null;
+  due_date: string;
+  done: number;
+  notes: string;
   created_at: string;
   updated_at: string;
 }
