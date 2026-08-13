@@ -40,10 +40,15 @@ export default function Clients({ stages }: Props) {
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (includeArchived = false) => {
+  /** Loads the FULL client list (active AND archived) plus org settings.
+   *  The tab buttons filter this in-memory list client-side, so archived
+   *  clients stay visible on the Archived/All tabs. Fetching only active
+   *  clients here made archived ones invisible in the UI — every mutation
+   *  below refetches the same complete list. */
+  const load = useCallback(async () => {
     setError(null);
     try {
-      const [{ clients }, { settings }] = await Promise.all([api.clients(includeArchived), api.settings()]);
+      const [{ clients }, { settings }] = await Promise.all([api.clients(true), api.settings()]);
       setClients(clients);
       setCustomFieldDefs(settings.customFields);
       setOrgStages(settings.stages);
@@ -104,7 +109,7 @@ export default function Clients({ stages }: Props) {
       if (editing) await api.updateClient(editing.id, input);
       else await api.createClient(input);
       setModal(null);
-      await load(filter === "all");
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed.");
     } finally {
@@ -119,7 +124,7 @@ export default function Clients({ stages }: Props) {
     try {
       await api.deleteClient(deleting.id);
       setDeleting(null);
-      await load(filter === "all");
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed.");
     } finally {
@@ -132,7 +137,7 @@ export default function Clients({ stages }: Props) {
     setError(null);
     try {
       await api.updateClient(c.id, { ...c, stage });
-      await load(filter === "all");
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Move failed.");
     } finally {
@@ -145,7 +150,7 @@ export default function Clients({ stages }: Props) {
     setError(null);
     try {
       await api.updateClient(c.id, { ...c, archived: !c.archived });
-      await load(filter === "all");
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Archive failed.");
     } finally {
@@ -384,7 +389,7 @@ export default function Clients({ stages }: Props) {
                 stageCounts={stageCounts}
                 onSaved={() => {
                   setStageModal(false);
-                  load(filter === "all");
+                  load();
                 }}
               />
             </div>
