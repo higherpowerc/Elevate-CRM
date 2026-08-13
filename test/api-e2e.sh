@@ -892,7 +892,7 @@ if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ \"Manage stages\" shortcut missing from $NEWEST_JS"
   fi
-  if grep -q "Client type" "$NEWEST_JS" && grep -q "Lead source" "$NEWEST_JS" && grep -q "ZIP / postal" "$NEWEST_JS"; then
+  if grep -q "Client type" "$NEWEST_JS" && grep -q "Referral source" "$NEWEST_JS" && grep -q "ZIP / postal" "$NEWEST_JS"; then
     PASS=$((PASS+1)); echo "  ✓ newest bundle contains the new client-record form fields"
   else
     FAIL=$((FAIL+1)); echo "  ✗ new client-record form fields missing from $NEWEST_JS"

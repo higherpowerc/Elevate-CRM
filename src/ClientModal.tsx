@@ -1,5 +1,11 @@
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
+import {
+  getIntakeLayout,
+  intakeClientType,
+  type IntakeField,
+  type IntakeOrgSettings,
+} from "./intakeRules";
 
 interface Props {
   client?: Client;
@@ -8,14 +14,49 @@ interface Props {
   /** The tenant's custom-field definitions (Phase 3b) — each defined field
    *  gets its own typed input; values are stored keyed by field name. */
   customFieldDefs: CustomFieldDef[];
+  /** Adaptive intake Phase 1/2: the org's account-level vertical config —
+   *  the rules engine decides which sections/fields this form shows. */
+  intake: IntakeOrgSettings;
   busy: boolean;
   onClose: () => void;
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
 }
 
-export default function ClientModal({ client, stages, customFieldDefs, busy, onClose, onSave }: Props) {
+/** Empty value for every field the intake form can touch (universal +
+ *  adaptive). New keys default so the server's create defaults match. The
+ *  adaptive keys are re-declared as required so form code never hits
+ *  `possibly undefined` (the base Client type keeps them optional). */
+type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
+  billingAddress: string;
+  billingCity: string;
+  billingState: string;
+  billingZip: string;
+  billingSame: boolean;
+  preferredContactMethod: string;
+  businessType: string;
+  taxIdEin: string;
+  apContact: string;
+  poRequired: boolean;
+  unitsLocations: string;
+  propertyManagerName: string;
+  propertyManagerContact: string;
+  hoaName: string;
+  hoaContact: string;
+  accessInstructions: string;
+  coiRequired: boolean;
+  serviceContract: string;
+  dbaName: string;
+  einSsn: string;
+  homeownerRenter: string;
+  hoaRestrictions: string;
+  parkingAccess: string;
+  petOnPremises: boolean;
+  preferredServiceLocation: string;
+};
+
+export default function ClientModal({ client, stages, customFieldDefs, intake, busy, onClose, onSave }: Props) {
   const defaultStage = stages[0] ?? "Prospect";
-  const empty = (): Omit<Client, "id" | "createdAt" | "updatedAt"> => ({
+  const empty = (): FormState => ({
     companyName: "",
     contactName: "",
     email: "",
@@ -35,8 +76,34 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
     zip: "",
     website: "",
     leadSource: "",
+    // Adaptive intake Phase 1: optional billing + intake fields.
+    billingAddress: "",
+    billingCity: "",
+    billingState: "",
+    billingZip: "",
+    billingSame: true,
+    preferredContactMethod: "",
+    businessType: "",
+    taxIdEin: "",
+    apContact: "",
+    poRequired: false,
+    unitsLocations: "",
+    propertyManagerName: "",
+    propertyManagerContact: "",
+    hoaName: "",
+    hoaContact: "",
+    accessInstructions: "",
+    coiRequired: false,
+    serviceContract: "",
+    dbaName: "",
+    einSsn: "",
+    homeownerRenter: "",
+    hoaRestrictions: "",
+    parkingAccess: "",
+    petOnPremises: false,
+    preferredServiceLocation: "",
   });
-  const [form, setForm] = useState(() =>
+  const [form, setForm] = useState<FormState>(() =>
     client
       ? {
           companyName: client.companyName,
@@ -58,11 +125,39 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
           zip: client.zip,
           website: client.website,
           leadSource: client.leadSource,
+          billingAddress: client.billingAddress ?? "",
+          billingCity: client.billingCity ?? "",
+          billingState: client.billingState ?? "",
+          billingZip: client.billingZip ?? "",
+          billingSame: client.billingSame ?? true,
+          preferredContactMethod: client.preferredContactMethod ?? "",
+          businessType: client.businessType ?? "",
+          taxIdEin: client.taxIdEin ?? "",
+          apContact: client.apContact ?? "",
+          poRequired: client.poRequired ?? false,
+          unitsLocations: client.unitsLocations ?? "",
+          propertyManagerName: client.propertyManagerName ?? "",
+          propertyManagerContact: client.propertyManagerContact ?? "",
+          hoaName: client.hoaName ?? "",
+          hoaContact: client.hoaContact ?? "",
+          accessInstructions: client.accessInstructions ?? "",
+          coiRequired: client.coiRequired ?? false,
+          serviceContract: client.serviceContract ?? "",
+          dbaName: client.dbaName ?? "",
+          einSsn: client.einSsn ?? "",
+          homeownerRenter: client.homeownerRenter ?? "",
+          hoaRestrictions: client.hoaRestrictions ?? "",
+          parkingAccess: client.parkingAccess ?? "",
+          petOnPremises: client.petOnPremises ?? false,
+          preferredServiceLocation: client.preferredServiceLocation ?? "",
         }
       : empty(),
   );
   const [serviceDraft, setServiceDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** The Business name / LLC tab is collapsed by default; auto-expands when
+   *  editing a client that already has a DBA or EIN/SSN on file. */
+  const [llcOpen, setLlcOpen] = useState(() => !!(client?.dbaName || client?.einSsn));
 
   // Esc closes the modal (keyboard nicety).
   useEffect(() => {
@@ -73,8 +168,22 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
     return () => window.removeEventListener("keydown", onKey as unknown as EventListener);
   }, [busy, onClose]);
 
-  function set<K extends keyof ReturnType<typeof empty>>(key: K, value: ReturnType<typeof empty>[K]) {
+  /** The adaptive layout — recomputed when the client type or the business
+   *  type (HOA narrowing) changes. Sections with no fields render nothing. */
+  const sections = useMemo(
+    () => getIntakeLayout(intake, intakeClientType(form.clientType), form.businessType),
+    [intake, form.clientType, form.businessType],
+  );
+
+  function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  /** String/number/boolean setter for dynamically-keyed fields (the rules
+   *  engine's keys are not statically known, so the generic `set` can't be
+   *  used). */
+  function setField(key: keyof FormState, value: string | number | boolean) {
+    setForm((f) => ({ ...f, [key]: value }) as FormState);
   }
 
   /** Current value for a defined field, by exact name (values are stored
@@ -133,7 +242,7 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
     // Phase 3e: the segmented toggle must be one of the two types — a choice
     // is forced before saving (the server enforces it too).
     if (form.clientType !== "commercial" && form.clientType !== "residential") {
-      setError("Choose Commercial or Residential.");
+      setError("Choose Commercial or Individual.");
       return;
     }
     // Build the payload custom fields from the tenant's definitions: every
@@ -149,128 +258,162 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
         customFields.push({ name: def.name, value });
       }
     }
+    const billingSame = form.billingSame !== false;
     setError(null);
-    onSave({ ...form, customFields, dealValue: Number(form.dealValue) || 0 }, client);
+    onSave(
+      {
+        ...form,
+        billingSame,
+        // When billing is the same as the service address the address values
+        // are omitted from the save (nothing to store).
+        ...(billingSame
+          ? {}
+          : {
+              billingAddress: form.billingAddress.trim(),
+              billingCity: form.billingCity.trim(),
+              billingState: form.billingState.trim(),
+              billingZip: form.billingZip.trim(),
+            }),
+        customFields,
+        dealValue: Number(form.dealValue) || 0,
+      },
+      client,
+    );
   }
 
-  return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit client" : "New client"}>
-      <div className="modal modal-lg">
-        <div className="modal-head">
-          <h2>{client ? "Edit client" : "New client"}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
-            ✕
-          </button>
-        </div>
-        <form onSubmit={submit} className="form modal-form">
-          {error && (
-            <div className="alert alert-error" role="alert">
-              {error}
-            </div>
-          )}
-          <div className="field">
-            <span className="field-label">Client type *</span>
-            <div className="seg seg-type" role="radiogroup" aria-label="Client type">
-              {(["commercial", "residential"] as ClientType[]).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.clientType === t}
-                  className={form.clientType === t ? "seg-btn active" : "seg-btn"}
-                  onClick={() => set("clientType", t)}
-                >
-                  {t === "commercial" ? "Commercial" : "Residential"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span className="field-label">
-                {form.clientType === "commercial" ? "Company name *" : "Name *"}
-              </span>
-              <input
-                value={form.companyName}
-                onChange={(e) => set("companyName", e.target.value)}
-                placeholder={form.clientType === "commercial" ? "e.g. Acme Landscaping" : "e.g. Jane Doe"}
-                required
-                autoFocus
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Industry</span>
-              <input
-                value={form.industry}
-                onChange={(e) => set("industry", e.target.value)}
-                placeholder="HVAC, Legal, Retail…"
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Contact name</span>
-              <input
-                value={form.contactName}
-                onChange={(e) => set("contactName", e.target.value)}
-                placeholder="Jordan Lee"
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Email</span>
-              <input
-                type="email"
-                value={form.email}
-                onChange={(e) => set("email", e.target.value)}
-                placeholder="jordan@acme.com"
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Phone</span>
-              <input
-                type="tel"
-                value={form.phone}
-                onChange={(e) => set("phone", e.target.value)}
-                placeholder="+1 555 000 1234"
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Deal value ($)</span>
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={form.dealValue === 0 ? "" : String(form.dealValue)}
-                onChange={(e) => set("dealValue", e.target.value === "" ? 0 : Number(e.target.value))}
-                placeholder="9500.50"
-              />
-            </label>
-            <label className="field">
-              <span className="field-label">Stage</span>
-              <select value={form.stage} onChange={(e) => set("stage", e.target.value as Stage)}>
-                {stages.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span className="field-label">Next action</span>
-              <input
-                value={form.nextAction}
-                onChange={(e) => set("nextAction", e.target.value)}
-                placeholder="e.g. Send proposal by Friday"
-              />
-            </label>
-          </div>
+  /* ── Field renderers ─────────────────────────────────────────────── */
 
-          <fieldset className="field addr-group">
-            <legend className="field-label">Address</legend>
+  /** Display value of a form field (numbers render as their string form). */
+  function displayValue(f: IntakeField): string {
+    const raw = form[f.key as keyof FormState];
+    if (typeof raw === "number") return raw === 0 ? "" : String(raw);
+    return typeof raw === "string" ? raw : "";
+  }
+
+  /** Grid-cell fields: text input, textarea, select, datalist, yes/no. */
+  function renderCell(f: IntakeField) {
+    const key = f.key as keyof FormState;
+    const value = displayValue(f);
+    if (f.kind === "yesno") {
+      const checked = form[key] === true;
+      return (
+        <div className="field" key={f.key}>
+          <span className="field-label">{f.label}</span>
+          <div className="seg yesno-seg" role="radiogroup" aria-label={f.label}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              className={checked ? "seg-btn active" : "seg-btn"}
+              onClick={() => setField(key, true)}
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!checked}
+              className={!checked ? "seg-btn active" : "seg-btn"}
+              onClick={() => setField(key, false)}
+            >
+              No
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (f.kind === "select") {
+      return (
+        <label className="field" key={f.key}>
+          <span className="field-label">{f.label}</span>
+          <select
+            value={value}
+            onChange={(e) => setField(key, e.target.value)}
+            aria-label={f.label}
+          >
+            <option value="">—</option>
+            {(f.options ?? []).map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+    if (f.kind === "datalist") {
+      return (
+        <label className="field" key={f.key}>
+          <span className="field-label">{f.label}</span>
+          <input
+            value={value}
+            onChange={(e) => setField(key, e.target.value)}
+            placeholder={f.placeholder}
+            maxLength={f.maxLength}
+            list="intake-business-types"
+            aria-label={f.label}
+          />
+          <datalist id="intake-business-types">
+            {(f.options ?? []).map((o) => (
+              <option key={o} value={o} />
+            ))}
+          </datalist>
+        </label>
+      );
+    }
+    if (f.kind === "textarea") {
+      return (
+        <label className="field intake-block" key={f.key}>
+          <span className="field-label">{f.label}</span>
+          <textarea
+            rows={4}
+            value={value}
+            onChange={(e) => setField(key, e.target.value)}
+            placeholder={f.placeholder}
+            maxLength={f.maxLength}
+          />
+        </label>
+      );
+    }
+    // text
+    return (
+      <label className="field" key={f.key}>
+        <span className="field-label">{f.label}</span>
+        <input
+          type={f.key === "dealValue" ? "number" : f.key === "website" ? "url" : f.key === "email" ? "email" : "text"}
+          min={f.key === "dealValue" ? 0 : undefined}
+          step={f.key === "dealValue" ? "any" : undefined}
+          value={value}
+          onChange={(e) =>
+            f.key === "dealValue"
+              ? setField(key, e.target.value === "" ? 0 : Number(e.target.value))
+              : setField(key, e.target.value)
+          }
+          placeholder={f.placeholder}
+          maxLength={f.maxLength}
+          required={f.key === "companyName"}
+          autoFocus={f.key === "companyName"}
+          aria-label={f.label}
+        />
+      </label>
+    );
+  }
+
+  /** Full-width blocks: address, billing, LLC tab, services, custom fields,
+   *  archived. */
+  function renderBlock(f: IntakeField) {
+    switch (f.kind) {
+      case "address":
+        return (
+          <fieldset className="field addr-group intake-block" key={f.key}>
+            <legend className="field-label">Service address</legend>
             <div className="field">
               <input
                 value={form.address}
                 onChange={(e) => set("address", e.target.value)}
                 placeholder="Street address"
                 maxLength={200}
+                aria-label="Service street address"
               />
             </div>
             <div className="form-row-3">
@@ -303,30 +446,105 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
               </label>
             </div>
           </fieldset>
-
-          <div className="form-grid">
-            <label className="field">
-              <span className="field-label">Website</span>
+        );
+      case "billing":
+        return (
+          <fieldset className="field addr-group intake-block" key={f.key}>
+            <legend className="field-label">Billing address</legend>
+            <label className="check">
               <input
-                type="url"
-                value={form.website}
-                onChange={(e) => set("website", e.target.value)}
-                placeholder="https://acme.com"
-                maxLength={200}
+                type="checkbox"
+                checked={form.billingSame !== false}
+                onChange={(e) => set("billingSame", e.target.checked)}
               />
+              <span>Same as service address</span>
             </label>
-            <label className="field">
-              <span className="field-label">Lead source</span>
-              <input
-                value={form.leadSource}
-                onChange={(e) => set("leadSource", e.target.value)}
-                placeholder="Referral, Website, Walk-in…"
-                maxLength={100}
-              />
-            </label>
+            {form.billingSame === false && (
+              <div className="billing-fields">
+                <div className="field">
+                  <input
+                    value={form.billingAddress}
+                    onChange={(e) => set("billingAddress", e.target.value)}
+                    placeholder="Billing street address"
+                    maxLength={200}
+                    aria-label="Billing street address"
+                  />
+                </div>
+                <div className="form-row-3">
+                  <label className="field">
+                    <span className="field-label">Billing city</span>
+                    <input
+                      value={form.billingCity}
+                      onChange={(e) => set("billingCity", e.target.value)}
+                      placeholder="Seattle"
+                      maxLength={100}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Billing state</span>
+                    <input
+                      value={form.billingState}
+                      onChange={(e) => set("billingState", e.target.value)}
+                      placeholder="WA"
+                      maxLength={50}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Billing ZIP / postal</span>
+                    <input
+                      value={form.billingZip}
+                      onChange={(e) => set("billingZip", e.target.value)}
+                      placeholder="98101"
+                      maxLength={20}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+          </fieldset>
+        );
+      case "llc":
+        return (
+          <div className="llc-tab intake-block" key={f.key}>
+            <button
+              type="button"
+              className="llc-toggle"
+              onClick={() => setLlcOpen((o) => !o)}
+              aria-expanded={llcOpen}
+            >
+              <span className="llc-caret" aria-hidden="true">
+                {llcOpen ? "▾" : "▸"}
+              </span>
+              <span>Business name / LLC</span>
+              <span className="llc-note">optional</span>
+            </button>
+            {llcOpen && (
+              <div className="llc-body form-grid">
+                <label className="field">
+                  <span className="field-label">Business / DBA name</span>
+                  <input
+                    value={form.dbaName}
+                    onChange={(e) => set("dbaName", e.target.value)}
+                    placeholder="e.g. Jane Doe Detailing LLC"
+                    maxLength={200}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">EIN or SSN</span>
+                  <input
+                    value={form.einSsn}
+                    onChange={(e) => set("einSsn", e.target.value)}
+                    placeholder="For 1099 clients"
+                    maxLength={50}
+                  />
+                </label>
+              </div>
+            )}
           </div>
-
-          <fieldset className="field">
+        );
+      case "services":
+        return (
+          <fieldset className="field intake-block" key={f.key}>
             <legend className="field-label">Services</legend>
             <div className="chips">
               {form.services.map((s) => (
@@ -357,8 +575,10 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
               </button>
             </div>
           </fieldset>
-
-          <div className="field">
+        );
+      case "custom":
+        return (
+          <div className="field intake-block" key={f.key}>
             <span className="field-label">Custom fields</span>
             {customFieldDefs.length === 0 ? (
               <p className="field-hint cf-none-hint">
@@ -397,17 +617,10 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
               </div>
             )}
           </div>
-
-          <label className="field">
-            <span className="field-label">Notes</span>
-            <textarea
-              rows={4}
-              value={form.notes}
-              onChange={(e) => set("notes", e.target.value)}
-              placeholder="Scope notes, meeting takeaways, context…"
-            />
-          </label>
-          <label className="check">
+        );
+      case "archived":
+        return (
+          <label className="check intake-block" key={f.key}>
             <input
               type="checkbox"
               checked={form.archived}
@@ -415,6 +628,60 @@ export default function ClientModal({ client, stages, customFieldDefs, busy, onC
             />
             <span>Archived (hidden from dashboard counts)</span>
           </label>
+        );
+      default:
+        return null;
+    }
+  }
+
+  /** Grid-cell kinds render through renderCell; everything else (address,
+   *  billing, LLC, services, custom, archived) renders as a full-width block. */
+  const CELL_KINDS = new Set(["text", "textarea", "yesno", "select", "datalist"]);
+
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit client" : "New client"}>
+      <div className="modal modal-lg">
+        <div className="modal-head">
+          <h2>{client ? "Edit client" : "New client"}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
+            ✕
+          </button>
+        </div>
+        <form onSubmit={submit} className="form modal-form">
+          {error && (
+            <div className="alert alert-error" role="alert">
+              {error}
+            </div>
+          )}
+          <div className="field">
+            <span className="field-label">Client type *</span>
+            <div className="seg seg-type" role="radiogroup" aria-label="Client type">
+              {(["commercial", "residential"] as ClientType[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="radio"
+                  aria-checked={form.clientType === t}
+                  className={form.clientType === t ? "seg-btn active" : "seg-btn"}
+                  onClick={() => set("clientType", t)}
+                >
+                  {t === "commercial" ? "Commercial" : "Individual"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {sections.map((section) =>
+            section.fields.length === 0 ? null : (
+              <section className="intake-section" key={section.id} aria-label={section.title}>
+                <div className="intake-section-title">{section.title}</div>
+                <div className="form-grid intake-grid">
+                  {section.fields.map((f) =>
+                    CELL_KINDS.has(f.kind) ? renderCell(f) : renderBlock(f),
+                  )}
+                </div>
+              </section>
+            ),
+          )}
           <div className="modal-actions">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
               Cancel
