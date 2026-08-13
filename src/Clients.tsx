@@ -243,7 +243,7 @@ export default function Clients({ stages }: Props) {
           <table className="table clients-table">
             <thead>
               <tr>
-                <th>Company</th>
+                <th>Client</th>
                 <th>Contact</th>
                 <th>Services</th>
                 <th className="num">Deal</th>
@@ -257,7 +257,7 @@ export default function Clients({ stages }: Props) {
                 const fullAddress = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
                 return (
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
-                    <td className="cell-strong" data-label="Company">
+                    <td className="cell-strong" data-label="Client">
                       <div className="cell-company">
                         {c.companyName}
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
