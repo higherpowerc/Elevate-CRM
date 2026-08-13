@@ -25,6 +25,7 @@ echo "== 1. Auth guards =="
 check "me without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/auth/me")
 check "clients without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/clients")
 check "tasks without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/tasks")
+check "invoices without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/invoices")
 check "login wrong password → 401" 401 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"owner@elevate.studio","password":"nope"}' "$BASE/api/auth/login")
 
@@ -218,7 +219,139 @@ check "delete T2 → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T2")
 check "delete T2 again → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T2")
 check "toggle missing task → 404" 404 $(code -b "$JAR" -X POST "$BASE/api/tasks/999999/toggle")
 
-echo "== 14. Logout =="
+echo "== 14. Invoices =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID,\"amount\":12345.50,\"dueDate\":\"2026-08-20\",\"notes\":\"Website build — deposit\"}" \
+  "$BASE/api/invoices")
+check "create invoice linked to HVAC client → 201" 201 "$S"
+I1=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (created invoice id=$I1)"
+grep -q '"clientName":"Summit Heating & Air"' /tmp/body.json && echo "  ✓ client name joined into invoice" || echo "  ✗ clientName missing: $(cat /tmp/body.json)"
+grep -q '"status":"draft"' /tmp/body.json && echo "  ✓ status defaults to draft" || echo "  ✗ status mismatch: $(cat /tmp/body.json)"
+grep -q '"amount":12345.5' /tmp/body.json && echo "  ✓ decimal amount returned" || echo "  ✗ amount mismatch: $(cat /tmp/body.json)"
+check "create invoice without amount → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID}" "$BASE/api/invoices")
+check "create invoice with zero amount → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":0}' "$BASE/api/invoices")
+check "create invoice with negative amount → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":-5}' "$BASE/api/invoices")
+check "create invoice with bad status → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":100,"status":"overdue"}' "$BASE/api/invoices")
+check "create invoice with missing client → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":100,"clientId":999999}' "$BASE/api/invoices")
+
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":500,"notes":"Standalone invoice"}' "$BASE/api/invoices")
+check "create standalone invoice → 201" 201 "$S"
+I2=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+grep -q '"clientName":""' /tmp/body.json && echo "  ✓ standalone invoice has empty clientName" || echo "  ✗ clientName: $(cat /tmp/body.json)"
+
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$LS_ID,\"amount\":2100,\"status\":\"sent\",\"dueDate\":\"2026-09-01\"}" "$BASE/api/invoices")
+check "create sent invoice → 201" 201 "$S"
+I3=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$HVAC_ID,\"amount\":3000,\"status\":\"paid\",\"dueDate\":\"2026-07-01\"}" "$BASE/api/invoices")
+check "create paid invoice → 201" 201 "$S"
+I4=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$LS_ID,\"amount\":900,\"status\":\"sent\",\"dueDate\":\"2026-08-10\"}" "$BASE/api/invoices")
+check "create second sent invoice → 201" 201 "$S"
+I5=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+
+S=$(code -b "$JAR" "$BASE/api/invoices")
+check "list invoices → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+invs = d['invoices']
+assert len(invs) == 5, invs
+# unpaid (draft+sent) first, sorted by due date (empty last), then paid
+unpaid = [i for i in invs if i['status'] != 'paid']
+paid = [i for i in invs if i['status'] == 'paid']
+assert len(unpaid) == 4 and len(paid) == 1, invs
+draft_sent = [i for i in unpaid if i['dueDate']]
+empty_due = [i for i in unpaid if not i['dueDate']]
+draft_sent_dates = [i['dueDate'] for i in draft_sent]
+assert draft_sent_dates == sorted(draft_sent_dates), draft_sent_dates
+assert invs[:4] == draft_sent + empty_due and invs[4] == paid[0], [i['id'] for i in invs]
+print("  ✓ unpaid first, due-date order (empty last), paid after")
+PY
+
+S=$(code -b "$JAR" "$BASE/api/invoices?status=draft")
+check "filter status=draft → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert len(d['invoices']) == 2 and all(i['status'] == 'draft' for i in d['invoices']), d
+print("  ✓ draft filter returns only draft invoices")
+PY
+S=$(code -b "$JAR" "$BASE/api/invoices?status=sent")
+check "filter status=sent → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert len(d['invoices']) == 2 and all(i['status'] == 'sent' for i in d['invoices']), d
+print("  ✓ sent filter returns only sent invoices")
+PY
+S=$(code -b "$JAR" "$BASE/api/invoices?status=paid")
+check "filter status=paid → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert len(d['invoices']) == 1 and d['invoices'][0]['status'] == 'paid', d
+print("  ✓ paid filter returns only paid invoices")
+PY
+check "filter bad status → 400" 400 $(code -b "$JAR" "$BASE/api/invoices?status=won")
+S=$(code -b "$JAR" "$BASE/api/invoices?clientId=$HVAC_ID")
+check "filter clientId=HVAC → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+ids = {i['id'] for i in d['invoices']}
+assert len(d['invoices']) == 2, d
+print("  ✓ clientId filter returns only that client's invoices")
+PY
+S=$(code -b "$JAR" "$BASE/api/invoices?status=sent&clientId=$LS_ID")
+check "combined status+clientId → 200" 200 "$S"
+grep -q '"amount":2100' /tmp/body.json && grep -q '"amount":900' /tmp/body.json && echo "  ✓ combined filter narrows to sent invoices for LS client" || echo "  ✗ combined filter failed: $(cat /tmp/body.json)"
+
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"amount":13000,"status":"sent","dueDate":"2026-08-25","notes":"Deposit + first milestone"}' "$BASE/api/invoices/$I1")
+check "partial update I1 → 200" 200 "$S"
+grep -q '"amount":13000' /tmp/body.json && grep -q '"status":"sent"' /tmp/body.json && grep -q '"dueDate":"2026-08-25"' /tmp/body.json && echo "  ✓ partial update applied" || echo "  ✗ update failed: $(cat /tmp/body.json)"
+grep -q '"clientName":"Summit Heating & Air"' /tmp/body.json && echo "  ✓ clientName preserved across update" || echo "  ✗ clientName lost: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"status":"paid"}' "$BASE/api/invoices/$I1")
+check "mark I1 paid → 200" 200 "$S"
+grep -q '"status":"paid"' /tmp/body.json && echo "  ✓ status-only update marks invoice paid" || echo "  ✗ status update failed: $(cat /tmp/body.json)"
+check "update invoice with bad amount → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"amount":-1}' "$BASE/api/invoices/$I2")
+check "update missing invoice → 404" 404 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"amount":100}' "$BASE/api/invoices/999999")
+check "delete missing invoice → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/999999")
+
+# ON DELETE SET NULL: deleting a client keeps its invoices, unlinked.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Temp Co For Invoices","contactName":"T","industry":"Testing","dealValue":0,"stage":"Prospect"}' \
+  "$BASE/api/clients")
+check "create temp client → 201" 201 "$S"
+TEMP2=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$TEMP2,\"amount\":750,\"status\":\"sent\"}" "$BASE/api/invoices")
+check "create invoice linked to temp client → 201" 201 "$S"
+I6=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+check "delete temp client → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/clients/$TEMP2")
+code -b "$JAR" "$BASE/api/invoices?clientId=$TEMP2" > /dev/null
+grep -q '"invoices":\[\]' /tmp/body.json && echo "  ✓ temp client's invoices unlinked (clientId filter empty)" || echo "  ✗ SET NULL filter check failed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/invoices")
+check "list after client delete → 200" 200 "$S"
+grep -q '"id":'"$I6" /tmp/body.json && grep -q '"clientId":null' /tmp/body.json && echo "  ✓ ON DELETE SET NULL — invoice survives, clientId null" || echo "  ✗ SET NULL failed: $(cat /tmp/body.json)"
+
+check "delete I2 → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/$I2")
+check "delete I2 again → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/$I2")
+
+echo "== 15. Logout =="
 S=$(code -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/logout")
 check "logout → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/auth/me")

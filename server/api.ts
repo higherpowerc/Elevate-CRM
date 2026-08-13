@@ -1,4 +1,16 @@
-import { db, STAGES, isStage, type ClientRow, type CustomField, type Stage, type TaskRow } from "./db";
+import {
+  db,
+  STAGES,
+  isStage,
+  INVOICE_STATUSES,
+  isInvoiceStatus,
+  type ClientRow,
+  type CustomField,
+  type Stage,
+  type TaskRow,
+  type InvoiceRow,
+  type InvoiceStatus,
+} from "./db";
 import {
   createSession,
   verifySession,
@@ -270,6 +282,92 @@ function ensureClientExists(clientId: number): Response | null {
   const exists = db.query("SELECT id FROM clients WHERE id = ?").get(clientId);
   if (!exists) return err("Client not found.", 400);
   return null;
+}
+
+/* ── Invoice row → API shape ─────────────────────────── */
+
+/** Row shape for invoice queries: invoices row joined with the client name. */
+type InvoiceRowJoined = InvoiceRow & { client_name: string | null };
+
+function toInvoice(row: InvoiceRowJoined) {
+  return {
+    id: row.id,
+    clientId: row.client_id ?? null,
+    clientName: row.client_name ?? "",
+    amount: row.amount,
+    status: row.status,
+    dueDate: row.due_date,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const INVOICE_SELECT = `
+  SELECT i.*, c.company_name AS client_name
+  FROM invoices i
+  LEFT JOIN clients c ON c.id = i.client_id
+`;
+
+function fetchInvoice(id: number) {
+  const row = db.query(`${INVOICE_SELECT} WHERE i.id = ?`).get(id) as InvoiceRowJoined | null;
+  return row ? toInvoice(row) : null;
+}
+
+interface InvoiceInput {
+  clientId: number | null;
+  amount: number;
+  status: InvoiceStatus;
+  dueDate: string;
+  notes: string;
+}
+
+/**
+ * Validates the writable invoice fields. Every field is optional (partial
+ * updates); create routes additionally require `amount` (a real invoice is
+ * always worth more than zero).
+ */
+function parseInvoiceFields(
+  body: Record<string, unknown>,
+): { ok: true; value: Partial<InvoiceInput> } | { ok: false; error: string } {
+  const out: Partial<InvoiceInput> = {};
+
+  if (body.clientId !== undefined && body.clientId !== null && body.clientId !== "") {
+    const id = Number(body.clientId);
+    if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "Client id must be a positive integer." };
+    out.clientId = id;
+  } else if (body.clientId !== undefined) {
+    out.clientId = null; // explicitly unlinked
+  }
+
+  if (body.amount !== undefined && body.amount !== null && body.amount !== "") {
+    const a = Number(body.amount);
+    if (!Number.isFinite(a) || a <= 0) return { ok: false, error: "Amount must be a positive number." };
+    out.amount = a;
+  } else if (body.amount !== undefined) {
+    return { ok: false, error: "Amount must be a positive number." };
+  }
+
+  if (body.status !== undefined && body.status !== null && body.status !== "") {
+    if (!isInvoiceStatus(body.status)) {
+      return { ok: false, error: `Status must be one of: ${INVOICE_STATUSES.join(", ")}.` };
+    }
+    out.status = body.status;
+  }
+
+  if (body.dueDate !== undefined) {
+    const d = typeof body.dueDate === "string" ? body.dueDate.trim() : "";
+    if (d.length > 20) return { ok: false, error: "Due date must be under 20 characters." };
+    out.dueDate = d;
+  }
+
+  if (body.notes !== undefined) {
+    const n = typeof body.notes === "string" ? body.notes : "";
+    if (n.length > 2000) return { ok: false, error: "Notes must be under 2000 characters." };
+    out.notes = n;
+  }
+
+  return { ok: true, value: out };
 }
 
 /* ── Routes ─────────────────────────────────────────────────────────── */
@@ -549,6 +647,112 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const row = find();
       if (!row) return err("Task not found.", 404);
       db.query("DELETE FROM tasks WHERE id = ?").run(id);
+      return json({ ok: true });
+    }
+
+    return err("Method not allowed.", 405);
+  }
+
+  /* Invoices collection */
+  if (pathname === "/api/invoices" && method === "GET") {
+    const statusParam = url.searchParams.get("status");
+    const clientParam = url.searchParams.get("clientId");
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (statusParam !== null) {
+      if (!isInvoiceStatus(statusParam)) {
+        return err(`Status must be one of: ${INVOICE_STATUSES.join(", ")}.`, 400);
+      }
+      clauses.push("i.status = ?");
+      params.push(statusParam);
+    }
+    if (clientParam !== null) {
+      const cid = Number(clientParam);
+      if (!Number.isInteger(cid) || cid <= 0) return err("clientId must be a positive integer.", 400);
+      clauses.push("i.client_id = ?");
+      params.push(cid);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = db
+      .query(
+        `${INVOICE_SELECT}
+         ${where}
+         ORDER BY CASE WHEN i.status = 'paid' THEN 1 ELSE 0 END ASC,
+                  (i.due_date = '') ASC,
+                  i.due_date ASC,
+                  i.created_at DESC,
+                  i.id DESC`,
+      )
+      .all(...params) as InvoiceRowJoined[];
+    return json({ invoices: rows.map(toInvoice) });
+  }
+
+  if (pathname === "/api/invoices" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const v = parseInvoiceFields(body);
+    if (!v.ok) return err(v.error, 400);
+    if (v.value.amount === undefined) return err("Amount is required.", 400);
+    const clientId = v.value.clientId ?? null;
+    if (clientId !== null) {
+      const bad = ensureClientExists(clientId);
+      if (bad) return bad;
+    }
+    const info = db
+      .query(
+        `INSERT INTO invoices (client_id, amount, status, due_date, notes)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        clientId,
+        v.value.amount,
+        v.value.status ?? "draft",
+        v.value.dueDate ?? "",
+        v.value.notes ?? "",
+      );
+    const invoice = fetchInvoice(Number(info.lastInsertRowid));
+    return json({ invoice }, 201);
+  }
+
+  /* Invoice item */
+  const invoiceMatch = pathname.match(/^\/api\/invoices\/(\d+)$/);
+
+  if (invoiceMatch) {
+    const id = Number(invoiceMatch[1]);
+    const find = () => db.query("SELECT * FROM invoices WHERE id = ?").get(id) as InvoiceRow | null;
+
+    if (method === "PUT") {
+      const row = find();
+      if (!row) return err("Invoice not found.", 404);
+      const body = await readBody(req);
+      if (!body) return err("Invalid JSON body.", 400);
+      const v = parseInvoiceFields(body);
+      if (!v.ok) return err(v.error, 400);
+      const f = v.value;
+      if (f.clientId !== undefined && f.clientId !== null) {
+        const bad = ensureClientExists(f.clientId);
+        if (bad) return bad;
+      }
+      db.query(
+        `UPDATE invoices SET
+           client_id = ?, amount = ?, status = ?, due_date = ?, notes = ?,
+           updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(
+        f.clientId !== undefined ? f.clientId : row.client_id,
+        f.amount ?? row.amount,
+        f.status ?? row.status,
+        f.dueDate ?? row.due_date,
+        f.notes ?? row.notes,
+        id,
+      );
+      return json({ invoice: fetchInvoice(id) });
+    }
+
+    if (method === "DELETE") {
+      const row = find();
+      if (!row) return err("Invoice not found.", 404);
+      db.query("DELETE FROM invoices WHERE id = ?").run(id);
       return json({ ok: true });
     }
 
