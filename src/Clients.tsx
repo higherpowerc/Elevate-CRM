@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type ClientInput } from "./api";
-import { STAGES, money, fmtDate, type Client, type Stage } from "./types";
+import { money, fmtDate, type Client, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
 import ClientModal from "./ClientModal";
 import ConfirmDialog from "./ConfirmDialog";
 
 type Filter = "active" | "archived" | "all";
 
-export default function Clients() {
+interface Props {
+  /** The tenant's ordered pipeline stages — the stage column dropdown and
+   *  badge tones are driven by this list (Phase 3a). */
+  stages: Stage[];
+}
+
+export default function Clients({ stages }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("active");
@@ -231,7 +237,7 @@ export default function Clients() {
                   </td>
                   <td data-label="Stage">
                     <div className="stage-cell">
-                      <StageBadge stage={c.stage} />
+                      <StageBadge stage={c.stage} index={Math.max(0, stages.indexOf(c.stage))} />
                       <select
                         className="stage-select"
                         value={c.stage}
@@ -239,7 +245,7 @@ export default function Clients() {
                         onChange={(e) => handleStageMove(c, e.target.value as Stage)}
                         disabled={busy}
                       >
-                        {STAGES.map((s) => (
+                        {stages.map((s) => (
                           <option key={s} value={s}>
                             {s}
                           </option>
@@ -283,6 +289,7 @@ export default function Clients() {
       {modal && (
         <ClientModal
           client={modal.mode === "edit" ? modal.client : undefined}
+          stages={stages}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}

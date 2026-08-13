@@ -303,11 +303,14 @@ if (wantDemo) {
 // own member login, so the owner can immediately test the product's multi-
 // tenancy: log out → log in as acme@demo.example / AcmeDemo123! → see ONLY
 // Acme Landscaping's data (nothing from Elevate Studio's own org).
+// Phase 3a: the demo org also gets landscaping-appropriate pipeline stages so
+// the owner can see per-vertical stage names right away.
 // Idempotent: skipped if the org already exists.
 const DEMO_CLIENT_ORG = {
   name: "Acme Landscaping",
   email: "acme@demo.example",
   password: "AcmeDemo123!",
+  stages: ["Lead", "Site Visit", "Estimate", "Contract", "Active", "Completed"],
 };
 
 const DEMO_CLIENT_ORG_CLIENTS = [
@@ -323,7 +326,7 @@ const DEMO_CLIENT_ORG_CLIENTS = [
       { label: "Contract", value: "Year-round" },
     ],
     dealValue: 3200,
-    stage: "Kickoff",
+    stage: "Contract",
     nextAction: "Walk the property with the HOA board",
     notes: "Demo account — client org QA data",
   },
@@ -336,7 +339,7 @@ const DEMO_CLIENT_ORG_CLIENTS = [
     services: ["Seasonal cleanup", "Tree trimming"],
     customFields: [{ label: "Crew size", value: "2" }],
     dealValue: 1800,
-    stage: "Prospect",
+    stage: "Lead",
     nextAction: "Send seasonal quote",
     notes: "Demo account — client org QA data",
   },
@@ -352,7 +355,7 @@ const DEMO_CLIENT_ORG_CLIENTS = [
       { label: "License #", value: "AZ-44209" },
     ],
     dealValue: 12400,
-    stage: "Build",
+    stage: "Active",
     nextAction: "Deliver paver samples",
     notes: "Demo account — client org QA data",
   },
@@ -367,7 +370,11 @@ if (wantDemo) {
   } else {
     const hash = await hashPassword(DEMO_CLIENT_ORG.password);
     const tx = db.transaction(() => {
-      const orgId = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(DEMO_CLIENT_ORG.name).lastInsertRowid);
+      const orgId = Number(
+        db
+          .query("INSERT INTO orgs (name, stages) VALUES (?, ?)")
+          .run(DEMO_CLIENT_ORG.name, JSON.stringify(DEMO_CLIENT_ORG.stages)).lastInsertRowid,
+      );
       db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')").run(
         DEMO_CLIENT_ORG.email,
         hash,

@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import { STAGES, STAGE_TONE, money, fmtDate, type DashboardData } from "./types";
+import { stageTone, money, fmtDate, type DashboardData, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
 
-export default function Dashboard({ onGoToClients }: { onGoToClients: () => void }) {
+interface Props {
+  onGoToClients: () => void;
+  /** The tenant's ordered pipeline stages (drives the breakdown grid + KPI). */
+  stages: Stage[];
+}
+
+export default function Dashboard({ onGoToClients, stages }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,6 +24,7 @@ export default function Dashboard({ onGoToClients }: { onGoToClients: () => void
   if (!data) return <div className="skeleton-block" aria-label="Loading dashboard" />;
 
   const hasClients = data.totalClients > 0;
+  const lastStage = stages.length > 0 ? stages[stages.length - 1] : "";
 
   return (
     <div className="page">
@@ -45,23 +52,23 @@ export default function Dashboard({ onGoToClients }: { onGoToClients: () => void
           <span className="kpi-note">Non-archived entries across all stages</span>
         </div>
         <div className="card kpi">
-          <span className="kpi-label">In build or beyond</span>
-          <span className="kpi-value">
-            {data.stageCounts.Build + data.stageCounts.Launch + data.stageCounts.Retainer}
+          <span className="kpi-label">In final stage</span>
+          <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
+          <span className="kpi-note">
+            {lastStage ? `Clients in "${lastStage}" — your last pipeline stage` : "No stages configured"}
           </span>
-          <span className="kpi-note">Work underway or in retainer</span>
         </div>
       </div>
 
       <h2 className="section-title">Stage breakdown</h2>
       <div className="stage-grid">
-        {STAGES.map((stage, i) => (
-          <div className="card stage-card" key={stage}>
+        {stages.map((stage, i) => (
+          <div className="card stage-card" key={`${i}-${stage}`}>
             <div className="stage-top">
-              <StageBadge stage={stage} />
+              <StageBadge stage={stage} index={i} />
               <span className="stage-num">{String(i + 1).padStart(2, "0")}</span>
             </div>
-            <div className={`stage-count tone-${STAGE_TONE[stage]}`}>{data.stageCounts[stage]}</div>
+            <div className={`stage-count tone-${stageTone(i)}`}>{data.stageCounts[stage] ?? 0}</div>
             <div className="stage-rule" />
             <div className="stage-bottom">
               <span className="stage-caption">clients</span>
@@ -97,7 +104,7 @@ export default function Dashboard({ onGoToClients }: { onGoToClients: () => void
                   </td>
                   <td className="num cell-strong">{money(c.dealValue)}</td>
                   <td>
-                    <StageBadge stage={c.stage} />
+                    <StageBadge stage={c.stage} index={Math.max(0, stages.indexOf(c.stage))} />
                   </td>
                   <td className="cell-muted">{fmtDate(c.updatedAt)}</td>
                 </tr>

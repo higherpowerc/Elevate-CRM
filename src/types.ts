@@ -1,12 +1,21 @@
-export const STAGES = [
+/** Default pipeline stages — the list every org starts with. The signed-in
+ *  tenant's own list comes from the API (user.stages / /api/settings) and
+ *  drives the stage dropdown, dashboard breakdown and client badges. */
+export const DEFAULT_STAGES = [
   "Prospect",
   "Intake",
   "Kickoff",
   "Build",
   "Launch",
   "Retainer",
-] as const;
-export type Stage = (typeof STAGES)[number];
+];
+export type Stage = string;
+
+/** Badge/visual tones are assigned by stage-list position (the list is
+ *  tenant-defined, so names can't be mapped to tones anymore). */
+export const STAGE_TONES = ["gray", "blue", "amber", "violet", "lime", "teal"] as const;
+export const stageTone = (index: number): string =>
+  STAGE_TONES[((index % STAGE_TONES.length) + STAGE_TONES.length) % STAGE_TONES.length];
 
 export interface CustomField {
   label: string;
@@ -58,8 +67,9 @@ export interface Invoice {
   updatedAt: string;
 }
 
+/** stageCounts keys are the tenant's own stage names (dynamic). */
 export interface DashboardData {
-  stageCounts: Record<Stage, number>;
+  stageCounts: Record<string, number>;
   projectedPipeline: number;
   totalClients: number;
   archivedClients: number;
@@ -75,6 +85,10 @@ export interface User {
   role: "admin" | "member";
   /** Tenant display name (e.g. "Elevate Studio") — shown next to the email in the nav. */
   orgName?: string;
+  /** The tenant's ordered pipeline stages (Phase 3a). */
+  stages?: string[];
+  /** The tenant's brand accent (hex). */
+  accentColor?: string;
   created_at?: string;
 }
 
@@ -101,14 +115,15 @@ export interface CreatedOrgUser {
   role: "admin" | "member";
 }
 
-export const STAGE_TONE: Record<Stage, string> = {
-  Prospect: "gray",
-  Intake: "blue",
-  Kickoff: "amber",
-  Build: "violet",
-  Launch: "lime",
-  Retainer: "teal",
-};
+/** Org settings (Phase 3a): branding + per-tenant pipeline stages. */
+export interface OrgSettings {
+  orgName: string;
+  accentColor: string;
+  stages: string[];
+  /** Client count per stage (all clients incl. archived) — used by Settings
+   *  to warn before a stage with clients is removed. */
+  stageCounts: Record<string, number>;
+}
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is
  *  computed client-side when status === "sent" and dueDate < today. */

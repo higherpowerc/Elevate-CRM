@@ -1,7 +1,8 @@
 import {
   db,
-  STAGES,
-  isStage,
+  DEFAULT_STAGES,
+  parseStages,
+  getOrg,
   INVOICE_STATUSES,
   isInvoiceStatus,
   DEFAULT_ORG_NAME,
@@ -151,7 +152,15 @@ interface ClientInput {
   archived: boolean;
 }
 
-function validateClient(body: Record<string, unknown>): { ok: true; value: ClientInput } | { ok: false; error: string } {
+/**
+ * Validates the client payload. `stages` is the caller's OWN org stage list
+ * (looked up from the session org) — a client's stage must be one of the
+ * tenant's current pipeline stages.
+ */
+function validateClient(
+  body: Record<string, unknown>,
+  stages: string[],
+): { ok: true; value: ClientInput } | { ok: false; error: string } {
   const str = (v: unknown, max = 500): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
   const companyName = str(body.companyName, 200);
@@ -194,10 +203,13 @@ function validateClient(body: Record<string, unknown>): { ok: true; value: Clien
     if (!Number.isFinite(dealValue) || dealValue < 0) return { ok: false, error: "Deal value must be a non-negative number." };
   }
 
-  let stage: Stage = "Prospect";
+  let stage: Stage = stages[0] ?? "Prospect";
   if (body.stage !== undefined && body.stage !== null && body.stage !== "") {
-    if (!isStage(body.stage)) return { ok: false, error: `Stage must be one of: ${STAGES.join(", ")}.` };
-    stage = body.stage;
+    const s = typeof body.stage === "string" ? body.stage.trim() : "";
+    if (!s || !stages.includes(s)) {
+      return { ok: false, error: `Stage must be one of: ${stages.join(", ")}.` };
+    }
+    stage = s;
   }
 
   return {
@@ -448,6 +460,45 @@ function validateNewOrg(
   return { ok: true, value: { name, email, password } };
 }
 
+/* ── Org settings (Phase 3a): branding + per-tenant pipeline stages ── */
+
+const MAX_STAGES = 12;
+const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
+
+/** Validates a proposed stage list: 1..12 names, trimmed, unique
+ *  case-insensitively, each under 61 chars. Returns the cleaned list. */
+function validateStages(
+  v: unknown,
+): { ok: true; value: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(v)) return { ok: false, error: "Stages must be a list of names." };
+  if (v.length === 0) return { ok: false, error: "At least one stage is required." };
+  if (v.length > MAX_STAGES) return { ok: false, error: `Too many stages (max ${MAX_STAGES}).` };
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const s of v) {
+    if (typeof s !== "string") return { ok: false, error: "Each stage must be text." };
+    const t = s.trim();
+    if (!t) return { ok: false, error: "Stage names cannot be empty." };
+    if (t.length > 60) return { ok: false, error: "Stage names must be under 61 characters." };
+    const key = t.toLowerCase();
+    if (seen.has(key)) return { ok: false, error: `Duplicate stage name: ${t}.` };
+    seen.add(key);
+    out.push(t);
+  }
+  return { ok: true, value: out };
+}
+
+/** Client counts per stage for an org (ALL clients, archived included — the
+ *  removal guard counts everything so no client can be orphaned). */
+function orgStageCounts(orgId: number): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const rows = db
+    .query("SELECT stage, COUNT(*) AS c FROM clients WHERE org_id = ? GROUP BY stage")
+    .all(orgId) as { stage: string; c: number }[];
+  for (const r of rows) counts[r.stage] = r.c;
+  return counts;
+}
+
 /* ── Routes ─────────────────────────────────────────────────────────── */
 
 async function handleApi(req: Request, url: URL): Promise<Response> {
@@ -580,12 +631,14 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   /* Dashboard */
   if (pathname === "/api/dashboard" && method === "GET") {
+    const org = getOrg(orgId);
+    const orgStages = org ? parseStages(org.stages) : [...DEFAULT_STAGES];
     const stageCounts = {} as Record<Stage, number>;
-    for (const s of STAGES) stageCounts[s] = 0;
+    for (const s of orgStages) stageCounts[s] = 0;
     const rows = db
       .query("SELECT stage, COUNT(*) AS c FROM clients WHERE org_id = ? AND archived = 0 GROUP BY stage")
       .all(orgId) as { stage: Stage; c: number }[];
-    for (const r of rows) stageCounts[r.stage] = r.c;
+    for (const r of rows) if (r.stage in stageCounts) stageCounts[r.stage] = r.c;
 
     const total = db
       .query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ?")
@@ -608,6 +661,107 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       totalClients: total.c,
       archivedClients: archived.c,
       recentClients: recent,
+    });
+  }
+
+  /* Org settings (Phase 3a): branding + per-tenant pipeline stages.
+     Any signed-in member of the org may read/update their OWN org's settings
+     (it is their CRM). The org always comes from the session — a body org_id
+     is ignored, so there is no cross-org write path. */
+  if (pathname === "/api/settings" && method === "GET") {
+    const org = getOrg(orgId);
+    if (!org) return err("Org not found.", 404);
+    return json({
+      settings: {
+        orgName: org.name,
+        accentColor: org.accent_color,
+        stages: parseStages(org.stages),
+        stageCounts: orgStageCounts(orgId),
+      },
+    });
+  }
+
+  if (pathname === "/api/settings" && method === "PUT") {
+    const org = getOrg(orgId);
+    if (!org) return err("Org not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const sets: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (body.orgName !== undefined) {
+      const name = typeof body.orgName === "string" ? body.orgName.trim() : "";
+      if (!name) return err("Workspace name is required.", 400);
+      if (name.length > 200) return err("Workspace name must be under 200 characters.", 400);
+      sets.push("name = ?");
+      params.push(name);
+    }
+
+    if (body.accentColor !== undefined) {
+      const hex = typeof body.accentColor === "string" ? body.accentColor.trim() : "";
+      if (!ACCENT_RE.test(hex)) return err("Accent color must be a hex color like #d6ff3f.", 400);
+      sets.push("accent_color = ?");
+      params.push(hex.toLowerCase());
+    }
+
+    if (body.stages !== undefined) {
+      const v = validateStages(body.stages);
+      if (!v.ok) return err(v.error, 400);
+      const next = v.value;
+      const prev = parseStages(org.stages);
+
+      const removed = prev.filter((p) => !next.some((n) => n.toLowerCase() === p.toLowerCase()));
+      const added = next.filter((n) => !prev.some((p) => p.toLowerCase() === n.toLowerCase()));
+
+      if (removed.length > 0 && removed.length !== added.length) {
+        // A delete (possibly mixed with renames): never orphan clients.
+        for (const r of removed) {
+          const { c } = db
+            .query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ? AND stage = ?")
+            .get(orgId, r) as { c: number };
+          if (c > 0) {
+            return err(
+              `Stage "${r}" has ${c} client${c === 1 ? "" : "s"} — reassign or archive them before removing it.`,
+              400,
+            );
+          }
+        }
+      } else if (removed.length > 0) {
+        // Equal removed/added counts with fresh names = pure renames: migrate
+        // clients positionally (old[i] → new[i]) so the pipeline stays intact.
+        const n = Math.min(prev.length, next.length);
+        for (let i = 0; i < n; i++) {
+          if (prev[i] !== next[i] && removed.includes(prev[i]) && added.includes(next[i])) {
+            db.query("UPDATE clients SET stage = ? WHERE org_id = ? AND stage = ?").run(next[i], orgId, prev[i]);
+          }
+        }
+      } else {
+        // No names left/entered: only case-folding renames can occur in place.
+        const n = Math.min(prev.length, next.length);
+        for (let i = 0; i < n; i++) {
+          if (prev[i] !== next[i] && prev[i].toLowerCase() === next[i].toLowerCase()) {
+            db.query("UPDATE clients SET stage = ? WHERE org_id = ? AND stage = ?").run(next[i], orgId, prev[i]);
+          }
+        }
+      }
+
+      sets.push("stages = ?");
+      params.push(JSON.stringify(next));
+    }
+
+    if (sets.length === 0) return err("Nothing to update.", 400);
+    params.push(orgId);
+    db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+
+    const updated = getOrg(orgId);
+    if (!updated) return err("Org not found.", 404);
+    return json({
+      settings: {
+        orgName: updated.name,
+        accentColor: updated.accent_color,
+        stages: parseStages(updated.stages),
+      },
     });
   }
 
@@ -639,7 +793,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   if (pathname === "/api/clients" && method === "POST") {
     const body = await readBody(req);
     if (!body) return err("Invalid JSON body.", 400);
-    const v = validateClient(body);
+    const org = getOrg(orgId);
+    const v = validateClient(body, org ? parseStages(org.stages) : [...DEFAULT_STAGES]);
     if (!v.ok) return err(v.error, 400);
     const c = v.value;
     const info = db
@@ -674,7 +829,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       if (!row) return err("Client not found.", 404);
       const body = await readBody(req);
       if (!body) return err("Invalid JSON body.", 400);
-      const v = validateClient(body);
+      const org = getOrg(orgId);
+      const v = validateClient(body, org ? parseStages(org.stages) : [...DEFAULT_STAGES]);
       if (!v.ok) return err(v.error, 400);
       const c = v.value;
       db.query(
