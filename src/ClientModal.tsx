@@ -1,16 +1,19 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
-import type { Client, CustomField, Stage } from "./types";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import type { Client, CustomFieldDef, CustomField, Stage } from "./types";
 
 interface Props {
   client?: Client;
   /** The tenant's ordered pipeline stages (Phase 3a) — drives the dropdown. */
   stages: Stage[];
+  /** The tenant's custom-field definitions (Phase 3b) — each defined field
+   *  gets its own typed input; values are stored keyed by field name. */
+  customFieldDefs: CustomFieldDef[];
   busy: boolean;
   onClose: () => void;
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
 }
 
-export default function ClientModal({ client, stages, busy, onClose, onSave }: Props) {
+export default function ClientModal({ client, stages, customFieldDefs, busy, onClose, onSave }: Props) {
   const defaultStage = stages[0] ?? "Prospect";
   const empty = (): Omit<Client, "id" | "createdAt" | "updatedAt"> => ({
     companyName: "",
@@ -47,8 +50,34 @@ export default function ClientModal({ client, stages, busy, onClose, onSave }: P
   const [serviceDraft, setServiceDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // Esc closes the modal (keyboard nicety).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey as unknown as EventListener);
+    return () => window.removeEventListener("keydown", onKey as unknown as EventListener);
+  }, [busy, onClose]);
+
   function set<K extends keyof ReturnType<typeof empty>>(key: K, value: ReturnType<typeof empty>[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  /** Current value for a defined field, by exact name (values are stored
+   *  with the canonical definition name). */
+  function valueOf(name: string): string {
+    const f = form.customFields.find((cf) => cf.name === name);
+    return f ? f.value : "";
+  }
+
+  function setValue(name: string, value: string) {
+    setForm((f) => {
+      const exists = f.customFields.some((cf) => cf.name === name);
+      const customFields: CustomField[] = exists
+        ? f.customFields.map((cf) => (cf.name === name ? { ...cf, value } : cf))
+        : [...f.customFields, { name, value }];
+      return { ...f, customFields };
+    });
   }
 
   /* ── Services: free-form chip editor ─────────────────────────────── */
@@ -81,35 +110,24 @@ export default function ClientModal({ client, stages, busy, onClose, onSave }: P
     }
   }
 
-  /* ── Custom fields ───────────────────────────────────────────────── */
-
-  function addField() {
-    setForm((f) => ({ ...f, customFields: [...f.customFields, { label: "", value: "" }] }));
-  }
-
-  function setField(i: number, key: keyof CustomField, v: string) {
-    setForm((f) => ({
-      ...f,
-      customFields: f.customFields.map((cf, j) => (j === i ? { ...cf, [key]: v } : cf)),
-    }));
-  }
-
-  function removeField(i: number) {
-    setForm((f) => ({ ...f, customFields: f.customFields.filter((_, j) => j !== i) }));
-  }
-
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.companyName.trim()) {
       setError("Company name is required.");
       return;
     }
-    const customFields = form.customFields
-      .map((cf) => ({ label: cf.label.trim(), value: cf.value.trim() }))
-      .filter((cf) => cf.label !== "" || cf.value !== "");
-    if (customFields.some((cf) => !cf.label)) {
-      setError("Every custom field needs a label (or remove the empty row).");
-      return;
+    // Build the payload custom fields from the tenant's definitions: every
+    // checkbox is sent (0/1); text/number/date fields are sent only when they
+    // have a value (empty values are omitted — the server treats them as
+    // unset, and all custom fields are optional).
+    const customFields: CustomField[] = [];
+    for (const def of customFieldDefs) {
+      const value = valueOf(def.name).trim();
+      if (def.type === "checkbox") {
+        customFields.push({ name: def.name, value: value === "1" ? "1" : "0" });
+      } else if (value) {
+        customFields.push({ name: def.name, value });
+      }
     }
     setError(null);
     onSave({ ...form, customFields, dealValue: Number(form.dealValue) || 0 }, client);
@@ -240,35 +258,42 @@ export default function ClientModal({ client, stages, busy, onClose, onSave }: P
 
           <div className="field">
             <span className="field-label">Custom fields</span>
-            <div className="cf-list">
-              {form.customFields.map((cf, i) => (
-                <div className="cf-row" key={i}>
-                  <input
-                    value={cf.label}
-                    onChange={(e) => setField(i, "label", e.target.value)}
-                    placeholder="Label (e.g. License #)"
-                    aria-label={`Custom field ${i + 1} label`}
-                  />
-                  <input
-                    value={cf.value}
-                    onChange={(e) => setField(i, "value", e.target.value)}
-                    placeholder="Value"
-                    aria-label={`Custom field ${i + 1} value`}
-                  />
-                  <button
-                    type="button"
-                    className="icon-btn danger"
-                    onClick={() => removeField(i)}
-                    aria-label={`Remove custom field ${i + 1}`}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button type="button" className="btn btn-ghost btn-sm cf-add" onClick={addField}>
-              + Add custom field
-            </button>
+            {customFieldDefs.length === 0 ? (
+              <p className="field-hint cf-none-hint">
+                No custom fields defined for this workspace yet. Add them in Settings — they will
+                appear here on every client.
+              </p>
+            ) : (
+              <div className="cf-values">
+                {customFieldDefs.map((def) => {
+                  const value = valueOf(def.name);
+                  if (def.type === "checkbox") {
+                    return (
+                      <label className="check cf-check" key={def.name}>
+                        <input
+                          type="checkbox"
+                          checked={value === "1"}
+                          onChange={(e) => setValue(def.name, e.target.checked ? "1" : "0")}
+                        />
+                        <span>{def.name}</span>
+                      </label>
+                    );
+                  }
+                  return (
+                    <label className="field" key={def.name}>
+                      <span className="field-label">{def.name}</span>
+                      <input
+                        type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
+                        step={def.type === "number" ? "any" : undefined}
+                        value={value}
+                        onChange={(e) => setValue(def.name, e.target.value)}
+                        placeholder={def.type === "date" ? "YYYY-MM-DD" : def.type === "number" ? "0" : ""}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <label className="field">

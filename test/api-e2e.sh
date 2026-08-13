@@ -112,42 +112,95 @@ S=$(code -b "$JAR" "$BASE/api/clients")
 check "list after delete → 200" 200 "$S"
 grep -qv 'Acme Legal' /tmp/body.json && echo "  ✓ Acme gone from list" || echo "  ✗ Acme still listed"
 
-echo "== 10. Custom fields + free-form services + decimal deal value =="
+echo "== 10. Custom fields (Phase 3b): tenant-defined + typed values =="
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET settings → 200" 200 "$S"
+grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ no custom fields defined by default" || echo "  ✗ expected empty customFields: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"License #","type":"text"},{"name":"Service area","type":"text"},{"name":"Fleet size","type":"number"},{"name":"Contract start","type":"date"},{"name":"Insured","type":"checkbox"}]}' \
+  "$BASE/api/settings")
+check "define 5 custom fields → 200" 200 "$S"
+grep -q '"customFields":\[{"name":"License #","type":"text"}' /tmp/body.json && echo "  ✓ settings returns the new field list" || echo "  ✗ settings response: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "GET settings after defining fields → 200" 200 "$S"
+grep -q '"name":"Fleet size","type":"number"' /tmp/body.json && grep -q '"name":"Insured","type":"checkbox"' /tmp/body.json && echo "  ✓ persisted field list includes all types" || echo "  ✗ persisted fields: $(cat /tmp/body.json)"
+
+echo "-- 10a. Custom-field definition validation =="
+check "duplicate field name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"License #","type":"text"},{"name":"license #","type":"text"}]}' "$BASE/api/settings")
+check "bad field type → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"Money","type":"money"}]}' "$BASE/api/settings")
+check "empty field name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"   ","type":"text"}]}' "$BASE/api/settings")
+check "field name over 50 chars → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"customFields\":[{\"name\":\"$(python3 -c "print('x'*51)")\",\"type\":\"text\"}]}" "$BASE/api/settings")
+check "21 fields → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"customFields\":[$(python3 -c "print(','.join('{\"name\":\"F%d\",\"type\":\"text\"}' % i for i in range(21)))")]}" "$BASE/api/settings")
+check "custom fields not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":"License"}' "$BASE/api/settings")
+
+echo "-- 10b. Client create with typed custom field values =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"+1 415 555 0131","industry":"HVAC","services":["Installation","Repair","Maintenance"],"dealValue":9500.50,"stage":"Prospect","nextAction":"Send quote","notes":"","customFields":[{"label":"License #","value":"CA-88213"},{"label":"Service area","value":"Greater Bay Area"},{"label":"Fleet size","value":"12"}]}' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"+1 415 555 0131","industry":"HVAC","services":["Installation","Repair","Maintenance"],"dealValue":9500.50,"stage":"Prospect","nextAction":"Send quote","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Service area","value":"Greater Bay Area"},{"name":"Fleet size","value":"12"},{"name":"Contract start","value":"2026-09-01"},{"name":"Insured","value":true}]}' \
   "$BASE/api/clients")
-check "create HVAC client with 2+ custom fields → 201" 201 "$S"
+check "create HVAC client with all custom field types → 201" 201 "$S"
 HVAC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 echo "    (created client id=$HVAC_ID)"
-grep -q '"customFields":\[{"label":"License #","value":"CA-88213"}' /tmp/body.json && echo "  ✓ create returns custom fields" || echo "  ✗ custom fields missing on create: $(cat /tmp/body.json)"
+grep -q '"customFields":\[{"name":"License #","value":"CA-88213"}' /tmp/body.json && echo "  ✓ create returns custom fields" || echo "  ✗ custom fields missing on create: $(cat /tmp/body.json)"
+grep -q '"name":"Fleet size","value":"12"' /tmp/body.json && grep -q '"name":"Insured","value":"1"' /tmp/body.json && echo "  ✓ number + checkbox values stored/returned" || echo "  ✗ typed values wrong: $(cat /tmp/body.json)"
 grep -q '"dealValue":9500.5' /tmp/body.json && echo "  ✓ decimal deal value returned" || echo "  ✗ deal value mismatch: $(cat /tmp/body.json)"
 grep -q '"services":\["Installation","Repair","Maintenance"\]' /tmp/body.json && echo "  ✓ free-form services returned" || echo "  ✗ services mismatch: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/clients/$HVAC_ID")
 check "GET HVAC client → 200" 200 "$S"
-grep -q '"Fleet size"' /tmp/body.json && echo "  ✓ GET returns all custom fields" || echo "  ✗ custom fields missing on GET: $(cat /tmp/body.json)"
+grep -q '"name":"Contract start","value":"2026-09-01"' /tmp/body.json && echo "  ✓ GET returns all custom fields incl. date" || echo "  ✗ custom fields missing on GET: $(cat /tmp/body.json)"
 
-echo "== 11. Custom field update round-trip =="
-S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Kickoff","nextAction":"","notes":"","customFields":[{"label":"License #","value":"CA-88213"}]}' \
-  "$BASE/api/clients/$HVAC_ID")
-check "update HVAC → 200" 200 "$S"
-grep -q '"customFields":\[{"label":"License #","value":"CA-88213"}\]' /tmp/body.json && echo "  ✓ update removed a custom field" || echo "  ✗ custom fields after update: $(cat /tmp/body.json)"
-grep -q '"dealValue":12345.67' /tmp/body.json && echo "  ✓ updated decimal deal value" || echo "  ✗ updated deal: $(cat /tmp/body.json)"
-grep -q '"AC Tune-Up"' /tmp/body.json && echo "  ✓ updated free-form service" || echo "  ✗ services after update: $(cat /tmp/body.json)"
-
-echo "== 12. Custom field validation + landscaping demo =="
-check "empty custom field label → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Bad CF Co","customFields":[{"label":"","value":"x"}]}' "$BASE/api/clients")
+echo "-- 10c. Client custom-field value validation =="
+check "create with unknown field name → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"Crew size","value":"6"}]}' "$BASE/api/clients")
+check "create with duplicate value name → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"License #","value":"A"},{"name":"license #","value":"B"}]}' "$BASE/api/clients")
+check "number field rejects text → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"Fleet size","value":"twelve"}]}' "$BASE/api/clients")
+check "date field rejects garbage → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"Contract start","value":"not-a-date"}]}' "$BASE/api/clients")
+check "date field rejects bad calendar day → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"Contract start","value":"2026-13-45"}]}' "$BASE/api/clients")
+check "checkbox rejects arbitrary text → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"Insured","value":"yes"}]}' "$BASE/api/clients")
 check "non-object custom field → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Bad CF Co","customFields":["License"]}' "$BASE/api/clients")
 check "custom fields not a list → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Bad CF Co","customFields":{"label":"x","value":"y"}}' "$BASE/api/clients")
+  -d '{"companyName":"Bad CF Co","customFields":{"name":"License #","value":"x"}}' "$BASE/api/clients")
+
+echo "== 11. Custom field update round-trip =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Kickoff","nextAction":"","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}]}' \
+  "$BASE/api/clients/$HVAC_ID")
+check "update HVAC → 200" 200 "$S"
+grep -q '"customFields":\[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}\]' /tmp/body.json && echo "  ✓ custom fields survive update (values round-trip)" || echo "  ✗ custom fields after update: $(cat /tmp/body.json)"
+grep -q '"dealValue":12345.67' /tmp/body.json && echo "  ✓ updated decimal deal value" || echo "  ✗ updated deal: $(cat /tmp/body.json)"
+grep -q '"AC Tune-Up"' /tmp/body.json && echo "  ✓ updated free-form service" || echo "  ✗ services after update: $(cat /tmp/body.json)"
+
+echo "== 12. Landscaping demo client (defined fields only) =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Build","nextAction":"Site visit","notes":"","customFields":[{"label":"Crew size","value":"6"},{"label":"Seasonal contract","value":"Yes — Apr to Oct"},{"label":"Service radius","value":"40 mi"}]}' \
+  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Build","nextAction":"Site visit","notes":"","customFields":[{"name":"Service area","value":"Greater Seattle"},{"name":"Fleet size","value":"6"}]}' \
   "$BASE/api/clients")
 check "create landscaping client → 201" 201 "$S"
 LS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
-grep -q '"Crew size"' /tmp/body.json && echo "  ✓ landscaping custom fields returned" || echo "  ✗ missing: $(cat /tmp/body.json)"
+grep -q '"Service area","value":"Greater Seattle"' /tmp/body.json && echo "  ✓ landscaping custom fields returned" || echo "  ✗ missing: $(cat /tmp/body.json)"
+
+echo "== 12a. Removing a field definition keeps existing client values =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"License #","type":"text"},{"name":"Service area","type":"text"},{"name":"Fleet size","type":"number"},{"name":"Contract start","type":"date"}]}' \
+  "$BASE/api/settings")
+check "remove Insured from settings → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -qv '"name":"Insured"' /tmp/body.json && echo "  ✓ Insured gone from settings" || echo "  ✗ Insured still listed: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients/$HVAC_ID")
+check "GET HVAC client after field removal → 200" 200 "$S"
+grep -q '"name":"Insured","value":"0"' /tmp/body.json && echo "  ✓ removed field's value still stored on the client (intact)" || echo "  ✗ client value lost: $(cat /tmp/body.json)"
+check "creating a value for a removed field → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad CF Co","customFields":[{"name":"Insured","value":"1"}]}' "$BASE/api/clients")
 
 echo "== 13. Tasks =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -650,6 +703,35 @@ st = d['settings']['stages']
 assert 'Lead' not in st and st[2] == 'Proposal', st
 print("  ✓ owner stages unaffected by tenant B's rename (isolation)")
 PY
+
+echo "-- 17i. Custom fields are org-scoped =="
+S=$(code -b "$JARB" "$BASE/api/settings")
+check "tenant B GET settings → 200" 200 "$S"
+grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ tenant B starts with NO owner custom fields (isolation)" || echo "  ✗ tenant B customFields: $(cat /tmp/body.json)"
+S=$(code -b "$JARB" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"Listing price","type":"number"},{"name":"Bedrooms","type":"number"}]}' "$BASE/api/settings")
+check "tenant B defines its own custom fields → 200" 200 "$S"
+grep -q '"name":"Listing price","type":"number"' /tmp/body.json && echo "  ✓ tenant B fields saved" || echo "  ✗ tenant B save: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+cf = d['settings']['customFields']
+names = {f['name'] for f in cf}
+assert 'Listing price' not in names, cf
+assert 'License #' in names and 'Fleet size' in names, names
+print("  ✓ owner fields unaffected by tenant B's definitions (isolation)")
+PY
+check "tenant B cannot write values for an owner-only field → 400" 400 $(code -b "$JARB" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"B Cross Co","customFields":[{"name":"License #","value":"CA-1"}]}' "$BASE/api/clients")
+S=$(code -b "$JARB" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"B Home Co","customFields":[{"name":"Listing price","value":"585000"},{"name":"Bedrooms","value":"4"}]}' "$BASE/api/clients")
+check "tenant B writes values for its own fields → 201" 201 "$S"
+grep -q '"name":"Listing price","value":"585000"' /tmp/body.json && echo "  ✓ tenant B client stores its own field values" || echo "  ✗ tenant B client: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "owner client list → 200" 200 "$S"
+grep -qv 'B Home Co' /tmp/body.json && echo "  ✓ owner never sees tenant B's client" || echo "  ✗ cross-org leak: $(cat /tmp/body.json)"
+
 S=$(code -b "$JARB" -X PUT -H 'Content-Type: application/json' \
   -d '{"orgName":"Tenant B Rebranded","orgId":1}' "$BASE/api/settings")
 check "tenant B PUT with owner orgId in body → 200" 200 "$S"

@@ -2045,3 +2045,142 @@ legend.field-label {
     margin-left: auto;
   }
 }
+
+/* ── Custom fields (Phase 3b) ─────────────────────────────── */
+
+.cfdef-card {
+  grid-column: 1 / -1;
+}
+
+.cfdef-empty {
+  margin: 10px 0 2px;
+  max-width: 46em;
+}
+
+.cfdef-list {
+  padding: 2px 0 4px;
+}
+
+.cfdef-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cfdef-row:last-child {
+  border-bottom: none;
+}
+
+.cfdef-name {
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.cfdef-type {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  flex: none;
+}
+
+.cfdef-row > .icon-btn {
+  flex: none;
+  margin-left: auto;
+}
+
+.cfdef-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cfdef-confirm-q {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.cfdef-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.cfdef-add input,
+.cfdef-add select {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cfdef-add input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.cfdef-add select {
+  flex: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+.cfdef-add input:focus,
+.cfdef-add select:focus {
+  border-color: var(--accent, var(--lime));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--lime)) 15%, transparent);
+}
+
+.cfdef-add input::placeholder {
+  color: var(--muted-2);
+}
+
+/* Client modal — typed custom field values (one labeled control per def) */
+.cf-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.cf-values .field {
+  margin: 0;
+}
+
+.cf-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 2px 2px;
+}
+
+.cf-check input {
+  width: auto;
+}
+
+.cf-none-hint {
+  margin: 0;
+  max-width: 46em;
+}
+
+@media (max-width: 560px) {
+  .cf-values {
+    grid-template-columns: 1fr;
+  }
+  .cfdef-confirm {
+    justify-content: flex-start;
+  }
+}

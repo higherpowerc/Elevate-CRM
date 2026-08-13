@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, Task } from "./types";
 import type { TaskInput } from "./api";
 
@@ -17,6 +17,15 @@ export default function TaskModal({ task, clients, busy, onClose, onSave }: Prop
   const [notes, setNotes] = useState(task.notes);
   const [done, setDone] = useState(task.done);
   const [error, setError] = useState<string | null>(null);
+
+  // Esc closes the modal (keyboard nicety).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey as unknown as EventListener);
+    return () => window.removeEventListener("keydown", onKey as unknown as EventListener);
+  }, [busy, onClose]);
 
   function submit(e: FormEvent) {
     e.preventDefault();

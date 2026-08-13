@@ -2,13 +2,17 @@ import {
   db,
   DEFAULT_STAGES,
   parseStages,
+  parseCustomFields,
   getOrg,
   INVOICE_STATUSES,
   isInvoiceStatus,
+  isCustomFieldType,
   DEFAULT_ORG_NAME,
   ensureDefaultOrg,
   type ClientRow,
   type CustomField,
+  type CustomFieldDef,
+  type CustomFieldType,
   type Role,
   type Stage,
   type TaskRow,
@@ -109,11 +113,21 @@ function toClient(row: ClientRow) {
     const parsed = JSON.parse(row.custom_fields);
     if (Array.isArray(parsed)) {
       customFields = parsed
-        .filter((f) => f !== null && typeof f === "object" && typeof (f as CustomField).label === "string")
-        .map((f) => ({
-          label: (f as CustomField).label,
-          value: typeof (f as CustomField).value === "string" ? (f as CustomField).value : "",
-        }));
+        .filter(
+          (f) =>
+            f !== null &&
+            typeof f === "object" &&
+            typeof ((f as Record<string, unknown>).name ?? (f as Record<string, unknown>).label) === "string",
+        )
+        .map((f) => {
+          const obj = f as Record<string, unknown>;
+          // Phase 3b stores {name, value}; pre-3b rows used {label, value}.
+          const name = typeof obj.name === "string" ? obj.name : (obj.label as string);
+          return {
+            name,
+            value: typeof obj.value === "string" ? obj.value : "",
+          };
+        });
     }
   } catch {
     /* keep empty */
@@ -155,11 +169,14 @@ interface ClientInput {
 /**
  * Validates the client payload. `stages` is the caller's OWN org stage list
  * (looked up from the session org) — a client's stage must be one of the
- * tenant's current pipeline stages.
+ * tenant's current pipeline stages. `defs` is the tenant's OWN custom-field
+ * definition list (Phase 3b) — a client's customFields values must reference
+ * exactly those field names, and each value must match its field's type.
  */
 function validateClient(
   body: Record<string, unknown>,
   stages: string[],
+  defs: CustomFieldDef[],
 ): { ok: true; value: ClientInput } | { ok: false; error: string } {
   const str = (v: unknown, max = 500): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
@@ -181,19 +198,57 @@ function validateClient(
     }
   }
 
+  // Phase 3b custom fields: [{name, value}], every name must be one of the
+  // tenant's defined fields (case-insensitive), values validated per type.
+  // All fields are optional — omitted fields simply store no value.
+  const defByName = new Map<string, CustomFieldDef>();
+  for (const d of defs) defByName.set(d.name.toLowerCase(), d);
+
   let customFields: CustomField[] = [];
   if (body.customFields !== undefined) {
     if (!Array.isArray(body.customFields)) return { ok: false, error: "Custom fields must be a list." };
-    if (body.customFields.length > 30) return { ok: false, error: "Too many custom fields (max 30)." };
+    if (body.customFields.length > 30) return { ok: false, error: "Too many custom field values (max 30)." };
+    const seen = new Set<string>();
     for (const f of body.customFields) {
       if (f === null || typeof f !== "object" || Array.isArray(f)) {
-        return { ok: false, error: "Each custom field must be an object with a label and a value." };
+        return { ok: false, error: "Each custom field must be an object with a name and a value." };
       }
       const obj = f as Record<string, unknown>;
-      const label = typeof obj.label === "string" ? obj.label.trim() : "";
-      if (!label) return { ok: false, error: "Custom field label is required." };
-      const value = typeof obj.value === "string" ? obj.value.trim() : "";
-      customFields.push({ label: label.slice(0, 120), value: value.slice(0, 500) });
+      const name = typeof obj.name === "string" ? obj.name.trim() : "";
+      if (!name) return { ok: false, error: "Custom field name is required." };
+      const def = defByName.get(name.toLowerCase());
+      if (!def) return { ok: false, error: `Unknown custom field: ${name}.` };
+      if (seen.has(name.toLowerCase())) return { ok: false, error: `Duplicate custom field: ${name}.` };
+      seen.add(name.toLowerCase());
+
+      const raw = obj.value;
+      let value = "";
+      if (def.type === "checkbox") {
+        if (raw === true) value = "1";
+        else if (raw === false) value = "0";
+        else if (raw === 1 || raw === "1") value = "1";
+        else if (raw === 0 || raw === "0") value = "0";
+        else return { ok: false, error: `${def.name} must be a checkbox value (yes/no).` };
+      } else {
+        if (raw !== undefined && raw !== null && raw !== "") {
+          if (typeof raw !== "string" && typeof raw !== "number") {
+            return { ok: false, error: `${def.name} must be text.` };
+          }
+          value = String(raw).trim();
+          if (def.type === "number") {
+            if (value === "" || !Number.isFinite(Number(value))) {
+              return { ok: false, error: `${def.name} must be a number.` };
+            }
+          } else if (def.type === "date") {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value + "T00:00:00Z"))) {
+              return { ok: false, error: `${def.name} must be a date like 2026-08-01.` };
+            }
+          } else if (value.length > 500) {
+            return { ok: false, error: `${def.name} must be under 500 characters.` };
+          }
+        }
+      }
+      customFields.push({ name: def.name, value });
     }
   }
 
@@ -460,9 +515,11 @@ function validateNewOrg(
   return { ok: true, value: { name, email, password } };
 }
 
-/* ── Org settings (Phase 3a): branding + per-tenant pipeline stages ── */
+/* ── Org settings (Phase 3a/3b): branding + per-tenant pipeline stages
+     + per-tenant custom fields ─────────────────────────────── */
 
 const MAX_STAGES = 12;
+const MAX_CUSTOM_FIELDS = 20;
 const ACCENT_RE = /^#[0-9a-fA-F]{6}$/;
 
 /** Validates a proposed stage list: 1..12 names, trimmed, unique
@@ -497,6 +554,40 @@ function orgStageCounts(orgId: number): Record<string, number> {
     .all(orgId) as { stage: string; c: number }[];
   for (const r of rows) counts[r.stage] = r.c;
   return counts;
+}
+
+/**
+ * Validates a proposed custom-field definition list (Phase 3b): 0..20 fields,
+ * each {name, type} with a trimmed name of 1–50 chars, unique
+ * case-insensitively, and a type in the whitelist. Returns the cleaned list.
+ */
+function validateCustomFields(
+  v: unknown,
+): { ok: true; value: CustomFieldDef[] } | { ok: false; error: string } {
+  if (!Array.isArray(v)) return { ok: false, error: "Custom fields must be a list of {name, type}." };
+  if (v.length > MAX_CUSTOM_FIELDS) {
+    return { ok: false, error: `Too many custom fields (max ${MAX_CUSTOM_FIELDS}).` };
+  }
+  const out: CustomFieldDef[] = [];
+  const seen = new Set<string>();
+  for (const f of v) {
+    if (f === null || typeof f !== "object" || Array.isArray(f)) {
+      return { ok: false, error: "Each custom field must be an object with a name and a type." };
+    }
+    const obj = f as Record<string, unknown>;
+    const name = typeof obj.name === "string" ? obj.name.trim() : "";
+    if (!name) return { ok: false, error: "Custom field name is required." };
+    if (name.length > 50) return { ok: false, error: "Custom field names must be under 51 characters." };
+    const type = obj.type;
+    if (!isCustomFieldType(type)) {
+      return { ok: false, error: `Custom field type must be one of: text, number, date, checkbox.` };
+    }
+    const key = name.toLowerCase();
+    if (seen.has(key)) return { ok: false, error: `Duplicate custom field: ${name}.` };
+    seen.add(key);
+    out.push({ name, type });
+  }
+  return { ok: true, value: out };
 }
 
 /* ── Routes ─────────────────────────────────────────────────────────── */
@@ -677,6 +768,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         accentColor: org.accent_color,
         stages: parseStages(org.stages),
         stageCounts: orgStageCounts(orgId),
+        customFields: parseCustomFields(org.custom_fields),
       },
     });
   }
@@ -703,6 +795,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       if (!ACCENT_RE.test(hex)) return err("Accent color must be a hex color like #d6ff3f.", 400);
       sets.push("accent_color = ?");
       params.push(hex.toLowerCase());
+    }
+
+    if (body.customFields !== undefined) {
+      const v = validateCustomFields(body.customFields);
+      if (!v.ok) return err(v.error, 400);
+      // Removing a definition does NOT touch stored client values — they stay
+      // intact on the client row, they just stop showing in settings/UI.
+      sets.push("custom_fields = ?");
+      params.push(JSON.stringify(v.value));
     }
 
     if (body.stages !== undefined) {
@@ -761,6 +862,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         orgName: updated.name,
         accentColor: updated.accent_color,
         stages: parseStages(updated.stages),
+        customFields: parseCustomFields(updated.custom_fields),
       },
     });
   }
@@ -794,7 +896,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const body = await readBody(req);
     if (!body) return err("Invalid JSON body.", 400);
     const org = getOrg(orgId);
-    const v = validateClient(body, org ? parseStages(org.stages) : [...DEFAULT_STAGES]);
+    const v = validateClient(
+      body,
+      org ? parseStages(org.stages) : [...DEFAULT_STAGES],
+      org ? parseCustomFields(org.custom_fields) : [],
+    );
     if (!v.ok) return err(v.error, 400);
     const c = v.value;
     const info = db
@@ -830,7 +936,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const body = await readBody(req);
       if (!body) return err("Invalid JSON body.", 400);
       const org = getOrg(orgId);
-      const v = validateClient(body, org ? parseStages(org.stages) : [...DEFAULT_STAGES]);
+      const v = validateClient(
+        body,
+        org ? parseStages(org.stages) : [...DEFAULT_STAGES],
+        org ? parseCustomFields(org.custom_fields) : [],
+      );
       if (!v.ok) return err(v.error, 400);
       const c = v.value;
       db.query(

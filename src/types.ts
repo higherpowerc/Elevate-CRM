@@ -17,8 +17,19 @@ export const STAGE_TONES = ["gray", "blue", "amber", "violet", "lime", "teal"] a
 export const stageTone = (index: number): string =>
   STAGE_TONES[((index % STAGE_TONES.length) + STAGE_TONES.length) % STAGE_TONES.length];
 
+/** The four custom-field value types a tenant can define (Phase 3b). */
+export const CUSTOM_FIELD_TYPES = ["text", "number", "date", "checkbox"] as const;
+export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
+
+/** A tenant's custom-field definition (from /api/settings). */
+export interface CustomFieldDef {
+  name: string;
+  type: CustomFieldType;
+}
+
+/** A client's stored custom-field value (name must match a tenant definition). */
 export interface CustomField {
-  label: string;
+  name: string;
   value: string;
 }
 
@@ -115,7 +126,8 @@ export interface CreatedOrgUser {
   role: "admin" | "member";
 }
 
-/** Org settings (Phase 3a): branding + per-tenant pipeline stages. */
+/** Org settings (Phase 3a/3b): branding + per-tenant pipeline stages
+ *  + per-tenant custom fields. */
 export interface OrgSettings {
   orgName: string;
   accentColor: string;
@@ -123,6 +135,9 @@ export interface OrgSettings {
   /** Client count per stage (all clients incl. archived) — used by Settings
    *  to warn before a stage with clients is removed. */
   stageCounts: Record<string, number>;
+  /** The tenant's custom-field definitions (Phase 3b) — drive the client
+   *  form fields and how values are rendered. */
+  customFields: CustomFieldDef[];
 }
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is

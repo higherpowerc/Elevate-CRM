@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type TaskInput } from "./api";
 import { fmtDate, type Client, type Task } from "./types";
 import TaskModal from "./TaskModal";
@@ -34,6 +34,7 @@ export default function Tasks() {
   const [title, setTitle] = useState("");
   const [clientId, setClientId] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const titleRef = useRef<HTMLInputElement>(null);
 
   const [editing, setEditing] = useState<Task | null>(null);
   const [deleting, setDeleting] = useState<Task | null>(null);
@@ -167,6 +168,7 @@ export default function Tasks() {
       <form className="card task-add" onSubmit={handleQuickAdd}>
         <input
           className="task-add-title"
+          ref={titleRef}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Add a task — e.g. Send revised quote"
@@ -234,6 +236,17 @@ export default function Tasks() {
                 ? "All done — add something new, or check the Completed tab."
                 : "Try a different filter or search."}
           </p>
+          {tasks.length === 0 && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setFilter("open");
+                titleRef.current?.focus();
+              }}
+            >
+              Add a task
+            </button>
+          )}
         </div>
       ) : (
         <ul className="card task-list">

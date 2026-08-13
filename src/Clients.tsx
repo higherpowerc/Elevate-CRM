@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type ClientInput } from "./api";
-import { money, fmtDate, type Client, type Stage } from "./types";
+import { money, fmtDate, type Client, type CustomFieldDef, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
 import ClientModal from "./ClientModal";
 import ConfirmDialog from "./ConfirmDialog";
@@ -13,8 +13,17 @@ interface Props {
   stages: Stage[];
 }
 
+/** Short value label for a custom field chip, rendered per field type
+ *  (Phase 3b): dates are formatted, checkboxes become ✓/✕, numbers stay raw. */
+function cfChipLabel(def: CustomFieldDef, value: string): string {
+  if (def.type === "checkbox") return value === "1" ? "✓" : "✕";
+  if (def.type === "date") return fmtDate(value);
+  return value;
+}
+
 export default function Clients({ stages }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
+  const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("active");
   const [query, setQuery] = useState("");
@@ -25,8 +34,9 @@ export default function Clients({ stages }: Props) {
   const load = useCallback(async (includeArchived = false) => {
     setError(null);
     try {
-      const { clients } = await api.clients(includeArchived);
+      const [{ clients }, { settings }] = await Promise.all([api.clients(includeArchived), api.settings()]);
       setClients(clients);
+      setCustomFieldDefs(settings.customFields);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load clients.");
     }
@@ -183,7 +193,7 @@ export default function Clients({ stages }: Props) {
           </p>
           {clients.length === 0 && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-              Add a client
+              Add your first client
             </button>
           )}
         </div>
@@ -210,18 +220,27 @@ export default function Clients({ stages }: Props) {
                       {c.archived && <span className="chip chip-archived">archived</span>}
                     </div>
                     {c.industry && <div className="cell-sub">{c.industry}</div>}
-                    {c.customFields.length > 0 && (
-                      <div className="cf-line" aria-label="Custom fields">
-                        {c.customFields.slice(0, 3).map((cf) => (
-                          <span className="cf-chip" key={`${cf.label}:${cf.value}`}>
-                            {cf.label}: {cf.value}
-                          </span>
-                        ))}
-                        {c.customFields.length > 3 && (
-                          <span className="cf-more">+{c.customFields.length - 3} more</span>
-                        )}
-                      </div>
-                    )}
+                    {(() => {
+                      // Compact summary: first 2 custom-field values that have
+                      // a matching tenant definition (removed fields drop out).
+                      const defByName = new Map(customFieldDefs.map((d) => [d.name.toLowerCase(), d]));
+                      const chips = c.customFields
+                        .map((cf) => ({ def: defByName.get(cf.name.toLowerCase()), cf }))
+                        .filter((x): x is { def: CustomFieldDef; cf: { name: string; value: string } } =>
+                          !!x.def && (x.def.type === "checkbox" ? true : x.cf.value.trim() !== ""),
+                        )
+                        .slice(0, 2);
+                      if (chips.length === 0) return null;
+                      return (
+                        <div className="cf-line" aria-label="Custom fields">
+                          {chips.map(({ def, cf }) => (
+                            <span className="cf-chip" key={cf.name}>
+                              {def.name}: {cfChipLabel(def, cf.value)}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td data-label="Contact">
                     <div className="cell-contact">
@@ -290,6 +309,7 @@ export default function Clients({ stages }: Props) {
         <ClientModal
           client={modal.mode === "edit" ? modal.client : undefined}
           stages={stages}
+          customFieldDefs={customFieldDefs}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}
