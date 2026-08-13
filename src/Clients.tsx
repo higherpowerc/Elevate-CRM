@@ -198,24 +198,38 @@ export default function Clients() {
             <tbody>
               {visible.map((c) => (
                 <tr key={c.id} className={c.archived ? "row-archived" : ""}>
-                  <td className="cell-strong">
+                  <td className="cell-strong" data-label="Company">
                     <div className="cell-company">
                       {c.companyName}
                       {c.archived && <span className="chip chip-archived">archived</span>}
                     </div>
                     {c.industry && <div className="cell-sub">{c.industry}</div>}
+                    {c.customFields.length > 0 && (
+                      <div className="cf-line" aria-label="Custom fields">
+                        {c.customFields.slice(0, 3).map((cf) => (
+                          <span className="cf-chip" key={`${cf.label}:${cf.value}`}>
+                            {cf.label}: {cf.value}
+                          </span>
+                        ))}
+                        {c.customFields.length > 3 && (
+                          <span className="cf-more">+{c.customFields.length - 3} more</span>
+                        )}
+                      </div>
+                    )}
                   </td>
-                  <td>
+                  <td data-label="Contact">
                     <div className="cell-contact">
                       {c.contactName || "—"}
                       {c.email && <div className="cell-sub">{c.email}</div>}
                     </div>
                   </td>
-                  <td>
+                  <td data-label="Services">
                     <ServiceChips services={c.services} />
                   </td>
-                  <td className="num cell-strong">{money(c.dealValue)}</td>
-                  <td>
+                  <td className="num cell-strong" data-label="Deal">
+                    {money(c.dealValue)}
+                  </td>
+                  <td data-label="Stage">
                     <div className="stage-cell">
                       <StageBadge stage={c.stage} />
                       <select
@@ -233,8 +247,10 @@ export default function Clients() {
                       </select>
                     </div>
                   </td>
-                  <td className="cell-muted cell-next">{c.nextAction || "—"}</td>
-                  <td>
+                  <td className="cell-muted cell-next" data-label="Next action">
+                    {c.nextAction || "—"}
+                  </td>
+                  <td data-label="Actions">
                     <div className="row-actions">
                       <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
                         Edit

@@ -40,8 +40,16 @@ export default function App() {
 
   if (!booted) {
     return (
-      <div className="boot">
-        <span className="boot-mark">E</span>
+      <div className="splash" role="status" aria-label="Loading Elevate Studio">
+        <div className="splash-inner">
+          <div className="splash-ring">
+            <span className="splash-mark">E</span>
+          </div>
+          <div className="splash-name">
+            Elevate <em>Studio</em>
+          </div>
+          <div className="splash-sub">CRM</div>
+        </div>
       </div>
     );
   }

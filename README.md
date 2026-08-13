@@ -34,10 +34,12 @@ same port. Nothing else to run.
   non-archived clients — explicitly labeled *projected*, not revenue), recent clients.
 - **Clients CRUD** — create, list (search + active/archived/all filter), edit, move between
   stages, archive/restore, delete with confirmation dialog. Fields: company name, contact
-  name, email, phone, industry, services (multi-select: Premium Website / SEO / Paid
-  Campaigns / Analytics), deal value, stage, next action, notes.
-- **UI** — premium dark interface (Inter + Instrument Serif, lime accent), responsive
-  (desktop table → mobile stacked cards, bottom-sheet modals).
+  name, email, phone, industry, services (free-form chips — any industry: HVAC, legal, dog
+  grooming…), deal value (any magnitude, decimals allowed), stage, next action, notes, and
+  **per-client custom fields** (label/value rows — e.g. License #, Service area, Fleet size).
+- **UI** — premium dark interface (Inter + Instrument Serif, lime accent), branded loading
+  splash (circular progress + Elevate Studio mark), responsive (desktop table → mobile
+  stacked cards, bottom-sheet modals).
 
 ---
 
@@ -75,8 +77,11 @@ bun run start:local        # binds 0.0.0.0:3001 (see "Port" note below)
 You can also seed/refresh the admin without restarting:
 
 ```bash
-bun run seed          # idempotent — creates or re-hashes the admin from env
-bun run db:reset      # wipes data/crm.db (local QA data only)
+bun run seed              # idempotent — creates or re-hashes the admin from env
+bun run seed -- --demo    # also seed 8 demo clients (incl. HVAC + Landscaping with
+                          # custom fields) directly into the DB — only when the
+                          # clients table is empty; db:reset for a clean slate
+bun run db:reset          # wipes data/crm.db (local QA data only)
 ```
 
 ---
@@ -122,14 +127,15 @@ SQLite file at `DATA_DIR/crm.db` (default `./data/crm.db`), WAL mode. Two tables
 ```sql
 users   (id, email UNIQUE, password_hash, created_at)
 clients (id, company_name, contact_name, email, phone, industry,
-         services JSON text, deal_value REAL, stage TEXT,
+         services JSON text, custom_fields JSON text, deal_value REAL, stage TEXT,
          next_action, notes, archived INTEGER, created_at, updated_at)
 ```
 
-`services` is stored as a JSON array string; `stage` is validated against the six stages
-server-side. The universal model means the app fits any company type — nothing is hardcoded
-to Elevate Studio's own service categories beyond the `services` picklist, which is a
-configurable constant in `server/db.ts`.
+`services` and `custom_fields` are stored as JSON string columns; `stage` is validated
+against the six stages server-side. `services` is a free-form array of strings (any
+industry — no picklist), and `custom_fields` is an array of `{label, value}` objects.
+The universal model means the app fits any company type — nothing is hardcoded to Elevate
+Studio's own service categories.
 
 **Backup:** copy `data/crm.db` (with the WAL checkpointed — stop the server or use
 `sqlite3 data/crm.db ".backup out.db"`).
@@ -145,7 +151,7 @@ configurable constant in `server/db.ts`.
 | GET      | `/api/auth/me`       | —                                              | Current user                       |
 | GET      | `/api/dashboard`     | —                                              | Stage counts, projectedPipeline (active only), recent clients |
 | GET      | `/api/clients`       | `?archived=1` `?q=term`                        | List (archived hidden by default)  |
-| POST     | `/api/clients`       | full client object                             | 201 on create; 400 on invalid      |
+| POST     | `/api/clients`       | full client object (incl. `services` string[] and `customFields` {label,value}[]) | 201 on create; 400 on invalid      |
 | GET      | `/api/clients/:id`   | —                                              |                                   |
 | PUT      | `/api/clients/:id`   | full client object (partial updates via same shape) | Move stage, edit fields, archive |
 | DELETE   | `/api/clients/:id`   | —                                              | Permanent (UI requires confirm)    |
@@ -153,7 +159,8 @@ configurable constant in `server/db.ts`.
 Run the end-to-end suite (needs a running server with the QA admin from `.env`):
 
 ```bash
-bash test/api-e2e.sh        # 23 checks: auth guards → login → CRUD → stage moves → archive → delete → logout
+bash test/api-e2e.sh        # auth guards → login → CRUD → stage moves → archive → delete →
+                            # customFields round-trip → free-form services → decimal deal values → logout
 ```
 
 ---
@@ -229,6 +236,7 @@ CREATE TABLE clients (
   phone        TEXT NOT NULL DEFAULT '',
   industry     TEXT NOT NULL DEFAULT '',
   services     JSONB NOT NULL DEFAULT '[]',
+  custom_fields JSONB NOT NULL DEFAULT '[]',
   deal_value   NUMERIC(12,2) NOT NULL DEFAULT 0,
   stage        TEXT NOT NULL DEFAULT 'Prospect',
   next_action  TEXT NOT NULL DEFAULT '',
@@ -255,7 +263,7 @@ CREATE INDEX idx_clients_updated ON clients(updated_at);
 crm-app/
 ├── server/           # Bun server: index.ts (entry), api.ts (routes), db.ts (SQLite+schema), auth.ts (hashing/sessions), seed.ts
 ├── src/              # React SPA: main.tsx, App.tsx, Login, Dashboard, Clients, ClientModal, ConfirmDialog, api.ts, types.ts, styles.css
-├── test/api-e2e.sh   # 23-check end-to-end API test
+├── test/api-e2e.sh   # end-to-end API test (auth, CRUD, custom fields, services, deal values)
 ├── qc/               # QA screenshots (desktop + mobile) from the verification pass
 ├── index.html        # SPA shell (entry for `bun run build`)
 ├── .env.example      # documented env template

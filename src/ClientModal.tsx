@@ -1,6 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { STAGES, SERVICES, type Client } from "./types";
-import type { Service, Stage } from "./types";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { STAGES, type Client, type CustomField, type Stage } from "./types";
 
 interface Props {
   client?: Client;
@@ -16,6 +15,7 @@ const empty = (): Omit<Client, "id" | "createdAt" | "updatedAt"> => ({
   phone: "",
   industry: "",
   services: [],
+  customFields: [],
   dealValue: 0,
   stage: "Prospect",
   nextAction: "",
@@ -33,6 +33,7 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
           phone: client.phone,
           industry: client.industry,
           services: [...client.services],
+          customFields: client.customFields.map((f) => ({ ...f })),
           dealValue: client.dealValue,
           stage: client.stage,
           nextAction: client.nextAction,
@@ -41,17 +42,58 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
         }
       : empty(),
   );
+  const [serviceDraft, setServiceDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function set<K extends keyof ReturnType<typeof empty>>(key: K, value: ReturnType<typeof empty>[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function toggleService(s: Service) {
+  /* ── Services: free-form chip editor ─────────────────────────────── */
+
+  function addService() {
+    const t = serviceDraft.trim();
+    if (!t) return;
+    if (t.length > 100) {
+      setError("Service names must be under 100 characters.");
+      return;
+    }
+    setForm((f) =>
+      f.services.some((s) => s.toLowerCase() === t.toLowerCase())
+        ? f
+        : { ...f, services: [...f.services, t] },
+    );
+    setServiceDraft("");
+  }
+
+  function removeService(s: string) {
+    setForm((f) => ({ ...f, services: f.services.filter((x) => x !== s) }));
+  }
+
+  function onServiceKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addService();
+    } else if (e.key === "Backspace" && serviceDraft === "" && form.services.length > 0) {
+      removeService(form.services[form.services.length - 1]);
+    }
+  }
+
+  /* ── Custom fields ───────────────────────────────────────────────── */
+
+  function addField() {
+    setForm((f) => ({ ...f, customFields: [...f.customFields, { label: "", value: "" }] }));
+  }
+
+  function setField(i: number, key: keyof CustomField, v: string) {
     setForm((f) => ({
       ...f,
-      services: f.services.includes(s) ? f.services.filter((x) => x !== s) : [...f.services, s],
+      customFields: f.customFields.map((cf, j) => (j === i ? { ...cf, [key]: v } : cf)),
     }));
+  }
+
+  function removeField(i: number) {
+    setForm((f) => ({ ...f, customFields: f.customFields.filter((_, j) => j !== i) }));
   }
 
   function submit(e: FormEvent) {
@@ -60,13 +102,20 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
       setError("Company name is required.");
       return;
     }
+    const customFields = form.customFields
+      .map((cf) => ({ label: cf.label.trim(), value: cf.value.trim() }))
+      .filter((cf) => cf.label !== "" || cf.value !== "");
+    if (customFields.some((cf) => !cf.label)) {
+      setError("Every custom field needs a label (or remove the empty row).");
+      return;
+    }
     setError(null);
-    onSave({ ...form, dealValue: Number(form.dealValue) || 0 }, client);
+    onSave({ ...form, customFields, dealValue: Number(form.dealValue) || 0 }, client);
   }
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit client" : "New client"}>
-      <div className="modal">
+      <div className="modal modal-lg">
         <div className="modal-head">
           <h2>{client ? "Edit client" : "New client"}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
@@ -79,8 +128,8 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
               {error}
             </div>
           )}
-          <div className="field-row">
-            <label className="field grow">
+          <div className="form-grid">
+            <label className="field">
               <span className="field-label">Company name *</span>
               <input
                 value={form.companyName}
@@ -95,12 +144,10 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
               <input
                 value={form.industry}
                 onChange={(e) => set("industry", e.target.value)}
-                placeholder="Retail, Legal, SaaS…"
+                placeholder="HVAC, Legal, Retail…"
               />
             </label>
-          </div>
-          <div className="field-row">
-            <label className="field grow">
+            <label className="field">
               <span className="field-label">Contact name</span>
               <input
                 value={form.contactName}
@@ -108,7 +155,7 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
                 placeholder="Jordan Lee"
               />
             </label>
-            <label className="field grow">
+            <label className="field">
               <span className="field-label">Email</span>
               <input
                 type="email"
@@ -117,8 +164,6 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
                 placeholder="jordan@acme.com"
               />
             </label>
-          </div>
-          <div className="field-row">
             <label className="field">
               <span className="field-label">Phone</span>
               <input
@@ -133,10 +178,10 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
               <input
                 type="number"
                 min="0"
-                step="500"
+                step="any"
                 value={form.dealValue === 0 ? "" : String(form.dealValue)}
                 onChange={(e) => set("dealValue", e.target.value === "" ? 0 : Number(e.target.value))}
-                placeholder="12000"
+                placeholder="9500.50"
               />
             </label>
             <label className="field">
@@ -149,30 +194,81 @@ export default function ClientModal({ client, busy, onClose, onSave }: Props) {
                 ))}
               </select>
             </label>
+            <label className="field">
+              <span className="field-label">Next action</span>
+              <input
+                value={form.nextAction}
+                onChange={(e) => set("nextAction", e.target.value)}
+                placeholder="e.g. Send proposal by Friday"
+              />
+            </label>
           </div>
+
           <fieldset className="field">
             <legend className="field-label">Services</legend>
-            <div className="check-grid">
-              {SERVICES.map((s) => (
-                <label className="check" key={s}>
-                  <input
-                    type="checkbox"
-                    checked={form.services.includes(s)}
-                    onChange={() => toggleService(s)}
-                  />
-                  <span>{s}</span>
-                </label>
+            <div className="chips">
+              {form.services.map((s) => (
+                <span className="chip" key={s}>
+                  {s}
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    onClick={() => removeService(s)}
+                    aria-label={`Remove service ${s}`}
+                  >
+                    ✕
+                  </button>
+                </span>
               ))}
+              {form.services.length === 0 && <span className="cell-muted chip-hint">No services yet</span>}
+            </div>
+            <div className="chip-add">
+              <input
+                value={serviceDraft}
+                onChange={(e) => setServiceDraft(e.target.value)}
+                onKeyDown={onServiceKey}
+                placeholder="Type a service — any industry (e.g. Installation) — press Enter"
+                aria-label="Add a service"
+              />
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addService}>
+                Add
+              </button>
             </div>
           </fieldset>
-          <label className="field">
-            <span className="field-label">Next action</span>
-            <input
-              value={form.nextAction}
-              onChange={(e) => set("nextAction", e.target.value)}
-              placeholder="e.g. Send proposal by Friday"
-            />
-          </label>
+
+          <div className="field">
+            <span className="field-label">Custom fields</span>
+            <div className="cf-list">
+              {form.customFields.map((cf, i) => (
+                <div className="cf-row" key={i}>
+                  <input
+                    value={cf.label}
+                    onChange={(e) => setField(i, "label", e.target.value)}
+                    placeholder="Label (e.g. License #)"
+                    aria-label={`Custom field ${i + 1} label`}
+                  />
+                  <input
+                    value={cf.value}
+                    onChange={(e) => setField(i, "value", e.target.value)}
+                    placeholder="Value"
+                    aria-label={`Custom field ${i + 1} value`}
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn danger"
+                    onClick={() => removeField(i)}
+                    aria-label={`Remove custom field ${i + 1}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="btn btn-ghost btn-sm cf-add" onClick={addField}>
+              + Add custom field
+            </button>
+          </div>
+
           <label className="field">
             <span className="field-label">Notes</span>
             <textarea

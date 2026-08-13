@@ -8,13 +8,10 @@ export const STAGES = [
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
-export const SERVICES = [
-  "Premium Website",
-  "SEO",
-  "Paid Campaigns",
-  "Analytics",
-] as const;
-export type Service = (typeof SERVICES)[number];
+export interface CustomField {
+  label: string;
+  value: string;
+}
 
 export interface Client {
   id: number;
@@ -23,7 +20,8 @@ export interface Client {
   email: string;
   phone: string;
   industry: string;
-  services: Service[];
+  services: string[];
+  customFields: CustomField[];
   dealValue: number;
   stage: Stage;
   nextAction: string;
@@ -60,7 +58,8 @@ export const money = (n: number): string =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(n ?? 0);
 
 export const fmtDate = (iso: string): string => {

@@ -12,16 +12,13 @@ export const STAGES = [
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
-export const SERVICES = [
-  "Premium Website",
-  "SEO",
-  "Paid Campaigns",
-  "Analytics",
-] as const;
-export type Service = (typeof SERVICES)[number];
-
 export function isStage(v: unknown): v is Stage {
   return typeof v === "string" && (STAGES as readonly string[]).includes(v);
+}
+
+export interface CustomField {
+  label: string;
+  value: string;
 }
 
 /** Data dir: $DATA_DIR env, else ./data next to the server directory. */
@@ -50,6 +47,7 @@ db.exec(`
     phone        TEXT NOT NULL DEFAULT '',
     industry     TEXT NOT NULL DEFAULT '',
     services     TEXT NOT NULL DEFAULT '[]',
+    custom_fields TEXT NOT NULL DEFAULT '[]',
     deal_value   REAL NOT NULL DEFAULT 0,
     stage        TEXT NOT NULL DEFAULT 'Prospect',
     next_action  TEXT NOT NULL DEFAULT '',
@@ -63,6 +61,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_clients_updated ON clients(updated_at);
 `);
 
+// Simple migration for databases created before custom_fields existed:
+// add the column if it's missing (SQLite has no ADD COLUMN IF NOT EXISTS).
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "custom_fields")) {
+    db.exec("ALTER TABLE clients ADD COLUMN custom_fields TEXT NOT NULL DEFAULT '[]'");
+  }
+}
+
 export interface ClientRow {
   id: number;
   company_name: string;
@@ -71,6 +78,7 @@ export interface ClientRow {
   phone: string;
   industry: string;
   services: string;
+  custom_fields: string;
   deal_value: number;
   stage: Stage;
   next_action: string;

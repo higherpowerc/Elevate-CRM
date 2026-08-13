@@ -1,4 +1,4 @@
-import { db, STAGES, SERVICES, isStage, type ClientRow, type Stage } from "./db";
+import { db, STAGES, isStage, type ClientRow, type CustomField, type Stage } from "./db";
 import {
   createSession,
   verifySession,
@@ -67,6 +67,20 @@ function toClient(row: ClientRow) {
   } catch {
     /* keep empty */
   }
+  let customFields: CustomField[] = [];
+  try {
+    const parsed = JSON.parse(row.custom_fields);
+    if (Array.isArray(parsed)) {
+      customFields = parsed
+        .filter((f) => f !== null && typeof f === "object" && typeof (f as CustomField).label === "string")
+        .map((f) => ({
+          label: (f as CustomField).label,
+          value: typeof (f as CustomField).value === "string" ? (f as CustomField).value : "",
+        }));
+    }
+  } catch {
+    /* keep empty */
+  }
   return {
     id: row.id,
     companyName: row.company_name,
@@ -75,6 +89,7 @@ function toClient(row: ClientRow) {
     phone: row.phone,
     industry: row.industry,
     services,
+    customFields,
     dealValue: row.deal_value,
     stage: row.stage,
     nextAction: row.next_action,
@@ -92,6 +107,7 @@ interface ClientInput {
   phone: string;
   industry: string;
   services: string[];
+  customFields: CustomField[];
   dealValue: number;
   stage: Stage;
   nextAction: string;
@@ -108,9 +124,32 @@ function validateClient(body: Record<string, unknown>): { ok: true; value: Clien
   let services: string[] = [];
   if (body.services !== undefined) {
     if (!Array.isArray(body.services)) return { ok: false, error: "Services must be a list." };
-    const unknown = body.services.find((s) => typeof s !== "string" || !(SERVICES as readonly string[]).includes(s));
-    if (unknown !== undefined) return { ok: false, error: `Unknown service: ${String(unknown)}` };
-    services = body.services as string[];
+    if (body.services.length > 50) return { ok: false, error: "Too many services (max 50)." };
+    const seen = new Set<string>();
+    for (const s of body.services) {
+      if (typeof s !== "string") return { ok: false, error: "Each service must be text." };
+      const t = s.trim().slice(0, 100);
+      if (t && !seen.has(t.toLowerCase())) {
+        seen.add(t.toLowerCase());
+        services.push(t);
+      }
+    }
+  }
+
+  let customFields: CustomField[] = [];
+  if (body.customFields !== undefined) {
+    if (!Array.isArray(body.customFields)) return { ok: false, error: "Custom fields must be a list." };
+    if (body.customFields.length > 30) return { ok: false, error: "Too many custom fields (max 30)." };
+    for (const f of body.customFields) {
+      if (f === null || typeof f !== "object" || Array.isArray(f)) {
+        return { ok: false, error: "Each custom field must be an object with a label and a value." };
+      }
+      const obj = f as Record<string, unknown>;
+      const label = typeof obj.label === "string" ? obj.label.trim() : "";
+      if (!label) return { ok: false, error: "Custom field label is required." };
+      const value = typeof obj.value === "string" ? obj.value.trim() : "";
+      customFields.push({ label: label.slice(0, 120), value: value.slice(0, 500) });
+    }
   }
 
   let dealValue = 0;
@@ -134,6 +173,7 @@ function validateClient(body: Record<string, unknown>): { ok: true; value: Clien
       phone: str(body.phone, 60),
       industry: str(body.industry, 120),
       services,
+      customFields,
       dealValue,
       stage,
       nextAction: str(body.nextAction, 500),
@@ -262,12 +302,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const c = v.value;
     const info = db
       .query(
-        `INSERT INTO clients (company_name, contact_name, email, phone, industry, services, deal_value, stage, next_action, notes, archived)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO clients (company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         c.companyName, c.contactName, c.email, c.phone, c.industry,
-        JSON.stringify(c.services), c.dealValue, c.stage, c.nextAction, c.notes,
+        JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
       );
     const row = db.query("SELECT * FROM clients WHERE id = ?").get(info.lastInsertRowid) as ClientRow;
@@ -297,12 +337,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db.query(
         `UPDATE clients SET
            company_name = ?, contact_name = ?, email = ?, phone = ?, industry = ?,
-           services = ?, deal_value = ?, stage = ?, next_action = ?, notes = ?, archived = ?,
+           services = ?, custom_fields = ?, deal_value = ?, stage = ?, next_action = ?, notes = ?, archived = ?,
            updated_at = datetime('now')
          WHERE id = ?`,
       ).run(
         c.companyName, c.contactName, c.email, c.phone, c.industry,
-        JSON.stringify(c.services), c.dealValue, c.stage, c.nextAction, c.notes,
+        JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0, id,
       );
       const updated = db.query("SELECT * FROM clients WHERE id = ?").get(id) as ClientRow;
