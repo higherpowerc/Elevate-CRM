@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { INVOICE_STATUSES, invoiceStatusLabel, type Client, type Invoice, type InvoiceStatus } from "./types";
 import type { InvoiceInput } from "./api";
+import SearchableSelect from "./SearchableSelect";
 
 interface Props {
   invoice: Invoice;
@@ -64,15 +65,17 @@ export default function InvoiceModal({ invoice, clients, busy, onClose, onSave }
           )}
           <label className="field">
             <span className="field-label">Client</span>
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
-              <option value="">No client (standalone)</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.companyName}
-                  {c.archived ? " (archived)" : ""}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              value={clientId}
+              onChange={setClientId}
+              options={clients.map((c) => ({
+                value: String(c.id),
+                label: c.companyName + (c.archived ? " (archived)" : ""),
+              }))}
+              placeholder="Search clients…"
+              ariaLabel="Invoice client"
+              emptyLabel="No client (standalone)"
+            />
           </label>
           <label className="field">
             <span className="field-label">Amount (USD) *</span>

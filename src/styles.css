@@ -418,6 +418,89 @@ legend.field-label {
   padding-right: 32px;
 }
 
+/* ── SearchableSelect (type-to-search combobox) ────────────── */
+/* Replaces native client <select>s on the Finance tab. The input looks like
+   the other form controls (plus a chevron hint); the dropdown is absolutely
+   positioned under the wrapper and never clips inside modals or flex rows. */
+.combobox {
+  position: relative;
+  min-width: 0;
+}
+.combobox-input {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 32px 10px 13px;
+  font-size: 14.5px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.combobox-input:focus {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+.combobox-input::placeholder {
+  color: var(--muted-2);
+}
+.combobox-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 70;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: fade 0.12s ease both;
+}
+.combobox-opt {
+  padding: 9px 11px;
+  font-size: 14px;
+  color: var(--ink);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.combobox-opt:hover,
+.combobox-opt.active {
+  background: var(--bg-soft);
+}
+.combobox-opt.selected {
+  color: var(--lime);
+  font-weight: 600;
+}
+.combobox-empty,
+.combobox-more {
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--muted);
+}
+/* Quick-add sizing in the Finance row (mirrors the old select's footprint) */
+.inv-add .combobox {
+  flex: 0 1 220px;
+}
+.inv-add .combobox-input {
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 14px;
+}
+
 .field-row {
   display: flex;
   gap: 14px;

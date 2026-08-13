@@ -12,6 +12,7 @@ import {
 } from "./types";
 import InvoiceModal from "./InvoiceModal";
 import ConfirmDialog from "./ConfirmDialog";
+import SearchableSelect from "./SearchableSelect";
 
 type Filter = "all" | InvoiceStatus;
 
@@ -74,6 +75,14 @@ export default function Finance() {
       return q === "unassigned";
     });
   }, [invoices, filter, query]);
+
+  /** Clients whose name matches the search query — used to hint the empty
+   *  state when a search finds no invoices but does match a client. */
+  const clientMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return clients.filter((c) => c.companyName.toLowerCase().includes(q));
+  }, [clients, query]);
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: invoices?.length ?? 0, draft: 0, sent: 0, paid: 0 };
@@ -224,15 +233,18 @@ export default function Finance() {
       </div>
 
       <form className="card inv-add" onSubmit={handleQuickAdd}>
-        <select value={clientId} onChange={(e) => setClientId(e.target.value)} aria-label="Invoice client">
-          <option value="">No client</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.companyName}
-              {c.archived ? " (archived)" : ""}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect
+          className="inv-add-client"
+          value={clientId}
+          onChange={setClientId}
+          options={clients.map((c) => ({
+            value: String(c.id),
+            label: c.companyName + (c.archived ? " (archived)" : ""),
+          }))}
+          placeholder="Search clients…"
+          ariaLabel="Invoice client"
+          emptyLabel="No client"
+        />
         <div className="inv-add-amount">
           <span className="inv-dollar" aria-hidden="true">
             $
@@ -309,7 +321,11 @@ export default function Finance() {
             {totalCount === 0
               ? "Add your first invoice above — link it to a client or keep it standalone."
               : query.trim()
-                ? "Try a different search or status."
+                ? clientMatches.length > 0
+                  ? `${clientMatches.length} client${clientMatches.length === 1 ? "" : "s"} match${
+                      clientMatches.length === 1 ? "es" : ""
+                    } “${query.trim()}” — invoices appear here once linked to a client.`
+                  : "Try a different search or status."
                 : "Try a different status tab."}
           </p>
           {totalCount === 0 && (
