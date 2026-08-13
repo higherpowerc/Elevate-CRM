@@ -405,10 +405,14 @@ const DEMO_CLIENT_ORG = {
   ],
   // Adaptive intake Phase 1: the demo tenant demos the adaptive intake form
   // as a home-services company that services both residential + commercial
-  // and goes to the client (the spec's "HVAC-style" example flow).
+  // and goes to the client (the spec's "HVAC-style" example flow). Phase 3
+  // fix: this vertical config is part of the DEFAULT seed path (not only
+  // SEED_DEMO=1), so fresh databases get it automatically and re-seeding an
+  // existing database re-syncs it (idempotent — see ensureDemoClientOrg).
   serviceModel: "both",
   deliveryType: "we_go",
   industry: "home_services",
+  intakeOpts: ["business_llc_tab"],
 };
 
 const DEMO_CLIENT_ORG_CLIENTS = [
@@ -478,60 +482,80 @@ const DEMO_CLIENT_ORG_CLIENTS = [
   },
 ];
 
-if (wantDemo) {
+/**
+ * Demo client org ("Acme Landscaping", Phase 2) — a separate org with its own
+ * member login, so the owner can immediately test the product's multi-tenancy.
+ * Runs on the DEFAULT seed path (not only SEED_DEMO=1): idempotent — if the
+ * org already exists its adaptive-intake vertical config is re-synced to the
+ * intended home-services values (service model both / we go to client /
+ * home_services / business_llc_tab enabled), and nothing else is touched;
+ * if it doesn't exist yet (fresh database), it is created with the org, its
+ * member login and its 3 demo clients.
+ */
+async function ensureDemoClientOrg() {
   const existing = db.query("SELECT id FROM orgs WHERE name = ?").get(DEMO_CLIENT_ORG.name) as
     | { id: number }
     | null;
   if (existing) {
-    console.log(`[seed] demo client org "${DEMO_CLIENT_ORG.name}" already exists — skipping.`);
-    // Adaptive intake Phase 1: keep the demo tenant's vertical config in sync
-    // even on re-seeds against an older database (idempotent demo data).
+    // Keep the demo tenant's vertical config in sync even on re-seeds against
+    // an older database (idempotent — never touches clients or settings the
+    // owner may have customized beyond the vertical config).
     db.query(
-      "UPDATE orgs SET service_model = ?, delivery_type = ?, industry = ? WHERE id = ?",
-    ).run(DEMO_CLIENT_ORG.serviceModel, DEMO_CLIENT_ORG.deliveryType, DEMO_CLIENT_ORG.industry, existing.id);
-  } else {
-    const hash = await hashPassword(DEMO_CLIENT_ORG.password);
-    const tx = db.transaction(() => {
-      const orgId = Number(
-        db
-          .query(
-            "INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry) VALUES (?, ?, ?, ?, ?, ?)",
-          )
-          .run(
-            DEMO_CLIENT_ORG.name,
-            JSON.stringify(DEMO_CLIENT_ORG.stages),
-            JSON.stringify(DEMO_CLIENT_ORG.customFields),
-            DEMO_CLIENT_ORG.serviceModel,
-            DEMO_CLIENT_ORG.deliveryType,
-            DEMO_CLIENT_ORG.industry,
-          ).lastInsertRowid,
-      );
-      db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')").run(
-        DEMO_CLIENT_ORG.email,
-        hash,
-        orgId,
-      );
-      const insertClient = db.prepare(
-        `INSERT INTO clients
-           (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, client_type, address, city, state, zip, website, lead_source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const cl of DEMO_CLIENT_ORG_CLIENTS) {
-        insertClient.run(
-          orgId, cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
-          JSON.stringify(cl.services), JSON.stringify(cl.customFields), cl.dealValue,
-          cl.stage, cl.nextAction, cl.notes,
-          cl.clientType ?? "residential", cl.address ?? "", cl.city ?? "", cl.state ?? "", cl.zip ?? "",
-          cl.website ?? "", cl.leadSource ?? "",
-        );
-      }
-      return orgId;
-    });
-    const clientOrgId = tx();
-    console.log(
-      `[seed] demo data: client org "${DEMO_CLIENT_ORG.name}" (org id ${clientOrgId}, ${DEMO_CLIENT_ORG_CLIENTS.length} clients) — login ${DEMO_CLIENT_ORG.email}`,
+      "UPDATE orgs SET service_model = ?, delivery_type = ?, industry = ?, intake_opts = ? WHERE id = ?",
+    ).run(
+      DEMO_CLIENT_ORG.serviceModel,
+      DEMO_CLIENT_ORG.deliveryType,
+      DEMO_CLIENT_ORG.industry,
+      JSON.stringify(DEMO_CLIENT_ORG.intakeOpts),
+      existing.id,
     );
+    console.log(`[seed] demo client org "${DEMO_CLIENT_ORG.name}" already exists — vertical config re-synced.`);
+    return;
   }
+  const hash = await hashPassword(DEMO_CLIENT_ORG.password);
+  const tx = db.transaction(() => {
+    const orgId = Number(
+      db
+        .query(
+          "INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, intake_opts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          DEMO_CLIENT_ORG.name,
+          JSON.stringify(DEMO_CLIENT_ORG.stages),
+          JSON.stringify(DEMO_CLIENT_ORG.customFields),
+          DEMO_CLIENT_ORG.serviceModel,
+          DEMO_CLIENT_ORG.deliveryType,
+          DEMO_CLIENT_ORG.industry,
+          JSON.stringify(DEMO_CLIENT_ORG.intakeOpts),
+        ).lastInsertRowid,
+    );
+    db.query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')").run(
+      DEMO_CLIENT_ORG.email,
+      hash,
+      orgId,
+    );
+    const insertClient = db.prepare(
+      `INSERT INTO clients
+         (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, client_type, address, city, state, zip, website, lead_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const cl of DEMO_CLIENT_ORG_CLIENTS) {
+      insertClient.run(
+        orgId, cl.companyName, cl.contactName, cl.email, cl.phone, cl.industry,
+        JSON.stringify(cl.services), JSON.stringify(cl.customFields), cl.dealValue,
+        cl.stage, cl.nextAction, cl.notes,
+        cl.clientType ?? "residential", cl.address ?? "", cl.city ?? "", cl.state ?? "", cl.zip ?? "",
+        cl.website ?? "", cl.leadSource ?? "",
+      );
+    }
+    return orgId;
+  });
+  const clientOrgId = tx();
+  console.log(
+    `[seed] demo client org "${DEMO_CLIENT_ORG.name}" (org id ${clientOrgId}, ${DEMO_CLIENT_ORG_CLIENTS.length} clients) — login ${DEMO_CLIENT_ORG.email}`,
+  );
 }
+
+await ensureDemoClientOrg();
 
 process.exit(result.created ? 0 : 1);

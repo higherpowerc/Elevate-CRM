@@ -22,6 +22,7 @@
  *   (need the matching intake opt); for mobile_personal they always show.
  */
 import type { ClientType } from "./types";
+import type { CustomIntakeGroup, IntakeGroupFieldKind } from "./types";
 
 /** The UI-level client type used by the intake form. "individual" maps to the
  *  stored "residential" value — see the note above. */
@@ -34,6 +35,9 @@ export interface IntakeOrgSettings {
   serviceModel: string;
   deliveryType: string;
   intakeOpts: string[];
+  /** Adaptive intake Phase 3: tenant-defined custom conditional field groups
+   *  (rendered for every industry, not just "other"). */
+  customIntakeGroups?: CustomIntakeGroup[];
 }
 
 /** The business-type datalist options (spec Step 3 B — org-configurable later). */
@@ -60,7 +64,8 @@ export type IntakeFieldKind =
   | "llc" // collapsed Business name / LLC tab (dba_name + ein_ssn)
   | "services" // service chip editor
   | "custom" // tenant custom fields
-  | "archived"; // archived checkbox
+  | "archived" // archived checkbox
+  | "customgroup"; // Phase 3: a field of a tenant-defined custom intake group
 
 export interface IntakeField {
   /** Client record key (camelCase — matches the API / Client type). */
@@ -71,6 +76,10 @@ export interface IntakeField {
   maxLength?: number;
   /** For select / datalist fields. */
   options?: readonly string[];
+  /** Phase 3 (customgroup fields only): the intake-group field key values are
+   *  stored under (client customFields {name: key, value}) and its kind. */
+  groupKey?: string;
+  groupKind?: IntakeGroupFieldKind;
 }
 
 export interface IntakeSection {
@@ -86,6 +95,21 @@ const professional = (industry: string) => industry === "professional";
 /** Map the stored client type to the UI-level intake type. */
 export function intakeClientType(clientType: ClientType): IntakeClientType {
   return clientType === "commercial" ? "commercial" : "individual";
+}
+
+/**
+ * The org's ENABLED custom intake groups that apply to the given client type
+ * (Phase 3). Pure rule: enabled AND (appliesTo is "both" OR matches the
+ * client type). Works for every industry — "other" and the presets alike —
+ * so owners can extend the form beyond the built-in verticals.
+ */
+export function getCustomGroupsFor(
+  settings: IntakeOrgSettings,
+  clientType: IntakeClientType,
+): CustomIntakeGroup[] {
+  return (settings.customIntakeGroups ?? []).filter(
+    (g) => g.enabled && (g.appliesTo === "both" || g.appliesTo === clientType),
+  );
 }
 
 /**
@@ -305,6 +329,26 @@ export function getIntakeLayout(
         ],
       });
     }
+  }
+
+  /* ── Custom conditional field groups (Phase 3) ────────────────────────
+     The org's OWN groups — defined in Settings, rendered for every industry.
+     Each enabled group whose appliesTo matches the client type becomes its
+     own section titled by the group name; fields are text / yesno / select
+     and their values live in the client's customFields by group field key. */
+  for (const g of getCustomGroupsFor(settings, clientType)) {
+    sections.push({
+      id: `custom-${g.id}`,
+      title: g.name,
+      fields: g.fields.map((f) => ({
+        key: f.key,
+        label: f.label,
+        kind: "customgroup",
+        groupKey: f.key,
+        groupKind: f.kind,
+        ...(f.options ? { options: f.options } : {}),
+      })),
+    });
   }
 
   return sections;

@@ -33,6 +33,31 @@ export interface CustomField {
   value: string;
 }
 
+/** Adaptive intake Phase 3 — custom conditional field groups. A tenant
+ *  defines its own intake groups in Settings; the adaptive client modal
+ *  renders the ENABLED groups whose appliesTo matches the client type. */
+export type IntakeGroupAppliesTo = "commercial" | "individual" | "both";
+export type IntakeGroupFieldKind = "text" | "yesno" | "select";
+
+/** A field inside a custom intake group. `key` is the stable snake_case id
+ *  values are stored under (in the client's customFields array, as
+ *  {name: key, value}); select fields carry their `options`. */
+export interface CustomIntakeField {
+  key: string;
+  label: string;
+  kind: IntakeGroupFieldKind;
+  options?: string[];
+}
+
+/** A tenant-defined custom conditional intake group. */
+export interface CustomIntakeGroup {
+  id: string;
+  name: string;
+  appliesTo: IntakeGroupAppliesTo;
+  enabled: boolean;
+  fields: CustomIntakeField[];
+}
+
 /** Phase 3e: every client is Commercial or Residential (required on create
  *  and edit; existing rows backfilled to residential). */
 export type ClientType = "commercial" | "residential";
@@ -196,6 +221,9 @@ export interface OrgSettings {
   /** Enabled optional (➖) intake groups: business_llc_tab, hoa_restrictions,
    *  pet_on_premises, parking_access. */
   intakeOpts: string[];
+  /** Adaptive intake Phase 3: the tenant's custom conditional field groups
+   *  (defined in Settings; rendered by the intake modal per their rules). */
+  customIntakeGroups: CustomIntakeGroup[];
 }
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is

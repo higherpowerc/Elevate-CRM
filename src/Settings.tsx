@@ -1,9 +1,41 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { CUSTOM_FIELD_TYPES, type CustomFieldDef, type CustomFieldType, type OrgSettings } from "./types";
+import {
+  CUSTOM_FIELD_TYPES,
+  type CustomFieldDef,
+  type CustomFieldType,
+  type CustomIntakeGroup,
+  type CustomIntakeField,
+  type IntakeGroupAppliesTo,
+  type IntakeGroupFieldKind,
+  type OrgSettings,
+} from "./types";
 import StageEditor from "./StageEditor";
 
 const MAX_CUSTOM_FIELDS = 20;
+const MAX_INTAKE_GROUPS = 10;
+const MAX_GROUP_FIELDS = 20;
+const GROUP_KEY_RE = /^[a-z][a-z0-9_]*$/;
+
+/** Stable id for a brand-new group (Settings only — the server accepts any
+ *  string id ≤ 60 chars). */
+function newGroupId(): string {
+  const rand =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10);
+  return `g_${rand}`;
+}
+
+/** "Fleet size" → "fleet_size" — a sensible default field key the owner can
+ *  then edit freely. */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
 
 /**
  * Settings (Phase 3a/3b): per-tenant branding (workspace name + accent color),
@@ -32,6 +64,10 @@ export default function Settings() {
   const [industry, setIndustry] = useState<OrgSettings["industry"]>("");
   const [intakeOpts, setIntakeOpts] = useState<string[]>([]);
 
+  /* Adaptive intake Phase 3: custom conditional field groups */
+  const [intakeGroups, setIntakeGroups] = useState<CustomIntakeGroup[]>([]);
+  const [confirmRemoveGroup, setConfirmRemoveGroup] = useState<number | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -48,6 +84,7 @@ export default function Settings() {
       setDeliveryType(settings.deliveryType);
       setIndustry(settings.industry);
       setIntakeOpts(settings.intakeOpts);
+      setIntakeGroups(settings.customIntakeGroups);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -173,6 +210,213 @@ export default function Settings() {
         customFields: customFields.map((f) => ({ name: f.name.trim(), type: f.type })),
       });
       setSaved("Custom fields saved.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Custom intake groups (Phase 3) ────────────────────────────── */
+
+  const INTAKE_GROUP_KIND_LABELS: Record<IntakeGroupFieldKind, string> = {
+    text: "Text",
+    yesno: "Yes / No",
+    select: "Select (options)",
+  };
+
+  function validateIntakeGroupList(list: CustomIntakeGroup[]): string | null {
+    if (list.length > MAX_INTAKE_GROUPS) {
+      return `Keep custom intake groups to ${MAX_INTAKE_GROUPS} or fewer.`;
+    }
+    const usedKeys = new Set<string>(customFields.map((f) => f.name.toLowerCase()));
+    for (const g of list) {
+      if (!g.name.trim()) return "Each custom intake group needs a name.";
+      if (g.name.trim().length > 80) return "Custom intake group names must be under 81 characters.";
+      if (g.fields.length === 0) return `Group "${g.name}" needs at least one field.`;
+      if (g.fields.length > MAX_GROUP_FIELDS) {
+        return `Group "${g.name}" has too many fields (max ${MAX_GROUP_FIELDS}).`;
+      }
+      for (const f of g.fields) {
+        if (!GROUP_KEY_RE.test(f.key)) {
+          return `Group "${g.name}": key "${f.key || "(empty)"}" must start with a lowercase letter and use only lowercase letters, digits and underscores (e.g. fleet_size).`;
+        }
+        if (f.key.length > 40) return `Group "${g.name}": key "${f.key}" must be under 41 characters.`;
+        if (usedKeys.has(f.key.toLowerCase())) {
+          return `Group "${g.name}": key "${f.key}" is already used by another field — keys must be unique across all groups and custom fields.`;
+        }
+        usedKeys.add(f.key.toLowerCase());
+        if (!f.label.trim()) return `Group "${g.name}": field "${f.key}" needs a label.`;
+        if (f.kind === "select" && (!f.options || f.options.filter((o) => o.trim()).length === 0)) {
+          return `Group "${g.name}": select field "${f.key}" needs at least one option.`;
+        }
+      }
+    }
+    return null;
+  }
+
+  function addIntakeGroup() {
+    setError(null);
+    setSaved(null);
+    if (intakeGroups.length >= MAX_INTAKE_GROUPS) {
+      setError(`You can define up to ${MAX_INTAKE_GROUPS} custom intake groups.`);
+      return;
+    }
+    setIntakeGroups((list) => [
+      ...list,
+      {
+        id: newGroupId(),
+        name: "",
+        appliesTo: "both",
+        enabled: true,
+        fields: [
+          { key: "", label: "", kind: "text" },
+        ],
+      },
+    ]);
+    setConfirmRemoveGroup(null);
+  }
+
+  function updateGroup(i: number, patch: Partial<CustomIntakeGroup>) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) => list.map((g, j) => (j === i ? { ...g, ...patch } : g)));
+  }
+
+  function removeGroup(i: number) {
+    setError(null);
+    setSaved(null);
+    setConfirmRemoveGroup(null);
+    setIntakeGroups((list) => list.filter((_, j) => j !== i));
+  }
+
+  function addGroupField(gi: number) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) =>
+      list.map((g, j) =>
+        j === gi
+          ? {
+              ...g,
+              fields:
+                g.fields.length >= MAX_GROUP_FIELDS
+                  ? g.fields
+                  : [...g.fields, { key: "", label: "", kind: "text" as IntakeGroupFieldKind }],
+            }
+          : g,
+      ),
+    );
+  }
+
+  function updateGroupField(
+    gi: number,
+    fi: number,
+    patch: Partial<CustomIntakeField>,
+    opts?: { autoKey?: boolean },
+  ) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) =>
+      list.map((g, j) => {
+        if (j !== gi) return g;
+        const fields = g.fields.map((f, k) => {
+          if (k !== fi) return f;
+          const next = { ...f, ...patch };
+          // Auto-derive a key from the label while the key is still empty —
+          // the owner can then edit it freely.
+          if (opts?.autoKey && !f.key.trim() && typeof patch.label === "string") {
+            next.key = slugify(patch.label);
+          }
+          return next;
+        });
+        return { ...g, fields };
+      }),
+    );
+  }
+
+  function removeGroupField(gi: number, fi: number) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) =>
+      list.map((g, j) => (j === gi ? { ...g, fields: g.fields.filter((_, k) => k !== fi) } : g)),
+    );
+  }
+
+  function updateOption(gi: number, fi: number, oi: number, value: string) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) =>
+      list.map((g, j) =>
+        j === gi
+          ? {
+              ...g,
+              fields: g.fields.map((f, k) =>
+                k === fi ? { ...f, options: (f.options ?? []).map((o, m) => (m === oi ? value : o)) } : f,
+              ),
+            }
+          : g,
+      ),
+    );
+  }
+
+  function addOption(gi: number, fi: number) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) =>
+      list.map((g, j) =>
+        j === gi
+          ? {
+              ...g,
+              fields: g.fields.map((f, k) => (k === fi ? { ...f, options: [...(f.options ?? []), ""] } : f)),
+            }
+          : g,
+      ),
+    );
+  }
+
+  function removeOption(gi: number, fi: number, oi: number) {
+    setError(null);
+    setSaved(null);
+    setIntakeGroups((list) =>
+      list.map((g, j) =>
+        j === gi
+          ? {
+              ...g,
+              fields: g.fields.map((f, k) =>
+                k === fi ? { ...f, options: (f.options ?? []).filter((_, m) => m !== oi) } : f,
+              ),
+            }
+          : g,
+      ),
+    );
+  }
+
+  async function saveIntakeGroups() {
+    setError(null);
+    setSaved(null);
+    const problem = validateIntakeGroupList(intakeGroups);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateSettings({
+        customIntakeGroups: intakeGroups.map((g) => ({
+          id: g.id,
+          name: g.name.trim(),
+          appliesTo: g.appliesTo,
+          enabled: g.enabled,
+          fields: g.fields.map((f) => ({
+            key: f.key,
+            label: f.label.trim(),
+            kind: f.kind,
+            ...(f.kind === "select" ? { options: (f.options ?? []).map((o) => o.trim()).filter(Boolean) } : {}),
+          })),
+        })),
+      });
+      setSaved("Custom intake groups saved.");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed.");
@@ -361,6 +605,176 @@ export default function Settings() {
                 {busy ? "Saving…" : "Save account setup"}
               </button>
             </div>
+          </div>
+        </div>
+
+        <div className="card admin-table cg-card">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Custom intake groups</h2>
+            <p className="admin-card-sub">
+              Your own conditional intake sections, on top of the presets — for any industry,
+              not just "Other". Each group appears in the client form only for the client type
+              it applies to, and only while it's enabled. Values save per client and prefill on edit.
+            </p>
+          </div>
+          {intakeGroups.length === 0 ? (
+            <p className="field-hint cfdef-empty">
+              No custom intake groups yet — add one (e.g. "Fleet details" with a "Fleet size"
+              text field and a "Region" select, applies to Commercial clients).
+            </p>
+          ) : (
+            <div className="cg-list">
+              {intakeGroups.map((g, gi) => (
+                <div className="cg-group" key={g.id}>
+                  <div className="cg-head">
+                    <div className="cg-head-main">
+                      <label className="check cg-enabled">
+                        <input
+                          type="checkbox"
+                          checked={g.enabled}
+                          onChange={(e) => updateGroup(gi, { enabled: e.target.checked })}
+                        />
+                        <span>Enabled</span>
+                      </label>
+                      <input
+                        className="cg-name"
+                        value={g.name}
+                        onChange={(e) => updateGroup(gi, { name: e.target.value })}
+                        placeholder="Group name (e.g. Fleet details)"
+                        maxLength={80}
+                        aria-label={`Group ${gi + 1} name`}
+                      />
+                      <select
+                        className="cg-applies"
+                        value={g.appliesTo}
+                        onChange={(e) => updateGroup(gi, { appliesTo: e.target.value as IntakeGroupAppliesTo })}
+                        aria-label={`Group ${gi + 1} applies to`}
+                      >
+                        <option value="both">Commercial &amp; Individual</option>
+                        <option value="commercial">Commercial only</option>
+                        <option value="individual">Individual only</option>
+                      </select>
+                    </div>
+                    {confirmRemoveGroup === gi ? (
+                      <span className="cfdef-confirm">
+                        <span className="cfdef-confirm-q">Remove this group? Existing client values are kept.</span>
+                        <button
+                          type="button"
+                          className="icon-btn danger"
+                          onClick={() => removeGroup(gi)}
+                          disabled={busy}
+                        >
+                          Yes, remove
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => setConfirmRemoveGroup(null)}
+                          disabled={busy}
+                        >
+                          Keep
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="icon-btn danger"
+                        onClick={() => setConfirmRemoveGroup(gi)}
+                        disabled={busy}
+                        aria-label={`Remove group ${g.name}`}
+                      >
+                        Remove group
+                      </button>
+                    )}
+                  </div>
+                  <div className="cg-fields">
+                    {g.fields.map((f, fi) => (
+                      <div className="cg-field" key={`${g.id}-${fi}`}>
+                        <div className="cg-field-row">
+                          <input
+                            className="cg-flabel"
+                            value={f.label}
+                            onChange={(e) => updateGroupField(gi, fi, { label: e.target.value }, { autoKey: true })}
+                            placeholder="Field label (e.g. Fleet size)"
+                            maxLength={80}
+                            aria-label={`Field ${fi + 1} label`}
+                          />
+                          <input
+                            className="cg-fkey"
+                            value={f.key}
+                            onChange={(e) => updateGroupField(gi, fi, { key: e.target.value })}
+                            placeholder="key (e.g. fleet_size)"
+                            maxLength={40}
+                            aria-label={`Field ${fi + 1} key`}
+                          />
+                          <select
+                            className="cg-fkind"
+                            value={f.kind}
+                            onChange={(e) =>
+                              updateGroupField(gi, fi, { kind: e.target.value as IntakeGroupFieldKind })
+                            }
+                            aria-label={`Field ${fi + 1} kind`}
+                          >
+                            {(Object.keys(INTAKE_GROUP_KIND_LABELS) as IntakeGroupFieldKind[]).map((k) => (
+                              <option key={k} value={k}>
+                                {INTAKE_GROUP_KIND_LABELS[k]}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="icon-btn danger"
+                            onClick={() => removeGroupField(gi, fi)}
+                            disabled={busy}
+                            aria-label={`Remove field ${f.label || f.key}`}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {f.kind === "select" && (
+                          <div className="cg-opts">
+                            {(f.options ?? []).map((o, oi) => (
+                              <div className="cg-opt" key={oi}>
+                                <input
+                                  value={o}
+                                  onChange={(e) => updateOption(gi, fi, oi, e.target.value)}
+                                  placeholder={`Option ${oi + 1}`}
+                                  maxLength={100}
+                                  aria-label={`Option ${oi + 1} for ${f.label || f.key}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="icon-btn danger"
+                                  onClick={() => removeOption(gi, fi, oi)}
+                                  disabled={busy}
+                                  aria-label={`Remove option ${oi + 1}`}
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => addOption(gi, fi)}>
+                              + Add option
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => addGroupField(gi)}>
+                    + Add field
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="cg-footer">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={addIntakeGroup} disabled={busy}>
+              + Add group
+            </button>
+            <button className="btn btn-primary" disabled={busy} onClick={saveIntakeGroups}>
+              {busy ? "Saving…" : "Save custom intake groups"}
+            </button>
           </div>
         </div>
 

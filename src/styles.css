@@ -2498,3 +2498,140 @@ legend.field-label {
 .billing-fields .field {
   margin: 0;
 }
+
+/* ── Adaptive intake Phase 3: custom intake groups editor (Settings) ── */
+.cg-card {
+  max-width: 46em;
+}
+.cg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 2px 0 4px;
+}
+.cg-group {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px 16px;
+  background: var(--bg-soft);
+}
+.cg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.cg-head-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 280px;
+  flex-wrap: wrap;
+}
+.cg-enabled {
+  font-size: 13px;
+  flex: none;
+  white-space: nowrap;
+}
+.cg-name {
+  flex: 1;
+  min-width: 160px;
+}
+.cg-applies {
+  flex: none;
+}
+.cg-name,
+.cg-applies,
+.cg-flabel,
+.cg-fkey,
+.cg-fkind,
+.cg-opt input {
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cg-name:focus,
+.cg-applies:focus,
+.cg-flabel:focus,
+.cg-fkey:focus,
+.cg-fkind:focus,
+.cg-opt input:focus {
+  border-color: var(--accent, var(--lime));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--lime)) 15%, transparent);
+}
+.cg-name::placeholder,
+.cg-flabel::placeholder,
+.cg-fkey::placeholder,
+.cg-opt input::placeholder {
+  color: var(--muted-2);
+}
+.cg-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cg-field {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--bg);
+}
+.cg-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cg-flabel {
+  flex: 2;
+  min-width: 150px;
+}
+.cg-fkey {
+  flex: 1.4;
+  min-width: 130px;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+}
+.cg-fkind {
+  flex: none;
+}
+.cg-field-row > .icon-btn {
+  flex: none;
+}
+.cg-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-left: 4px;
+}
+.cg-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cg-opt input {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.cg-opt .icon-btn {
+  flex: none;
+}
+.cg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}

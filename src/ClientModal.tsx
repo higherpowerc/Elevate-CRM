@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
 import {
+  getCustomGroupsFor,
   getIntakeLayout,
   intakeClientType,
   type IntakeField,
@@ -258,6 +259,20 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
         customFields.push({ name: def.name, value });
       }
     }
+    // Adaptive intake Phase 3: values from the org's ENABLED custom intake
+    // groups that apply to this client type — stored by group field key in
+    // the SAME customFields array. Yes/no fields always send 1/0; text and
+    // select fields send only non-empty values.
+    for (const g of getCustomGroupsFor(intake, intakeClientType(form.clientType))) {
+      for (const f of g.fields) {
+        const value = valueOf(f.key).trim();
+        if (f.kind === "yesno") {
+          customFields.push({ name: f.key, value: value === "1" ? "1" : "0" });
+        } else if (value) {
+          customFields.push({ name: f.key, value });
+        }
+      }
+    }
     const billingSame = form.billingSame !== false;
     setError(null);
     onSave(
@@ -294,6 +309,73 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
   function renderCell(f: IntakeField) {
     const key = f.key as keyof FormState;
     const value = displayValue(f);
+    /* Phase 3 — a field of a tenant-defined custom intake group. Values live
+       in the client's customFields by the group field key (NOT a form prop),
+       so binding goes through valueOf/setValue. */
+    if (f.kind === "customgroup") {
+      const gk = f.groupKey ?? f.key;
+      const gkValue = valueOf(gk);
+      if (f.groupKind === "yesno") {
+        const checked = gkValue === "1";
+        return (
+          <div className="field" key={f.key}>
+            <span className="field-label">{f.label}</span>
+            <div className="seg yesno-seg" role="radiogroup" aria-label={f.label}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                className={checked ? "seg-btn active" : "seg-btn"}
+                onClick={() => setValue(gk, "1")}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!checked}
+                className={!checked ? "seg-btn active" : "seg-btn"}
+                onClick={() => setValue(gk, "0")}
+              >
+                No
+              </button>
+            </div>
+          </div>
+        );
+      }
+      if (f.groupKind === "select") {
+        return (
+          <label className="field" key={f.key}>
+            <span className="field-label">{f.label}</span>
+            <select
+              value={gkValue}
+              onChange={(e) => setValue(gk, e.target.value)}
+              aria-label={f.label}
+            >
+              <option value="">—</option>
+              {(f.options ?? []).map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </label>
+        );
+      }
+      // text
+      return (
+        <label className="field" key={f.key}>
+          <span className="field-label">{f.label}</span>
+          <input
+            type="text"
+            value={gkValue}
+            onChange={(e) => setValue(gk, e.target.value)}
+            maxLength={500}
+            aria-label={f.label}
+          />
+        </label>
+      );
+    }
     if (f.kind === "yesno") {
       const checked = form[key] === true;
       return (
@@ -636,7 +718,7 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
 
   /** Grid-cell kinds render through renderCell; everything else (address,
    *  billing, LLC, services, custom, archived) renders as a full-width block. */
-  const CELL_KINDS = new Set(["text", "textarea", "yesno", "select", "datalist"]);
+  const CELL_KINDS = new Set(["text", "textarea", "yesno", "select", "datalist", "customgroup"]);
 
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit client" : "New client"}>
