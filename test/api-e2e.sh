@@ -2383,7 +2383,9 @@ if [ -n "$NEWEST_JS29" ] && [ -f "$NEWEST_JS29" ]; then
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 29a bundle surface check"
 fi
-echo "-- 29b. Chip counts = non-archived clients per stage (same numbers as the dashboard stage breakdown) =="
+echo "-- 29b. Chip counts = non-archived per NON-terminal stage (the terminal stage has no chip — sold clients live in the directory tab) =="
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/settings29b.json
 code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
 cp /tmp/body.json /tmp/clients29.json
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
@@ -2391,17 +2393,21 @@ cp /tmp/body.json /tmp/dash29.json
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 from collections import Counter
+st = json.load(open('/tmp/settings29b.json'))['settings']['stages']
+terminal = st[-1]
 clients = json.load(open('/tmp/clients29.json'))['clients']
 dash = json.load(open('/tmp/dash29.json'))
-counts = Counter(c['stage'] for c in clients if not c['archived'])
-for s, n in dash['stageCounts'].items():
-    assert counts.get(s, 0) == n, (s, counts.get(s, 0), n)
-print("  ✓ non-archived per-stage counts from the loaded client list == dashboard stageCounts for every stage")
+counts = Counter(c['stage'] for c in clients if not c['archived'] and c['stage'] != terminal)
+chips = [s for s in st if s != terminal]
+assert terminal not in chips, chips
+for s in chips:
+    assert counts.get(s, 0) == dash['stageCounts'].get(s, 0), (s, counts.get(s, 0), dash['stageCounts'].get(s, 0))
+print(f"  ✓ non-archived per-stage counts (terminal stage \"{terminal}\" excluded from the chip set) match the dashboard breakdown for every pipeline stage")
 PY
 then
-  PASS=$((PASS+1)); echo "  ✓ chip counts match the stage breakdown (non-archived per stage)"
+  PASS=$((PASS+1)); echo "  ✓ chip counts match the stage breakdown (non-archived, non-terminal stages only)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ chip counts disagree with the dashboard stage breakdown"; cat "$PASS_TMP"
+  FAIL=$((FAIL+1)); echo "  ✗ chip counts disagree with the stage breakdown"; cat "$PASS_TMP"
 fi
 echo "-- 29c. Renamed stage keeps filtering (chips are driven by the org's CURRENT stages) =="
 code -b "$JAR" "$BASE/api/settings" > /dev/null
@@ -2448,6 +2454,272 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ renamed-stage check failed"; cat "$PASS_TMP"
 fi
 
+
+echo "== 30. Leads/Clients split by terminal stage (owner request 2026-08-14) =="
+# GLOBAL: the pipeline tab shows every lead EXCEPT the account's terminal
+# stage (the LAST entry of the ordered stages — positional, renamed-safe);
+# the directory tab shows ONLY terminal-stage (sold) clients. All checks
+# mirror the client-side split exactly (pipeline: stage != terminal;
+# directory: stage == terminal) against the same per-org API data the tabs
+# render, so a regression in either tab's filter is caught here.
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/s30-settings.json
+TERM30=$(python3 -c "import json; st=json.load(open('/tmp/s30-settings.json'))['settings']['stages']; print(st[-1])")
+echo "    (owner terminal stage = \"$TERM30\")"
+
+echo "-- 30a. Pipeline excludes the terminal stage; directory holds exactly the terminal-stage clients; chip set has no terminal chip =="
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+cp /tmp/body.json /tmp/s30a-clients.json
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+cp /tmp/body.json /tmp/s30a-dash.json
+if TERM30="$TERM30" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+from collections import Counter
+st = json.load(open('/tmp/s30-settings.json'))['settings']['stages']
+terminal = os.environ['TERM30']
+assert terminal == st[-1], (terminal, st)
+clients = json.load(open('/tmp/s30a-clients.json'))['clients']
+dash = json.load(open('/tmp/s30a-dash.json'))
+pipeline = [c for c in clients if c['stage'] != terminal]
+directory = [c for c in clients if c['stage'] == terminal]
+# (d) directory only ever contains terminal-stage clients; pipeline never does
+assert all(c['stage'] == terminal for c in directory), "directory contains a non-terminal client"
+assert all(c['stage'] != terminal for c in pipeline), "pipeline contains a terminal-stage client"
+# (b) no chip for the terminal stage; chip counts = non-archived per non-terminal stage
+chips = [s for s in st if s != terminal]
+assert terminal not in chips, chips
+counts = Counter(c['stage'] for c in clients if not c['archived'] and c['stage'] != terminal)
+for s in chips:
+    assert counts.get(s, 0) == dash['stageCounts'].get(s, 0), (s, counts.get(s, 0), dash['stageCounts'].get(s, 0))
+print(f"  ✓ terminal \"{terminal}\": pipeline = {len(pipeline)} non-terminal client(s), directory = {len(directory)} sold client(s), chip set {chips}, no terminal chip")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30a: owner pipeline/directory split + chip exclusion consistent with the API data"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30a: split inconsistency"; cat "$PASS_TMP"
+fi
+
+echo "-- 30b. GLOBAL: a tenant org's tabs split the same way (terminal = its last stage) =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Terminal Tenant Co","email":"terminal-tenant@example.com","password":"terminaltenant123"}' "$BASE/api/admin/orgs")
+check "30b: admin provisions tenant org → 201" 201 "$S"
+JART30=$(mktemp)
+S=$(code -c "$JART30" -b "$JART30" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"terminal-tenant@example.com","password":"terminaltenant123"}' "$BASE/api/auth/login")
+check "30b: tenant login → 200" 200 "$S"
+code -b "$JART30" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/s30b-settings.json
+TT_FIRST=$(python3 -c "import json; st=json.load(open('/tmp/s30b-settings.json'))['settings']['stages']; print(st[0])")
+TT_TERM=$(python3 -c "import json; st=json.load(open('/tmp/s30b-settings.json'))['settings']['stages']; print(st[-1])")
+if [ "$TT_FIRST" != "$TT_TERM" ] && [ -n "$TT_FIRST" ] && [ -n "$TT_TERM" ]; then
+  PASS=$((PASS+1)); echo "  ✓ 30b: tenant stages \"$TT_FIRST … $TT_TERM\" (terminal = \"$TT_TERM\")"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30b: tenant stages missing: $(cat /tmp/s30b-settings.json)"
+fi
+S=$(code -b "$JART30" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Tenant Prospect Two\",\"clientType\":\"residential\",\"dealValue\":700,\"stage\":\"$TT_FIRST\"}" "$BASE/api/clients")
+check "30b: tenant creates client in first stage → 201" 201 "$S"
+TT_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+code -b "$JART30" "$BASE/api/clients?archived=1" > /dev/null
+if TT_ID="$TT_ID" TT_TERM="$TT_TERM" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['TT_ID'])][0]
+assert me['stage'] != os.environ['TT_TERM'], me['stage']
+print(f"  ✓ tenant prospect in the pipeline (stage \"{me['stage']}\", not the terminal \"{os.environ['TT_TERM']}\")")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30b: tenant prospect appears in the pipeline tab"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30b: tenant prospect not in pipeline"; cat "$PASS_TMP"
+fi
+S=$(code -b "$JART30" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Tenant Prospect Two\",\"clientType\":\"residential\",\"dealValue\":700,\"stage\":\"$TT_TERM\"}" "$BASE/api/clients/$TT_ID")
+check "30b: tenant moves client into its terminal stage → 200" 200 "$S"
+grep -q "\"stage\":\"$TT_TERM\"" /tmp/body.json && echo "  ✓ 30b: tenant client now in terminal stage" || echo "  ✗ 30b: stage after PUT: $(cat /tmp/body.json)"
+code -b "$JART30" "$BASE/api/clients?archived=1" > /dev/null
+if TT_ID="$TT_ID" TT_TERM="$TT_TERM" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['TT_ID'])][0]
+assert me['stage'] == os.environ['TT_TERM'], me['stage']
+directory = [c for c in clients if c['stage'] == os.environ['TT_TERM']]
+assert all(c['stage'] == os.environ['TT_TERM'] for c in directory), "directory has a non-terminal client"
+pipeline = [c for c in clients if c['stage'] != os.environ['TT_TERM']]
+assert me not in pipeline, "sold client still in pipeline"
+print(f"  ✓ tenant directory holds exactly the {len(directory)} terminal-stage client(s); sold client left the pipeline")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30b: tenant terminal move moved pipeline → directory (terminal split is GLOBAL)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30b: tenant terminal move failed"; cat "$PASS_TMP"
+fi
+
+echo "-- 30c. Owner: moving a lead into the terminal stage leaves the pipeline, joins the directory, and still auto-provisions the workspace (3g-3) =="
+BEFORE30C=$(ORG_COUNT)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Terminal Split Co","contactName":"Taylor Split","email":"split@example.com","industry":"Cleaning","clientType":"commercial","dealValue":9000,"stage":"Pipeline Leads"}' "$BASE/api/clients")
+check "30c: owner creates lead in the first stage → 201" 201 "$S"
+TSC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+if TSC_ID="$TSC_ID" TERM30="$TERM30" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['TSC_ID'])][0]
+assert me['stage'] != os.environ['TERM30'], me['stage']
+print(f"  ✓ new lead in the pipeline (stage \"{me['stage']}\")")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30c: new owner lead appears in the pipeline"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30c: new lead not in pipeline"; cat "$PASS_TMP"
+fi
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Terminal Split Co\",\"contactName\":\"Taylor Split\",\"email\":\"split@example.com\",\"industry\":\"Cleaning\",\"clientType\":\"commercial\",\"dealValue\":9000,\"stage\":\"$TERM30\"}" "$BASE/api/clients/$TSC_ID")
+check "30c: owner moves lead into the terminal stage → 200" 200 "$S"
+grep -q "\"stage\":\"$TERM30\"" /tmp/body.json && echo "  ✓ 30c: client now in the terminal stage" || echo "  ✗ 30c: stage after PUT: $(cat /tmp/body.json)"
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+if TSC_ID="$TSC_ID" TERM30="$TERM30" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['TSC_ID'])][0]
+assert me['stage'] == os.environ['TERM30'], me['stage']
+pipeline = [c for c in clients if c['stage'] != os.environ['TERM30']]
+assert all(c['id'] != int(os.environ['TSC_ID']) for c in pipeline), "sold client still in pipeline"
+directory = [c for c in clients if c['stage'] == os.environ['TERM30']]
+assert any(c['id'] == int(os.environ['TSC_ID']) for c in directory), "sold client missing from directory"
+print("  ✓ sold lead left the pipeline and joined the directory")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30c: moving a lead into the terminal stage removes it from the pipeline and adds it to the directory"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30c: pipeline→directory move failed"; cat "$PASS_TMP"
+fi
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "30c: admin orgs list → 200" 200 "$S"
+AFTER30C=$(ORG_COUNT)
+[ "$AFTER30C" -eq $((BEFORE30C + 1)) ] && echo "  ✓ 30c: exactly one new workspace auto-provisioned (${BEFORE30C} → ${AFTER30C})" || echo "  ✗ 30c: org count ${BEFORE30C} → ${AFTER30C} (expected +1)"
+if TSC_ID="$TSC_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == int(os.environ['TSC_ID'])]
+assert len(prov) == 1, [o['name'] for o in d['orgs']]
+o = prov[0]
+assert o['provisionedFromClientName'] == 'Terminal Split Co', o
+assert o['name'] == 'Terminal Split Co', o
+print("  ✓ 3g-3 hook intact: sold lead provisioned a workspace (provisionedFromClient set, listed in the Admin org list)")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30c: 3g-3 auto-provision still fires when a pipeline lead moves into the terminal stage"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30c: 3g-3 provision missing"; cat "$PASS_TMP"
+fi
+PROV_ORG30C=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $TSC_ID][0])")
+
+echo "-- 30d. A RENAMED terminal stage still behaves as terminal (positional — never hardcoded) =="
+NEW_STAGES30=$(python3 -c "
+import json
+st = json.load(open('/tmp/s30-settings.json'))['settings']['stages']
+st[-1] = 'Closed Won'
+print(json.dumps(st))
+")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"stages\":$NEW_STAGES30}" "$BASE/api/settings")
+check "30d: rename terminal \"$TERM30\" → \"Closed Won\" → 200" 200 "$S"
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/s30d-settings.json
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+cp /tmp/body.json /tmp/s30d-clients.json
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+cp /tmp/body.json /tmp/s30d-dash.json
+if TSC_ID="$TSC_ID" TERM30="$TERM30" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+from collections import Counter
+st = json.load(open('/tmp/s30d-settings.json'))['settings']['stages']
+assert st[-1] == 'Closed Won', st
+clients = json.load(open('/tmp/s30d-clients.json'))['clients']
+# positional rename: no client may remain in the old terminal name
+assert not [c for c in clients if c['stage'] == os.environ['TERM30']], "clients still in old terminal stage"
+terminal = st[-1]  # "Closed Won"
+pipeline = [c for c in clients if c['stage'] != terminal]
+directory = [c for c in clients if c['stage'] == terminal]
+me = [c for c in clients if c['id'] == int(os.environ['TSC_ID'])][0]
+assert me['stage'] == terminal, me['stage']
+assert all(c['stage'] == terminal for c in directory), "directory has a non-terminal client"
+chips = [s for s in st if s != terminal]
+assert terminal not in chips, chips
+dash = json.load(open('/tmp/s30d-dash.json'))
+counts = Counter(c['stage'] for c in clients if not c['archived'] and c['stage'] != terminal)
+for s in chips:
+    assert counts.get(s, 0) == dash['stageCounts'].get(s, 0), (s, counts.get(s, 0), dash['stageCounts'].get(s, 0))
+print(f"  ✓ renamed terminal \"{terminal}\": pipeline {len(pipeline)} non-terminal client(s), directory {len(directory)} sold client(s), no chip for \"{terminal}\", zero clients left in \"{os.environ['TERM30']}\"")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30d: renamed terminal stage still excluded from the pipeline and shown in the directory"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30d: renamed terminal misbehaves"; cat "$PASS_TMP"
+fi
+
+echo "-- 30e. Moving a lead into the RENAMED terminal stage still auto-provisions (3g-3 is positional) =="
+BEFORE30E=$(ORG_COUNT)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Provision After Rename Co","contactName":"Riley Prov","email":"riley@prov.example","industry":"Cleaning","clientType":"commercial","dealValue":4500,"stage":"Pipeline Leads"}' "$BASE/api/clients")
+check "30e: owner creates second lead → 201" 201 "$S"
+PAR_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Provision After Rename Co","contactName":"Riley Prov","email":"riley@prov.example","industry":"Cleaning","clientType":"commercial","dealValue":4500,"stage":"Closed Won"}' "$BASE/api/clients/$PAR_ID")
+check "30e: move lead into the renamed terminal stage → 200" 200 "$S"
+grep -q '"stage":"Closed Won"' /tmp/body.json && echo "  ✓ 30e: client now in \"Closed Won\"" || echo "  ✗ 30e: stage: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "30e: admin orgs list → 200" 200 "$S"
+AFTER30E=$(ORG_COUNT)
+[ "$AFTER30E" -eq $((BEFORE30E + 1)) ] && echo "  ✓ 30e: exactly one new workspace auto-provisioned (${BEFORE30E} → ${AFTER30E})" || echo "  ✗ 30e: org count ${BEFORE30E} → ${AFTER30E} (expected +1)"
+if PAR_ID="$PAR_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == int(os.environ['PAR_ID'])]
+assert len(prov) == 1, [o['name'] for o in d['orgs']]
+assert prov[0]['provisionedFromClientName'] == 'Provision After Rename Co', prov[0]
+print("  ✓ provisioned workspace for the renamed terminal stage listed in the Admin org list (provisionedFromClient set)")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 30e: 3g-3 fires into the RENAMED terminal stage (positional final-stage detection)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 30e: provision into renamed terminal missing"; cat "$PASS_TMP"
+fi
+PROV_ORG30E=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $PAR_ID][0])")
+
+echo "-- 30f. UI surface strings in the built bundle (terminal-split wording) =="
+NEWEST_JS30=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS30" ] && [ -f "$NEWEST_JS30" ]; then
+  if grep -q "No sold clients yet" "$NEWEST_JS30" && grep -q "sold customers" "$NEWEST_JS30"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the sold-customer directory wording (\"No sold clients yet\" + \"sold customers\")"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ terminal-split strings missing from $NEWEST_JS30"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 30f bundle surface check"
+fi
+
+echo "-- 30g. Cleanup =="
+for OID in $PROV_ORG30C $PROV_ORG30E; do
+  code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$OID" > /dev/null
+done
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+T30_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o['name'] == 'Terminal Tenant Co'][0])")
+check "30g: admin deletes Terminal Tenant Co org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$T30_ORG_ID")
+for CID in $TSC_ID $PAR_ID; do
+  code -b "$JAR" -X DELETE "$BASE/api/clients/$CID" > /dev/null
+done
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Leads","Intakes","Sold"]}' "$BASE/api/settings")
+check "30g: owner stages restored to Leads → Intakes → Sold → 200" 200 "$S"
+code -b "$JAR" "$BASE/api/admin/provisions" > /dev/null
+for PID30 in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(' '.join(str(p['id']) for p in d['provisions']))"); do
+  code -b "$JAR" -X POST "$BASE/api/admin/provisions/$PID30/dismiss" > /dev/null
+done
+rm -f "$JART30" /tmp/s30-settings.json /tmp/s30a-clients.json /tmp/s30a-dash.json /tmp/s30b-settings.json /tmp/s30d-settings.json /tmp/s30d-clients.json /tmp/s30d-dash.json
+echo "  ✓ 30g: provisioned orgs, tenant org and test clients removed; owner stages restored"
 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"

@@ -8,7 +8,9 @@ import ConfirmDeleteModal from "./ConfirmDeleteModal";
 
 interface Props {
   /** The tenant's ordered pipeline stages — needed by the shared client
-   *  record modal (a new record lands in the first stage). */
+   *  record modal. The directory's terminal (last) stage defines its set:
+   *  only sold clients live here. Refreshed from /api/settings on load so a
+   *  stage rename made in Settings applies to this tab immediately. */
   stages: Stage[];
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
    *  owner calls its pipeline records "leads", so the pipeline tab reads
@@ -19,16 +21,22 @@ interface Props {
   ownerOrg?: boolean;
 }
 
-/** The independent client directory (owner request 2026-08-14): every client
- *  in the org regardless of pipeline stage — sold, archived, all of them, at
- *  a glance with an Archived badge where applicable. No stage filtering and
- *  no Active/Archived segmentation: the whole book is shown, sorted
- *  alphabetically, with the rich client-record modal (edit/create), archive/
- *  unarchive and delete. Reads the same /api/clients (per-org scoped) as the
- *  Leads pipeline tab — filtering happens client-side. */
+/** The sold-customer directory (owner request 2026-08-14): every client in
+ *  the account's TERMINAL pipeline stage (the last entry of the ordered
+ *  stages — renamed-safe, never hardcoded "Sold") — the sold customers — with
+ *  an Archived badge where applicable. No stage filtering and no
+ *  Active/Archived segmentation: the sold set is shown, sorted
+ *  alphabetically, with the rich client-record modal (edit/create — a new
+ *  record lands in the terminal stage), archive/unarchive and delete. Reads
+ *  the same /api/clients (per-org scoped) as the Leads pipeline tab —
+ *  filtering happens client-side. */
 export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
+  /* Local copy of the tenant's stages, refreshed from the settings endpoint
+     so a stage rename/reorder in Settings applies to the terminal-stage
+     membership of this tab immediately. */
+  const [orgStages, setOrgStages] = useState<Stage[]>(stages);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
      drives which sections the client form shows. Loaded with settings. */
   const [intake, setIntake] = useState<IntakeOrgSettings>({
@@ -45,14 +53,14 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
   const [busy, setBusy] = useState(false);
 
   /** Loads the FULL client list (active AND archived) plus org settings —
-   *  the directory shows every client, so unlike the pipeline tab there is no
-   *  client-side archive filter at all. */
+   *  the directory filters it to the terminal stage client-side. */
   const load = useCallback(async () => {
     setError(null);
     try {
       const [{ clients }, { settings }] = await Promise.all([api.clients(true), api.settings()]);
       setClients(clients);
       setCustomFieldDefs(settings.customFields);
+      setOrgStages(settings.stages);
       setIntake({
         industry: settings.industry,
         serviceModel: settings.serviceModel,
@@ -69,14 +77,19 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
     load();
   }, [load]);
 
-  /** Every client in the book, filtered by the search box only — archived
-   *  rows stay visible (with their badge) rather than being segmented away.
-   *  A directory sorts alphabetically by name. */
+  /* Terminal stage = LAST entry of the org's ordered stages (positional —
+     renamed-safe). Only clients in this stage are shown. */
+  const terminalStage = orgStages.length > 0 ? orgStages[orgStages.length - 1] : "";
+
+  /** Only terminal-stage (sold) clients, filtered by the search box —
+   *  archived rows stay visible (with their badge) rather than being
+   *  segmented away. A directory sorts alphabetically by name. */
   const visible = useMemo(() => {
     if (!clients) return [];
     const q = query.trim().toLowerCase();
+    const sold = clients.filter((c) => c.stage === terminalStage);
     const rows = q
-      ? clients.filter((c) =>
+      ? sold.filter((c) =>
           [
             c.companyName,
             c.contactName,
@@ -94,9 +107,9 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
             .toLowerCase()
             .includes(q),
         )
-      : clients;
+      : sold;
     return [...rows].sort((a, b) => a.companyName.localeCompare(b.companyName, undefined, { sensitivity: "base" }));
-  }, [clients, query]);
+  }, [clients, query, terminalStage]);
 
   async function handleSave(input: ClientInput, editing?: Client) {
     setBusy(true);
@@ -149,8 +162,11 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
     );
   }
 
-  const archived = clients.filter((c) => c.archived).length;
-  const bookValue = clients.reduce((sum, c) => sum + (c.dealValue || 0), 0);
+  /* The sold set (terminal-stage clients) — drives the header counts, the
+     empty state and the "+ New client" default stage. */
+  const sold = clients.filter((c) => c.stage === terminalStage);
+  const archived = sold.filter((c) => c.archived).length;
+  const bookValue = sold.reduce((sum, c) => sum + (c.dealValue || 0), 0);
 
   return (
     <div className="page">
@@ -158,11 +174,14 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
         <div>
           <h1>{ownerOrg ? "Clients" : "All clients"}</h1>
           <p className="page-sub">
-            {clients.length} clients · {archived} archived · book value{" "}
+            {sold.length} {sold.length === 1 ? "client" : "clients"} · {archived} archived · book value{" "}
             <strong>{money(bookValue)}</strong>
           </p>
         </div>
         <div className="page-actions">
+          {/* A new record added from the sold-customer directory is created
+              pre-set to the terminal stage — the natural meaning of adding to
+              a sold/customers list. */}
           <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
             + New client
           </button>
@@ -188,13 +207,13 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
 
       {visible.length === 0 ? (
         <div className="card empty">
-          <p className="empty-title">{clients.length === 0 ? "No clients yet" : "Nothing matches"}</p>
+          <p className="empty-title">{sold.length === 0 ? "No sold clients yet" : "Nothing matches"}</p>
           <p className="empty-sub">
-            {clients.length === 0
-              ? "Add your first client and it shows up here — every client in the book, in every stage, at a glance."
-              : "Try a different search — every client in the book is listed here."}
+            {sold.length === 0
+              ? "Move a client into your final pipeline stage and it shows up here — this directory holds your sold customers."
+              : "Try a different search — sold clients are listed here."}
           </p>
-          {clients.length === 0 && (
+          {sold.length === 0 && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               + New client
             </button>
@@ -288,7 +307,8 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
       {modal && (
         <ClientModal
           client={modal.mode === "edit" ? modal.client : undefined}
-          stages={stages}
+          stages={orgStages}
+          defaultStage={terminalStage}
           customFieldDefs={customFieldDefs}
           intake={intake}
           busy={busy}
