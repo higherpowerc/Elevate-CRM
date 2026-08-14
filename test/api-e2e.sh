@@ -50,12 +50,12 @@ grep -q '"projectedPipeline":0' /tmp/body.json && echo "  ✓ projectedPipeline 
 
 echo "== 4. Create clients =="
 check "create Acme → 201" 201 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Acme Legal LLP","contactName":"Jordan Lee","email":"jordan@acme.example","phone":"+1 555 0100","industry":"Legal","clientType":"commercial","address":"2200 Market St","city":"San Francisco","state":"CA","zip":"94114","website":"acmelegal.example","leadSource":"Referral","services":["Premium Website","SEO"],"dealValue":12500,"stage":"Prospect","nextAction":"Send proposal","notes":"Referred by owner"}' \
+  -d '{"companyName":"Acme Legal LLP","contactName":"Jordan Lee","email":"jordan@acme.example","phone":"+1 555 0100","industry":"Legal","clientType":"commercial","address":"2200 Market St","city":"San Francisco","state":"CA","zip":"94114","website":"acmelegal.example","leadSource":"Referral","services":["Premium Website","SEO"],"dealValue":12500,"stage":"Leads","nextAction":"Send proposal","notes":"Referred by owner"}' \
   "$BASE/api/clients")
 ACME_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 echo "    (created client id=$ACME_ID)"
 check "create Northline → 201" 201 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Northline Coffee","contactName":"Sam Rivera","email":"sam@northline.example","industry":"Hospitality","clientType":"residential","services":["Paid Campaigns","Analytics"],"dealValue":5400,"stage":"Intake","nextAction":"Collect access","notes":""}' \
+  -d '{"companyName":"Northline Coffee","contactName":"Sam Rivera","email":"sam@northline.example","industry":"Hospitality","clientType":"residential","services":["Paid Campaigns","Analytics"],"dealValue":5400,"stage":"Leads","nextAction":"Collect access","notes":""}' \
   "$BASE/api/clients")
 NL_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 echo "    (created client id=$NL_ID)"
@@ -77,22 +77,22 @@ grep -q 'Acme Legal LLP' /tmp/body.json && grep -qv 'Northline' /tmp/body.json &
 
 echo "== 6. Update stage / fields =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Acme Legal LLP","contactName":"Jordan Lee","email":"jordan@acme.example","phone":"+1 555 0100","industry":"Legal","clientType":"commercial","address":"2200 Market St","city":"San Francisco","state":"CA","zip":"94114","website":"acmelegal.example","leadSource":"Referral","services":["Premium Website","SEO","Paid Campaigns"],"dealValue":15000,"stage":"Kickoff","nextAction":"Kickoff call Thursday","notes":"Added paid campaigns"}' \
+  -d '{"companyName":"Acme Legal LLP","contactName":"Jordan Lee","email":"jordan@acme.example","phone":"+1 555 0100","industry":"Legal","clientType":"commercial","address":"2200 Market St","city":"San Francisco","state":"CA","zip":"94114","website":"acmelegal.example","leadSource":"Referral","services":["Premium Website","SEO","Paid Campaigns"],"dealValue":15000,"stage":"Intakes","nextAction":"Kickoff call Thursday","notes":"Added paid campaigns"}' \
   "$BASE/api/clients/$ACME_ID")
 check "update Acme → 200" 200 "$S"
-grep -q '"stage":"Kickoff"' /tmp/body.json && grep -q '"dealValue":15000' /tmp/body.json && echo "  ✓ stage moved to Kickoff, deal 15000" || echo "  ✗ update failed: $(cat /tmp/body.json)"
+grep -q '"stage":"Intakes"' /tmp/body.json && grep -q '"dealValue":15000' /tmp/body.json && echo "  ✓ stage moved to Intakes, deal 15000" || echo "  ✗ update failed: $(cat /tmp/body.json)"
 
 echo "== 7. Dashboard counts + projected pipeline =="
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 check "dashboard → 200" 200 "$S"
-grep -q '"Prospect":0' /tmp/body.json && echo "  ✓ Prospect=0" || echo "  ✗ Prospect count: $(cat /tmp/body.json)"
-grep -q '"Kickoff":1' /tmp/body.json && echo "  ✓ Kickoff=1" || echo "  ✗ Kickoff count: $(cat /tmp/body.json)"
-grep -q '"Intake":1' /tmp/body.json && echo "  ✓ Intake=1" || echo "  ✗ Intake count: $(cat /tmp/body.json)"
+grep -q '"Sold":0' /tmp/body.json && echo "  ✓ Sold=0" || echo "  ✗ Sold count: $(cat /tmp/body.json)"
+grep -q '"Intakes":1' /tmp/body.json && echo "  ✓ Intakes=1" || echo "  ✗ Intakes count: $(cat /tmp/body.json)"
+grep -q '"Leads":1' /tmp/body.json && echo "  ✓ Leads=1" || echo "  ✗ Leads count: $(cat /tmp/body.json)"
 grep -q '"projectedPipeline":20400' /tmp/body.json && echo "  ✓ projectedPipeline = 20400 (15000+5400, labeled projected not revenue)" || echo "  ✗ pipeline: $(cat /tmp/body.json)"
 
 echo "== 8. Archive affects dashboard only =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Northline Coffee","contactName":"Sam Rivera","email":"sam@northline.example","industry":"Hospitality","clientType":"residential","services":["Paid Campaigns","Analytics"],"dealValue":5400,"stage":"Intake","nextAction":"","notes":"","archived":true}' \
+  -d '{"companyName":"Northline Coffee","contactName":"Sam Rivera","email":"sam@northline.example","industry":"Hospitality","clientType":"residential","services":["Paid Campaigns","Analytics"],"dealValue":5400,"stage":"Leads","nextAction":"","notes":"","archived":true}' \
   "$BASE/api/clients/$NL_ID")
 check "archive Northline → 200" 200 "$S"
 grep -q '"archived":true' /tmp/body.json && echo "  ✓ archived=true" || echo "  ✗ archive failed: $(cat /tmp/body.json)"
@@ -114,7 +114,7 @@ grep -qv 'Acme Legal' /tmp/body.json && echo "  ✓ Acme gone from list" || echo
 
 echo "== 9a. Phase 3e — rich client records (client type + address block) =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Metro Plaza LLC","contactName":"Ava Stone","email":"ava@metroplaza.example","phone":"+1 555 0142","industry":"Real Estate","clientType":"commercial","address":"1230 Market St","city":"San Francisco","state":"CA","zip":"94103","website":"metroplaza.example","leadSource":"Referral","services":["Property Mgmt"],"dealValue":22000,"stage":"Prospect","nextAction":"Site walkthrough","notes":"Phase 3e demo"}' \
+  -d '{"companyName":"Metro Plaza LLC","contactName":"Ava Stone","email":"ava@metroplaza.example","phone":"+1 555 0142","industry":"Real Estate","clientType":"commercial","address":"1230 Market St","city":"San Francisco","state":"CA","zip":"94103","website":"metroplaza.example","leadSource":"Referral","services":["Property Mgmt"],"dealValue":22000,"stage":"Leads","nextAction":"Site walkthrough","notes":"Phase 3e demo"}' \
   "$BASE/api/clients")
 check "create commercial client with full address → 201" 201 "$S"
 MP_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -139,7 +139,7 @@ check "create with invalid website → 400" 400 $(code -b "$JAR" -X POST -H 'Con
 
 echo "-- 9c. Edit changes type without losing data =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Metro Plaza LLC","contactName":"Ava Stone","email":"ava@metroplaza.example","phone":"+1 555 0142","industry":"Real Estate","clientType":"residential","address":"1230 Market St","city":"San Francisco","state":"CA","zip":"94103","website":"metroplaza.example","leadSource":"Walk-in","services":["Property Mgmt"],"dealValue":22000,"stage":"Prospect","nextAction":"Site walkthrough","notes":"Phase 3e demo"}' \
+  -d '{"companyName":"Metro Plaza LLC","contactName":"Ava Stone","email":"ava@metroplaza.example","phone":"+1 555 0142","industry":"Real Estate","clientType":"residential","address":"1230 Market St","city":"San Francisco","state":"CA","zip":"94103","website":"metroplaza.example","leadSource":"Walk-in","services":["Property Mgmt"],"dealValue":22000,"stage":"Leads","nextAction":"Site walkthrough","notes":"Phase 3e demo"}' \
   "$BASE/api/clients/$MP_ID")
 check "edit changes clientType commercial→residential → 200" 200 "$S"
 grep -q '"clientType":"residential"' /tmp/body.json && grep -q '"dealValue":22000' /tmp/body.json && grep -q '"website":"metroplaza.example"' /tmp/body.json && grep -q '"leadSource":"Walk-in"' /tmp/body.json && grep -q '"address":"1230 Market St"' /tmp/body.json && echo "  ✓ type changed, address/website/deal preserved" || echo "  ✗ edit round-trip: $(cat /tmp/body.json)"
@@ -180,7 +180,7 @@ check "custom fields not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content
 
 echo "-- 10b. Client create with typed custom field values =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"+1 415 555 0131","industry":"HVAC","clientType":"residential","services":["Installation","Repair","Maintenance"],"dealValue":9500.50,"stage":"Prospect","nextAction":"Send quote","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Service area","value":"Greater Bay Area"},{"name":"Fleet size","value":"12"},{"name":"Contract start","value":"2026-09-01"},{"name":"Insured","value":true}]}' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"+1 415 555 0131","industry":"HVAC","clientType":"residential","services":["Installation","Repair","Maintenance"],"dealValue":9500.50,"stage":"Leads","nextAction":"Send quote","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Service area","value":"Greater Bay Area"},{"name":"Fleet size","value":"12"},{"name":"Contract start","value":"2026-09-01"},{"name":"Insured","value":true}]}' \
   "$BASE/api/clients")
 check "create HVAC client with all custom field types → 201" 201 "$S"
 HVAC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -213,7 +213,7 @@ check "custom fields not a list → 400" 400 $(code -b "$JAR" -X POST -H 'Conten
 
 echo "== 11. Custom field update round-trip =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","clientType":"residential","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Kickoff","nextAction":"","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}]}' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","clientType":"residential","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Intakes","nextAction":"","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}]}' \
   "$BASE/api/clients/$HVAC_ID")
 check "update HVAC → 200" 200 "$S"
 grep -q '"customFields":\[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}\]' /tmp/body.json && echo "  ✓ custom fields survive update (values round-trip)" || echo "  ✗ custom fields after update: $(cat /tmp/body.json)"
@@ -222,7 +222,7 @@ grep -q '"AC Tune-Up"' /tmp/body.json && echo "  ✓ updated free-form service" 
 
 echo "== 12. Landscaping demo client (defined fields only) =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","clientType":"commercial","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Build","nextAction":"Site visit","notes":"","customFields":[{"name":"Service area","value":"Greater Seattle"},{"name":"Fleet size","value":"6"}]}' \
+  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","clientType":"commercial","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Intakes","nextAction":"Site visit","notes":"","customFields":[{"name":"Service area","value":"Greater Seattle"},{"name":"Fleet size","value":"6"}]}' \
   "$BASE/api/clients")
 check "create landscaping client → 201" 201 "$S"
 LS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -301,7 +301,7 @@ check "update missing task → 404" 404 $(code -b "$JAR" -X PUT -H 'Content-Type
 
 # ON DELETE SET NULL: deleting a client keeps its tasks, unlinked.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Temp Co For Tasks","contactName":"T","clientType":"residential","industry":"Testing","dealValue":0,"stage":"Prospect"}' \
+  -d '{"companyName":"Temp Co For Tasks","contactName":"T","clientType":"residential","industry":"Testing","dealValue":0,"stage":"Leads"}' \
   "$BASE/api/clients")
 check "create temp client → 201" 201 "$S"
 TEMP=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -431,7 +431,7 @@ check "delete missing invoice → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api
 
 # ON DELETE SET NULL: deleting a client keeps its invoices, unlinked.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Temp Co For Invoices","contactName":"T","clientType":"residential","industry":"Testing","dealValue":0,"stage":"Prospect"}' \
+  -d '{"companyName":"Temp Co For Invoices","contactName":"T","clientType":"residential","industry":"Testing","dealValue":0,"stage":"Leads"}' \
   "$BASE/api/clients")
 check "create temp client → 201" 201 "$S"
 TEMP2=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -657,7 +657,7 @@ import json
 d = json.load(open('/tmp/body.json'))
 u = d['user']
 assert u['orgName'] == 'Elevate Studio', u.get('orgName')
-assert u['stages'] == ['Prospect','Intake','Kickoff','Build','Launch','Retainer'], u['stages']
+assert u['stages'] == ['Leads','Intakes','Sold'], u['stages']
 assert u['accentColor'] == '#d6ff3f', u.get('accentColor')
 print("  ✓ me returns orgName + default stages + accentColor")
 PY
@@ -672,7 +672,7 @@ echo "-- 17c. GET settings =="
 S=$(code -b "$JAR" "$BASE/api/settings")
 check "owner GET settings → 200" 200 "$S"
 grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ settings carries org name" || echo "  ✗ settings orgName: $(cat /tmp/body.json)"
-grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ settings returns default stages" || echo "  ✗ settings stages: $(cat /tmp/body.json)"
+grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ settings returns the owner 3-stage pipeline (Leads → Intakes → Sold)" || echo "  ✗ settings stages: $(cat /tmp/body.json)"
 grep -q '"accentColor":"#d6ff3f"' /tmp/body.json && echo "  ✓ settings returns default accent" || echo "  ✗ settings accent: $(cat /tmp/body.json)"
 
 echo "-- 17d. Settings validation =="
@@ -685,7 +685,7 @@ check "blank stage name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: a
 check "13 stages → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"stages":["A","B","C","D","E","F","G","H","I","J","K","L","M"]}' "$BASE/api/settings")
 check "stages not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":"Prospect"}' "$BASE/api/settings")
+  -d '{"stages":"Leads"}' "$BASE/api/settings")
 check "bad accent → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"accentColor":"lime"}' "$BASE/api/settings")
 check "blank org name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
@@ -693,9 +693,9 @@ check "blank org name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: app
 
 echo "-- 17e. Rename a stage migrates its clients =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
-check "rename Kickoff→Proposal → 200" 200 "$S"
-grep -q '"stages":\["Prospect","Intake","Proposal"' /tmp/body.json && echo "  ✓ new stage list returned" || echo "  ✗ response: $(cat /tmp/body.json)"
+  -d '{"stages":["Leads","Proposal","Sold"]}' "$BASE/api/settings")
+check "rename Intakes→Proposal → 200" 200 "$S"
+grep -q '"stages":\["Leads","Proposal","Sold"\]' /tmp/body.json && echo "  ✓ new stage list returned" || echo "  ✗ response: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/clients/$HVAC_ID")
 check "get HVAC client → 200" 200 "$S"
 grep -q '"stage":"Proposal"' /tmp/body.json && echo "  ✓ client in renamed stage migrated to Proposal" || echo "  ✗ client stage after rename: $(cat /tmp/body.json)"
@@ -705,32 +705,32 @@ python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
 sc = d['stageCounts']
-assert sc.get('Proposal') == 1, sc
-assert sc.get('Kickoff', 0) == 0, sc
-print("  ✓ dashboard counts follow the rename (Proposal=1, Kickoff=0)")
+assert sc.get('Proposal') == 2, sc
+assert sc.get('Intakes', 0) == 0, sc
+print("  ✓ dashboard counts follow the rename (Proposal=2, Intakes=0)")
 PY
 
 echo "-- 17f. Add / remove stages =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer","Won"]}' "$BASE/api/settings")
+  -d '{"stages":["Leads","Proposal","Sold","Won"]}' "$BASE/api/settings")
 check "add stage Won → 200" 200 "$S"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+  -d '{"stages":["Leads","Proposal","Sold"]}' "$BASE/api/settings")
 check "remove empty stage Won → 200" 200 "$S"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer","Won"]}' "$BASE/api/settings")
+  -d '{"stages":["Leads","Proposal","Sold","Won"]}' "$BASE/api/settings")
 check "re-add Won → 200" 200 "$S"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Won Co","clientType":"residential","stage":"Won"}' "$BASE/api/clients")
 check "create client in Won → 201" 201 "$S"
 WON_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+  -d '{"stages":["Leads","Proposal","Sold"]}' "$BASE/api/settings")
 check "remove Won with client → 400" 400 "$S"
 grep -q 'move or archive' /tmp/body.json && echo "  ✓ block message says move or archive (with count)" || echo "  ✗ block message: $(cat /tmp/body.json)"
 check "delete Won Co → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/clients/$WON_ID")
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+  -d '{"stages":["Leads","Proposal","Sold"]}' "$BASE/api/settings")
 check "remove Won after clearing clients → 200" 200 "$S"
 
 echo "-- 17g. Org comes from the session, never the body =="
@@ -763,7 +763,7 @@ python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
 st = d['settings']['stages']
-assert 'Lead' not in st and st[2] == 'Proposal', st
+assert 'Lead' not in st and st[1] == 'Proposal', st  # owner pipeline is 3 stages: [Leads, Proposal, Sold]
 print("  ✓ owner stages unaffected by tenant B's rename (isolation)")
 PY
 
@@ -945,19 +945,19 @@ echo "== 20. Archived clients round-trip (Clients tab visibility fix) =="
 # relies on: default GET excludes archived, ?archived=1 includes them, and a
 # PUT archived=false restores a client to the default list.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Prospect"}' \
+  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Leads"}' \
   "$BASE/api/clients")
 check "create round-trip client → 201" 201 "$S"
 RT_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 echo "    (created client id=$RT_ID)"
 grep -q '"archived":false' /tmp/body.json && echo "  ✓ new client starts active" || echo "  ✗ new client archived flag: $(cat /tmp/body.json)"
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
-P0=$(python3 -c "import json;d=json.load(open('/tmp/body.json'));print(d['stageCounts'].get('Prospect',0))")
+P0=$(python3 -c "import json;d=json.load(open('/tmp/body.json'));print(d['stageCounts'].get('Leads',0))")
 V0=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['projectedPipeline'])")
 A0=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['archivedClients'])")
-echo "    (before archive: Prospect=$P0 pipeline=$V0 archivedClients=$A0)"
+echo "    (before archive: Leads=$P0 pipeline=$V0 archivedClients=$A0)"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Prospect","archived":true}' \
+  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Leads","archived":true}' \
   "$BASE/api/clients/$RT_ID")
 check "PUT archived=true → 200" 200 "$S"
 grep -q '"archived":true' /tmp/body.json && echo "  ✓ response archived=true" || echo "  ✗ archive failed: $(cat /tmp/body.json)"
@@ -968,11 +968,11 @@ S=$(code -b "$JAR" "$BASE/api/clients?archived=1")
 check "archived=1 list → 200" 200 "$S"
 grep -q 'Archive Round Trip Co' /tmp/body.json && echo "  ✓ archived present in ?archived=1" || echo "  ✗ archived missing from ?archived=1"
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
-grep -q "\"Prospect\":$((P0-1))" /tmp/body.json && echo "  ✓ stageCounts Prospect=$((P0-1)) (archived excluded from stage counts)" || echo "  ✗ stageCounts after archive: $(cat /tmp/body.json)"
+grep -q "\"Leads\":$((P0-1))" /tmp/body.json && echo "  ✓ stageCounts Leads=$((P0-1)) (archived excluded from stage counts)" || echo "  ✗ stageCounts after archive: $(cat /tmp/body.json)"
 python3 -c "import json,sys;sys.exit(0 if abs(json.load(open('/tmp/body.json'))['projectedPipeline']-($V0-7777))<0.01 else 1)" && echo "  ✓ projectedPipeline excludes the archived 7777 deal" || echo "  ✗ pipeline after archive: $(cat /tmp/body.json)"
 grep -q "\"archivedClients\":$((A0+1))" /tmp/body.json && echo "  ✓ archivedClients=$((A0+1)) (incremented)" || echo "  ✗ archivedClients after archive: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Prospect","archived":false}' \
+  -d '{"companyName":"Archive Round Trip Co","contactName":"Pat Doe","clientType":"residential","dealValue":7777,"stage":"Leads","archived":false}' \
   "$BASE/api/clients/$RT_ID")
 check "PUT archived=false (restore) → 200" 200 "$S"
 grep -q '"archived":false' /tmp/body.json && echo "  ✓ response archived=false (restored)" || echo "  ✗ restore failed: $(cat /tmp/body.json)"
@@ -980,7 +980,7 @@ S=$(code -b "$JAR" "$BASE/api/clients")
 check "default list after restore → 200" 200 "$S"
 grep -q 'Archive Round Trip Co' /tmp/body.json && echo "  ✓ restored client back in default GET" || echo "  ✗ restored client missing from default GET"
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
-grep -q "\"Prospect\":$P0" /tmp/body.json && echo "  ✓ stageCounts Prospect=$P0 again (restored counts as active)" || echo "  ✗ stageCounts after restore: $(cat /tmp/body.json)"
+grep -q "\"Leads\":$P0" /tmp/body.json && echo "  ✓ stageCounts Leads=$P0 again (restored counts as active)" || echo "  ✗ stageCounts after restore: $(cat /tmp/body.json)"
 python3 -c "import json,sys;sys.exit(0 if abs(json.load(open('/tmp/body.json'))['projectedPipeline']-$V0)<0.01 else 1)" && echo "  ✓ projectedPipeline back to $V0 (restored deal counted)" || echo "  ✗ pipeline after restore: $(cat /tmp/body.json)"
 grep -q "\"archivedClients\":$A0" /tmp/body.json && echo "  ✓ archivedClients back to $A0" || echo "  ✗ archivedClients after restore: $(cat /tmp/body.json)"
 
@@ -1010,13 +1010,13 @@ check "PUT unknown intake group → 400" 400 $(code -b "$JAR" -X PUT -H 'Content
 check "PUT intakeOpts not a list → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"intakeOpts":"business_llc_tab"}' "$BASE/api/settings")
 check "stages-only PUT keeps vertical fields → 200" 200 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Prospect","Intake","Proposal","Build","Launch","Retainer"]}' "$BASE/api/settings")
+  -d '{"stages":["Leads","Proposal","Sold"]}' "$BASE/api/settings")
 S=$(code -b "$JAR" "$BASE/api/settings")
 grep -q '"serviceModel":"residential_only"' /tmp/body.json && grep -q '"intakeOpts":\["business_llc_tab","pet_on_premises","hoa_restrictions"\]' /tmp/body.json && echo "  ✓ vertical fields untouched by a stages-only PUT" || echo "  ✗ vertical fields lost: $(cat /tmp/body.json)"
 
 echo "-- 21c. Client create with intake/billing fields → GET round-trip =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Westgate Tower Mgmt","contactName":"Ava Stone","clientType":"commercial","industry":"Property Management","dealValue":18000,"stage":"Prospect","billingAddress":"400 Bay St","billingCity":"San Francisco","billingState":"CA","billingZip":"94133","billingSame":false,"preferredContactMethod":"Email","businessType":"Property Management","taxIdEin":"12-3456789","apContact":"Ava Stone — accounts@westgate.example","poRequired":true,"unitsLocations":"3 towers","propertyManagerName":"Derek Liu","propertyManagerContact":"derek@westgate.example","hoaName":"Westgate HOA","hoaContact":"board@westgate.example","accessInstructions":"Gate code 4455; loading dock B","coiRequired":true,"serviceContract":"Annual maintenance — renews Jan","petOnPremises":false,"preferredServiceLocation":"On-site"}' \
+  -d '{"companyName":"Westgate Tower Mgmt","contactName":"Ava Stone","clientType":"commercial","industry":"Property Management","dealValue":18000,"stage":"Leads","billingAddress":"400 Bay St","billingCity":"San Francisco","billingState":"CA","billingZip":"94133","billingSame":false,"preferredContactMethod":"Email","businessType":"Property Management","taxIdEin":"12-3456789","apContact":"Ava Stone — accounts@westgate.example","poRequired":true,"unitsLocations":"3 towers","propertyManagerName":"Derek Liu","propertyManagerContact":"derek@westgate.example","hoaName":"Westgate HOA","hoaContact":"board@westgate.example","accessInstructions":"Gate code 4455; loading dock B","coiRequired":true,"serviceContract":"Annual maintenance — renews Jan","petOnPremises":false,"preferredServiceLocation":"On-site"}' \
   "$BASE/api/clients")
 check "create commercial client with intake/billing fields → 201" 201 "$S"
 AI_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -1037,7 +1037,7 @@ check "over-long tax ID → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: 
 
 echo "-- 21e. Partial update: only present keys persisted =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Westgate Tower Mgmt","contactName":"Ava Stone","clientType":"commercial","industry":"Property Management","dealValue":18000,"stage":"Prospect","billingAddress":"500 Bay St","billingCity":"San Francisco","billingState":"CA","billingZip":"94133","billingSame":true,"poRequired":false,"coiRequired":true,"petOnPremises":false}' \
+  -d '{"companyName":"Westgate Tower Mgmt","contactName":"Ava Stone","clientType":"commercial","industry":"Property Management","dealValue":18000,"stage":"Leads","billingAddress":"500 Bay St","billingCity":"San Francisco","billingState":"CA","billingZip":"94133","billingSame":true,"poRequired":false,"coiRequired":true,"petOnPremises":false}' \
   "$BASE/api/clients/$AI_ID")
 check "PUT subset of new fields → 200" 200 "$S"
 grep -q '"billingAddress":"500 Bay St"' /tmp/body.json && grep -q '"billingSame":true' /tmp/body.json && grep -q '"poRequired":false' /tmp/body.json && echo "  ✓ updated fields applied" || echo "  ✗ update response: $(cat /tmp/body.json)"
@@ -1343,13 +1343,154 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for bundle surface check"
 fi
 
-echo "-- 23g. Cleanup =="
-check "admin deletes pest org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$PEST_ORG_ID")
-check "admin deletes med spa org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$MED_ORG_ID")
-check "admin deletes General org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$GEN_ORG_ID")
-rm -f "$JARPEST" "$JARGEN" "$JARMED"
+echo "== 24. Owner pipeline migration (3g-2): Leads → Intakes → Sold =="
+echo "-- 24a. Owner org has exactly 3 stages (editor tests renamed the middle) =="
+# The stage-editor sections (17e/17f) renamed the middle stage to "Proposal" to
+# prove the Settings editor still works on the owner org — so at this point the
+# owner pipeline is [Leads, Proposal, Sold]: exactly 3 stages, first Leads,
+# last Sold. The canonical [Leads, Intakes, Sold] is asserted right after the
+# migration in 24b.
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+check "owner me → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+st = d['user']['stages']
+assert len(st) == 3, st
+assert st[0] == 'Leads' and st[2] == 'Sold', st
+print("  ✓ owner me: exactly 3 stages (%s) — first Leads, last Sold" % " → ".join(st))
+PY
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "owner settings → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+st = d['settings']['stages']
+assert len(st) == 3, st
+assert st[0] == 'Leads' and st[2] == 'Sold', st
+print("  ✓ owner settings stage list is exactly 3 stages (%s)" % " → ".join(st))
+PY
+echo "-- 24b. Positional client migration (server-side data migration) =="
+# The migration is a boot-time server-side data migration (orgs.stages replaced
+# + client stage values remapped positionally), so this section exercises it at
+# the layer where it lives: a bun script importing the SAME server module the
+# boot path imports resets the owner org to the legacy 6-stage pipeline, drops
+# one client into each old stage, runs migrateOwnerPipeline() and prints the
+# result. The shell then verifies the remap through the API. A tenant org is
+# provisioned alongside and must come out of the migration completely
+# untouched (its stages and its clients' stages).
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Mig Tenant LLC","email":"migtenant@example.com","password":"migtenant123"}' "$BASE/api/admin/orgs")
+check "provision tenant to prove isolation → 201" 201 "$S"
+MIG_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARMIG=$(mktemp)
+S=$(code -c "$JARMIG" -b "$JARMIG" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"migtenant@example.com","password":"migtenant123"}' "$BASE/api/auth/login")
+check "tenant login → 200" 200 "$S"
+code -b "$JARMIG" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Prospect Co","clientType":"residential","dealValue":111,"stage":"Prospect"}' "$BASE/api/clients" > /dev/null
+code -b "$JARMIG" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Build Co","clientType":"residential","dealValue":222,"stage":"Build"}' "$BASE/api/clients" > /dev/null
+S=$(code -b "$JARMIG" "$BASE/api/settings")
+check "tenant starts from the legacy default stages (General org) → 200" 200 "$S"
+grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ tenant has the legacy 6-stage list (the migration must NOT touch it)" || echo "  ✗ tenant stages: $(cat /tmp/body.json)"
+
+cat > /tmp/mig_run.ts <<'TS'
+import { db, getOrg, parseStages, migrateOwnerPipeline } from "/home/team/shared/crm-app/server/db.ts";
+// Simulate the pre-3g-2 owner state: legacy 6-stage pipeline + one client per
+// old stage (inserted at the DB layer — the migration IS a data migration).
+const owner = db.query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get() as { org_id: number };
+const orgId = owner.org_id;
+const legacy = ["Prospect", "Intake", "Kickoff", "Build", "Launch", "Retainer"];
+db.query("UPDATE orgs SET stages = ? WHERE id = ?").run(JSON.stringify(legacy), orgId);
+const insert = db.prepare(
+  "INSERT INTO clients (org_id, company_name, client_type, deal_value, stage) VALUES (?, ?, 'residential', ?, ?)",
+);
+const bands = [
+  "Legacy Lead Band", "Legacy Intake Band", "Legacy Kickoff Band",
+  "Legacy Build Band", "Legacy Launch Band", "Legacy Retainer Band",
+];
+for (let i = 0; i < legacy.length; i++) insert.run(orgId, bands[i], (i + 1) * 1000, legacy[i]);
+migrateOwnerPipeline();
+const org = getOrg(orgId)!;
+const rows = db.query(
+  "SELECT company_name, stage FROM clients WHERE org_id = ? AND company_name LIKE 'Legacy %' ORDER BY id",
+).all(orgId);
+console.log("MIG_RESULT " + JSON.stringify({ stages: parseStages(org.stages), clients: rows }));
+TS
+MIG_OUT=$(bun /tmp/mig_run.ts 2>/dev/null | grep '^MIG_RESULT ')
+echo "    $MIG_OUT"
+echo "$MIG_OUT" | sed 's/^MIG_RESULT //' > /tmp/mig_result.json
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/mig_result.json'))
+st = d.get('stages', [])
+assert st == ['Leads', 'Intakes', 'Sold'], st
+expect = {
+  'Legacy Lead Band': 'Leads',
+  'Legacy Intake Band': 'Leads',
+  'Legacy Kickoff Band': 'Intakes',
+  'Legacy Build Band': 'Intakes',
+  'Legacy Launch Band': 'Sold',
+  'Legacy Retainer Band': 'Sold',
+}
+by = {c['company_name']: c['stage'] for c in d.get('clients', [])}
+assert by == expect, (by, expect)
+print("  ✓ positional remap (computed from counts): bands [1-2]→Leads, [3-4]→Intakes, [5-6]→Sold")
+print("  ✓ every owner client record's stage value migrated (Prospect/Intake→Leads, Kickoff/Build→Intakes, Launch/Retainer→Sold)")
+PY
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ owner settings (via API) reflect the migrated pipeline" || echo "  ✗ owner stages via API: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients?q=Legacy")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+by = {c['companyName']: c['stage'] for c in d['clients']}
+expect = {
+  'Legacy Lead Band': 'Leads',
+  'Legacy Intake Band': 'Leads',
+  'Legacy Kickoff Band': 'Intakes',
+  'Legacy Build Band': 'Intakes',
+  'Legacy Launch Band': 'Sold',
+  'Legacy Retainer Band': 'Sold',
+}
+assert by == expect, (by, expect)
+print("  ✓ API confirms the remap (a record formerly in Build is now Intakes, Retainer → Sold)")
+PY
+
+echo "-- 24c. Tenant org untouched by the migration =="
+S=$(code -b "$JARMIG" "$BASE/api/settings")
+check "tenant settings after migration → 200" 200 "$S"
+grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ tenant stages UNCHANGED after the migration (still the legacy defaults)" || echo "  ✗ tenant stages changed: $(cat /tmp/body.json)"
+S=$(code -b "$JARMIG" "$BASE/api/clients")
+check "tenant clients after migration → 200" 200 "$S"
+grep -q '"companyName":"Tenant Prospect Co"' /tmp/body.json && grep -q '"stage":"Prospect"' /tmp/body.json && grep -q '"companyName":"Tenant Build Co"' /tmp/body.json && grep -q '"stage":"Build"' /tmp/body.json && echo "  ✓ tenant client stages UNCHANGED (Prospect + Build intact)" || echo "  ✗ tenant clients changed: $(cat /tmp/body.json)"
+
+echo "-- 24d. UI surface strings for the owner pipeline =="
+NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
+  if grep -q "In final stage" "$NEWEST_JS" && grep -q 'Leads in "' "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the KPI strings (\"In final stage\" with the owner \"Leads in …\" note → Sold)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ owner KPI strings missing from $NEWEST_JS"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 3g-2 bundle surface check"
+fi
+
+echo "-- 24e. Cleanup =="
+check "admin deletes Mig Tenant org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$MIG_ORG_ID")
+rm -f "$JARMIG"
+code -b "$JAR" "$BASE/api/clients?q=Legacy" > /dev/null
+for ID in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(' '.join(str(c['id']) for c in d['clients'] if c['companyName'].startswith('Legacy ')))"); do
+  code -b "$JAR" -X DELETE "$BASE/api/clients/$ID" > /dev/null
+done
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ owner org ends clean: stages back to Leads → Intakes → Sold, test clients removed" || echo "  ✗ owner end state: $(cat /tmp/body.json)"
+rm -f /tmp/mig_run.ts /tmp/mig_result.json
 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json
 [ "$FAIL" -eq 0 ]
+

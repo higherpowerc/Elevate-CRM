@@ -1,4 +1,13 @@
-import { db, ensureDefaultOrg, getOrg, parseStages, DEFAULT_STAGES, DEFAULT_ACCENT, type Role } from "./db";
+import {
+  db,
+  ensureDefaultOrg,
+  getOrg,
+  parseStages,
+  DEFAULT_STAGES,
+  DEFAULT_ACCENT,
+  migrateOwnerPipeline,
+  type Role,
+} from "./db";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -187,6 +196,11 @@ export async function ensureAdmin(): Promise<{ created: boolean; message: string
     hash,
     orgId,
   );
+  // 3g-2: on a fresh database the admin is created AFTER db.ts's import-time
+  // migration pass, so re-run it now — the owner org (this admin's org) still
+  // has the legacy 6-stage pipeline and must be migrated to Leads → Intakes →
+  // Sold (idempotent; no-op once migrated).
+  migrateOwnerPipeline();
   return { created: true, message: `[auth] Seeded admin account: ${email}` };
 }
 
