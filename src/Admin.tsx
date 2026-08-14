@@ -62,7 +62,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
       const { orgs } = await api.adminOrgs();
       setOrgs(orgs);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load tenants.");
+      setError(e instanceof Error ? e.message : "Failed to load client accounts.");
     }
   }, []);
 
@@ -261,23 +261,23 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
 
         <div className="card table-wrap admin-table">
           <div className="admin-card-head">
-            <h2 className="admin-card-title">Tenants</h2>
+            <h2 className="admin-card-title">Clients</h2>
             <p className="admin-card-sub">
               {orgs ? `${orgs.length} workspace${orgs.length === 1 ? "" : "s"}` : "Loading…"}
             </p>
           </div>
           {!orgs ? (
-            <div className="skeleton-block" aria-label="Loading tenants" />
+            <div className="skeleton-block" aria-label="Loading clients" />
           ) : orgs.length === 0 ? (
             <div className="empty">
-              <p className="empty-title">No tenants yet</p>
+              <p className="empty-title">No clients yet</p>
               <p className="empty-sub">Create the first client account to provision a workspace.</p>
             </div>
           ) : (
             <table className="table">
               <thead>
                 <tr>
-                  <th>Tenant</th>
+                  <th>Clients</th>
                   <th className="num">Members</th>
                   <th className="num">Clients</th>
                   <th>Created</th>
@@ -289,7 +289,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                   const isOwner = o.id === ownerOrgId;
                   return (
                     <tr key={o.id}>
-                      <td className="cell-strong" data-label="Tenant">
+                      <td className="cell-strong" data-label="Clients">
                         <div className="cell-company">
                           {o.name}
                           {isOwner && <span className="chip chip-owner">owner</span>}
@@ -314,7 +314,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                           ) : (
                             <>
                               <button
-                                className="icon-btn"
+                                className="btn btn-primary btn-sm"
                                 title="Open this workspace as the client sees it"
                                 aria-label={`View ${o.name} account`}
                                 disabled={viewingOrgId !== null}
@@ -324,7 +324,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                               </button>
                               <button
                                 className="icon-btn danger"
-                                title="Delete tenant"
+                                title="Delete this client account"
                                 aria-label={`Delete ${o.name}`}
                                 disabled={viewingOrgId !== null}
                                 onClick={() => setDeleting(o)}
