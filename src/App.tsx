@@ -114,6 +114,13 @@ export default function App() {
 
   const isOwner = orgName === "Elevate Studio";
   const brandMark = isOwner ? "E" : initials(orgName) || "E";
+  /* Owner-org detection for terminology (owner direction 2026-08-14): the
+     owner workspace is the org whose members hold the admin role — exactly
+     the org where the Admin tab appears. It calls its pipeline records
+     "leads"; tenant orgs (role=member) keep "clients" for their customers.
+     Role-based, never org-name-based, so a renamed owner org still labels
+     correctly. */
+  const isOwnerOrg = user.role === "admin";
 
   return (
     <div className="app" style={accentStyle}>
@@ -164,7 +171,7 @@ export default function App() {
               className={view === "clients" ? "tab active" : "tab"}
               onClick={() => setView("clients")}
             >
-              Clients
+              {isOwnerOrg ? "Leads" : "Clients"}
             </button>
             <button
               className={view === "tasks" ? "tab active" : "tab"}
@@ -208,7 +215,7 @@ export default function App() {
         {view === "dashboard" ? (
           <Dashboard onGoToClients={() => setView("clients")} stages={stages} />
         ) : view === "clients" ? (
-          <Clients stages={stages} />
+          <Clients stages={stages} ownerOrg={isOwnerOrg} />
         ) : view === "tasks" ? (
           <Tasks />
         ) : view === "finance" ? (

@@ -15,6 +15,12 @@ interface Props {
    *  /api/settings on every load so a stage change made through the "Manage
    *  stages" shortcut shows up immediately. */
   stages: Stage[];
+  /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
+   *  owner calls its pipeline records "leads", so this page's headings, CTA
+   *  and empty states read "Lead(s)" instead of "Client(s)". Tenant orgs
+   *  (role=member) keep "Clients" everywhere — that tab holds their
+   *  customers. Purely presentational; data and stages are untouched. */
+  ownerOrg?: boolean;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -25,7 +31,7 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   return value;
 }
 
-export default function Clients({ stages }: Props) {
+export default function Clients({ stages, ownerOrg = false }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -188,13 +194,24 @@ export default function Clients({ stages }: Props) {
     archived: clients.filter((c) => c.archived).length,
   };
 
+  /* Owner workspace labels its pipeline records "leads" (owner direction
+     2026-08-14); tenant orgs keep "clients". Same page, same data — only
+     the visible wording differs. */
+  const heading = ownerOrg ? "Leads" : (<>
+    Client <em className="serif">book</em>
+  </>);
+  const addCta = ownerOrg ? "+ New lead" : "+ New client";
+  const emptyTitle = ownerOrg ? "No leads yet" : "No clients yet";
+  const emptySub = ownerOrg
+    ? "Add your first lead to start tracking the pipeline."
+    : "Add your first client to start tracking the pipeline.";
+  const emptyCta = ownerOrg ? "Add your first lead" : "Add your first client";
+
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>
-            Client <em className="serif">book</em>
-          </h1>
+          <h1>{heading}</h1>
           <p className="page-sub">
             {counts.active} active · {counts.archived} archived · active book value{" "}
             <strong>{money(totalValue)}</strong>
@@ -205,7 +222,7 @@ export default function Clients({ stages }: Props) {
             Manage stages
           </button>
           <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-            + New client
+            {addCta}
           </button>
         </div>
       </div>
@@ -243,15 +260,15 @@ export default function Clients({ stages }: Props) {
 
       {visible.length === 0 ? (
         <div className="card empty">
-          <p className="empty-title">{clients.length === 0 ? "No clients yet" : "Nothing matches"}</p>
+          <p className="empty-title">{clients.length === 0 ? emptyTitle : "Nothing matches"}</p>
           <p className="empty-sub">
             {clients.length === 0
-              ? "Add your first client to start tracking the pipeline."
+              ? emptySub
               : "Try a different search or filter."}
           </p>
           {clients.length === 0 && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-              Add your first client
+              {emptyCta}
             </button>
           )}
         </div>
