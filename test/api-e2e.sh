@@ -1576,9 +1576,224 @@ else
 fi
 rm -rf "$BOOT_DIR" /tmp/boot_result.json
 
+echo "== 26. Sold-lead auto-provisioning (3g-3) =="
+ORG_COUNT() { curl -s -b "$JAR" "$BASE/api/admin/orgs" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['orgs']))"; }
+echo "-- 26a. Owner moves a lead into Sold → one clean vertical-seeded workspace =="
+BEFORE_ORG=$(ORG_COUNT)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Leads","nextAction":"Send proposal","notes":"3g-3 test lead"}' \
+  "$BASE/api/clients")
+check "owner creates Landscaping lead → 201" 201 "$S"
+WL_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (sold-lead client id=$WL_ID)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Sold","nextAction":"","notes":"3g-3 test lead"}' \
+  "$BASE/api/clients/$WL_ID")
+check "owner moves lead into Sold → 200" 200 "$S"
+grep -q '"stage":"Sold"' /tmp/body.json && echo "  ✓ client now in Sold" || echo "  ✗ stage after PUT: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "admin orgs list → 200" 200 "$S"
+AFTER_ORG=$(python3 -c "import json; print(len(json.load(open('/tmp/body.json'))['orgs']))")
+[ "$AFTER_ORG" -eq $((BEFORE_ORG + 1)) ] && echo "  ✓ exactly one new org created (${BEFORE_ORG} → ${AFTER_ORG})" || echo "  ✗ org count ${BEFORE_ORG} → ${AFTER_ORG} (expected +1)"
+python3 - <<PY
+import json, re
+d = json.load(open('/tmp/body.json'))
+orgs = d['orgs']
+prov = [o for o in orgs if o.get('provisionedFromClient') == $WL_ID]
+assert len(prov) == 1, [o['name'] for o in orgs]
+o = prov[0]
+assert o['name'] == 'Willow Stone Contracting', o['name']
+assert o['provisionedFromClientName'] == 'Willow Stone Contracting', o
+assert o['loginEmail'] == 'mia@willowstone.example', o['loginEmail']
+pw = o.get('tempPassword', '')
+assert len(pw) >= 12, pw
+assert re.search(r'[A-Z]', pw) and re.search(r'[a-z]', pw) and re.search(r'[0-9]', pw) and re.search(r'[^A-Za-z0-9]', pw), pw
+print("  ✓ new org auto-provisioned: name, source lead, login email + temp password visible in the Admin list")
+PY
+PROV_ORG=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $WL_ID][0])")
+PROV_EMAIL=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['loginEmail'] for o in d['orgs'] if o.get('provisionedFromClient') == $WL_ID][0])")
+PROV_PW=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['tempPassword'] for o in d['orgs'] if o.get('provisionedFromClient') == $WL_ID][0])")
+JARPROV=$(mktemp)
+S=$(code -c "$JARPROV" -b "$JARPROV" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$PROV_EMAIL\",\"password\":\"$PROV_PW\"}" "$BASE/api/auth/login")
+check "provisioned member login with temp password → 200" 200 "$S"
+grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member role" || echo "  ✗ role: $(cat /tmp/body.json)"
+S=$(code -b "$JARPROV" "$BASE/api/settings")
+check "provisioned org GET settings → 200" 200 "$S"
+grep -q '"stages":\["Leads","Quotes","Recurring clients","Crews","Jobs"\]' /tmp/body.json && echo "  ✓ Landscaping stages seeded" || echo "  ✗ stages: $(cat /tmp/body.json)"
+grep -q '"verticalKey":"landscaping"' /tmp/body.json && grep -q '"industry":"home_services"' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && grep -q '"deliveryType":"we_go"' /tmp/body.json && echo "  ✓ vertical settings seeded (landscaping / home_services / both / we_go)" || echo "  ✗ vertical settings: $(cat /tmp/body.json)"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+fields = {f['name']: f for f in d['customFields']}
+assert fields.get('Property size', {}).get('type') == 'text', fields
+assert fields.get('Service frequency', {}).get('type') == 'select', fields
+assert fields['Service frequency']['options'] == ["Weekly","Biweekly","Monthly","One-time"], fields['Service frequency']
+print("  ✓ seeded custom fields present (Property size text, Service frequency select)")
+PY
+S=$(code -b "$JARPROV" "$BASE/api/clients")
+grep -q '"clients":\[\]' /tmp/body.json && echo "  ✓ new workspace starts with ZERO clients" || echo "  ✗ clients: $(cat /tmp/body.json)"
+S=$(code -b "$JARPROV" "$BASE/api/tasks")
+grep -q '"tasks":\[\]' /tmp/body.json && echo "  ✓ new workspace starts with ZERO tasks" || echo "  ✗ tasks: $(cat /tmp/body.json)"
+S=$(code -b "$JARPROV" "$BASE/api/invoices")
+grep -q '"invoices":\[\]' /tmp/body.json && echo "  ✓ new workspace starts with ZERO invoices" || echo "  ✗ invoices: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/clients?q=Willow")
+grep -q '"companyName":"Willow Stone Contracting"' /tmp/body.json && grep -q '"stage":"Sold"' /tmp/body.json && echo "  ✓ owner still sees the sold lead in their own pipeline" || echo "  ✗ owner pipeline: $(cat /tmp/body.json)"
+check "member cannot list admin orgs → 403" 403 $(code -b "$JARPROV" "$BASE/api/admin/orgs")
+check "member cannot read provisions → 403" 403 $(code -b "$JARPROV" "$BASE/api/admin/provisions")
+S=$(code -b "$JARPROV" "$BASE/api/settings")
+grep -qv 'tempPassword' /tmp/body.json && echo "  ✓ temp password NOT exposed via tenant-scoped endpoints" || echo "  ✗ tempPassword leaked: $(cat /tmp/body.json)"
+
+echo "-- 26b. Idempotent: Sold → Intakes → Sold creates no second org =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Intakes","nextAction":"","notes":"moved back"}' \
+  "$BASE/api/clients/$WL_ID")
+check "move back to Intakes → 200" 200 "$S"
+grep -q '"stage":"Intakes"' /tmp/body.json && echo "  ✓ client back in Intakes" || echo "  ✗ stage: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Sold","nextAction":"","notes":"sold again"}' \
+  "$BASE/api/clients/$WL_ID")
+check "move into Sold again → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+AFTER2=$(python3 -c "import json; print(len(json.load(open('/tmp/body.json'))['orgs']))")
+[ "$AFTER2" -eq "$AFTER_ORG" ] && echo "  ✓ still exactly one org (no second provision: ${AFTER_ORG})" || echo "  ✗ org count ${AFTER_ORG} → ${AFTER2} (duplicate provision!)"
+python3 - <<PY
+import json
+d = json.load(open('/tmp/body.json'))
+prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $WL_ID]
+assert len(prov) == 1, prov
+print("  ✓ the one org still links to the sold client (provisionedFromClient intact)")
+PY
+
+echo "-- 26c. Tenant org moving a client into its own final stage → NO new org =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Tenant Sell Co","email":"tenant-sell@example.com","password":"tenantsell123"}' "$BASE/api/admin/orgs")
+check "admin provisions tenant org → 201" 201 "$S"
+JARTEN=$(mktemp)
+S=$(code -c "$JARTEN" -b "$JARTEN" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"tenant-sell@example.com","password":"tenantsell123"}' "$BASE/api/auth/login")
+check "tenant login → 200" 200 "$S"
+# Baseline AFTER the tenant org exists (it must NOT count as an auto-provision),
+# then the tenant sells its own client into its final stage.
+TEN_BEFORE=$(ORG_COUNT)
+S=$(code -b "$JARTEN" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Prospect Co","clientType":"residential","dealValue":500,"stage":"Prospect"}' "$BASE/api/clients")
+check "tenant creates client in first stage → 201" 201 "$S"
+TEN_CLIENT=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JARTEN" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Prospect Co","clientType":"residential","dealValue":500,"stage":"Retainer"}' "$BASE/api/clients/$TEN_CLIENT")
+check "tenant moves client into its final stage (Retainer) → 200" 200 "$S"
+TEN_AFTER=$(ORG_COUNT)
+[ "$TEN_AFTER" -eq "$TEN_BEFORE" ] && echo "  ✓ NO org provisioned for a tenant selling its own client (${TEN_BEFORE})" || echo "  ✗ org count ${TEN_BEFORE} → ${TEN_AFTER} (tenant auto-provisioned!)"
+S=$(code -b "$JAR" "$BASE/api/admin/provisions")
+PROV_N=$(python3 -c "import json; print(len(json.load(open('/tmp/body.json'))['provisions']))")
+[ "$PROV_N" -eq 1 ] && echo "  ✓ exactly one provision notification so far (only the owner's Willow sell)" || echo "  ✗ provisions: $(cat /tmp/body.json)"
+
+echo "-- 26d. No-email client → derived login email; uniqueness suffix on collision =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Dust & Bane Pest","contactName":"Rex Otis","industry":"Pest Control","clientType":"commercial","dealValue":8000,"stage":"Leads","notes":"no email on purpose"}' \
+  "$BASE/api/clients")
+check "owner creates pest lead WITHOUT email → 201" 201 "$S"
+DB1_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Dust & Bane Pest","contactName":"Rex Otis","industry":"Pest Control","clientType":"commercial","dealValue":8000,"stage":"Sold","notes":"sold"}' \
+  "$BASE/api/clients/$DB1_ID")
+check "move no-email lead into Sold → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+python3 - <<PY
+import json
+d = json.load(open('/tmp/body.json'))
+prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $DB1_ID]
+assert len(prov) == 1, prov
+assert prov[0]['loginEmail'] == 'dust-bane-pest@elevate.studio', prov[0]['loginEmail']
+assert prov[0]['tempPassword'], prov[0]
+assert prov[0]['name'] == 'Dust & Bane Pest', prov[0]
+print("  ✓ derived login email from company slug: dust-bane-pest@elevate.studio")
+PY
+DB1_PW=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['tempPassword'] for o in d['orgs'] if o.get('provisionedFromClient') == $DB1_ID][0])")
+JARDB1=$(mktemp)
+S=$(code -c "$JARDB1" -b "$JARDB1" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"dust-bane-pest@elevate.studio\",\"password\":\"$DB1_PW\"}" "$BASE/api/auth/login")
+check "derived-email login works → 200" 200 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Dust Bane Pest","contactName":"Nia Otis","industry":"Pest Control","clientType":"commercial","dealValue":6000,"stage":"Leads","notes":"same slug"}' \
+  "$BASE/api/clients")
+check "owner creates second pest lead (same slug) → 201" 201 "$S"
+DB2_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Dust Bane Pest","contactName":"Nia Otis","industry":"Pest Control","clientType":"commercial","dealValue":6000,"stage":"Sold","notes":"sold"}' \
+  "$BASE/api/clients/$DB2_ID")
+check "move second pest lead into Sold → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+python3 - <<PY
+import json
+d = json.load(open('/tmp/body.json'))
+prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $DB2_ID]
+assert len(prov) == 1, prov
+assert prov[0]['loginEmail'] == 'dust-bane-pest1@elevate.studio', prov[0]['loginEmail']
+assert prov[0]['tempPassword'], prov[0]
+print("  ✓ colliding slug got the numeric suffix: dust-bane-pest1@elevate.studio")
+PY
+
+echo "-- 26e. Owner notification list + dismiss =="
+S=$(code -b "$JAR" "$BASE/api/admin/provisions")
+check "owner provisions list → 200" 200 "$S"
+python3 - <<PY
+import json
+d = json.load(open('/tmp/body.json'))['provisions']
+by_client = {p['clientName']: p for p in d}
+assert set(by_client) == {'Willow Stone Contracting', 'Dust & Bane Pest', 'Dust Bane Pest'}, by_client
+assert by_client['Willow Stone Contracting']['orgName'] == 'Willow Stone Contracting', by_client
+print("  ✓ notices name the sold client + new workspace (%d undismissed)" % len(d))
+PY
+FIRST_PROV_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['provisions'][0]['id'])")
+check "dismiss a notice → 200" 200 $(code -b "$JAR" -X POST "$BASE/api/admin/provisions/$FIRST_PROV_ID/dismiss")
+S=$(code -b "$JAR" "$BASE/api/admin/provisions")
+PROV_N2=$(python3 -c "import json; print(len(json.load(open('/tmp/body.json'))['provisions']))")
+[ "$PROV_N2" -eq 2 ] && echo "  ✓ dismissed notice gone (3 → 2 remaining)" || echo "  ✗ provisions after dismiss: $(cat /tmp/body.json)"
+check "dismiss unknown notice → 404" 404 $(code -b "$JAR" -X POST "$BASE/api/admin/provisions/999999/dismiss")
+
+echo "-- 26f. UI surface strings in the built bundle =="
+NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
+  if grep -q "auto-provisioned from sold lead" "$NEWEST_JS" && grep -q "Temp password" "$NEWEST_JS" && grep -q "auto-provisioned" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the 3g-3 UI strings (auto-provisioned marker, temp-password display)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ 3g-3 strings missing from $NEWEST_JS"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 3g-3 bundle surface check"
+fi
+
+echo "-- 26g. Cleanup =="
+check "admin deletes provisioned Willow org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$PROV_ORG")
+# Re-fetch the orgs list (the DELETE response just overwrote /tmp/body.json),
+# then delete the two pest-provisioned orgs.
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+for OID in $(python3 - <<PY
+import json
+d = json.load(open('/tmp/body.json'))
+print(' '.join(str(o['id']) for o in d['orgs'] if o.get('provisionedFromClient') in ($DB1_ID, $DB2_ID)))
+PY
+); do
+  code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$OID" > /dev/null
+done
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+TEN_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o['name'] == 'Tenant Sell Co'][0])")
+check "admin deletes Tenant Sell Co org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$TEN_ORG_ID")
+for CID in $WL_ID $DB1_ID $DB2_ID; do
+  code -b "$JAR" -X DELETE "$BASE/api/clients/$CID" > /dev/null
+done
+S=$(code -b "$JAR" "$BASE/api/admin/provisions")
+for PID in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(' '.join(str(p['id']) for p in d['provisions']))"); do
+  code -b "$JAR" -X POST "$BASE/api/admin/provisions/$PID/dismiss" > /dev/null
+done
+FINAL_ORG=$(ORG_COUNT)
+[ "$FINAL_ORG" -eq "$BEFORE_ORG" ] && echo "  ✓ org count back to $BEFORE_ORG (cleanup complete)" || echo "  ✗ org count after cleanup: $FINAL_ORG (expected $BEFORE_ORG)"
+rm -f "$JARPROV" "$JARTEN" "$JARDB1"
 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
+
 rm -f "$JAR" /tmp/body.json
 [ "$FAIL" -eq 0 ]
-
