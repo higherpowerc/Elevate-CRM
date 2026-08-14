@@ -941,6 +941,15 @@ if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ Finance client picker / search-hint strings missing from $NEWEST_JS"
   fi
+  # Owner request 2026-08-14 — the single Clients tab split into TWO: "Leads"
+  # (the pipeline) and "Clients" (the independent directory of every client).
+  # "All clients" is the member-org label for the directory tab; the search
+  # placeholder is unique to the directory page.
+  if grep -q "All clients" "$NEWEST_JS" && grep -q "Search company, contact, phone" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the split Leads/Clients nav (directory tab labels + search)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ split Leads/Clients nav strings missing from $NEWEST_JS"
+  fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found — run \`bun run build\` before the suite"
 fi

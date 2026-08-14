@@ -3,6 +3,7 @@ import Login from "./Login";
 import ResetPassword from "./ResetPassword";
 import Dashboard from "./Dashboard";
 import Clients from "./Clients";
+import ClientsDirectory from "./ClientsDirectory";
 import Tasks from "./Tasks";
 import Finance from "./Finance";
 import Admin from "./Admin";
@@ -11,7 +12,15 @@ import { api } from "./api";
 import { DEFAULT_STAGES, type User } from "./types";
 import { initials } from "./bits";
 
-type View = "dashboard" | "clients" | "tasks" | "finance" | "admin" | "settings";
+/* Owner request 2026-08-14 — the single "Clients" tab splits into TWO:
+ *   "leads"  → the pipeline view (stage chips, Active/Archived/All, stage
+ *              actions, Manage stages) — today's Clients tab, reframed.
+ *   "clients" → the independent directory of ALL clients (any stage, incl.
+ *              archived), flat and alphabetically sorted.
+ * The owner workspace (role=admin) labels them "Leads" + "Clients"; tenant
+ * orgs (role=member) keep "clients" wording everywhere — "Clients" (the
+ * pipeline) + "All clients" (the directory). */
+type View = "dashboard" | "leads" | "clients" | "tasks" | "finance" | "admin" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -209,11 +218,22 @@ export default function App() {
             >
               Dashboard
             </button>
+            {/* Owner request 2026-08-14: "Leads" and "Clients" sit side by
+                side. The Leads tab is the pipeline; the Clients tab is the
+                independent directory of every client in the org. Tenant orgs
+                (role=member) never see "Leads" — their pipeline tab keeps
+                the "Clients" label and the directory reads "All clients". */}
+            <button
+              className={view === "leads" ? "tab active" : "tab"}
+              onClick={() => setView("leads")}
+            >
+              {isOwnerOrg ? "Leads" : "Clients"}
+            </button>
             <button
               className={view === "clients" ? "tab active" : "tab"}
               onClick={() => setView("clients")}
             >
-              {isOwnerOrg ? "Leads" : "Clients"}
+              {isOwnerOrg ? "Clients" : "All clients"}
             </button>
             <button
               className={view === "tasks" ? "tab active" : "tab"}
@@ -255,9 +275,11 @@ export default function App() {
       </header>
       <main className="main">
         {view === "dashboard" ? (
-          <Dashboard onGoToClients={() => setView("clients")} stages={stages} ownerOrg={isOwnerOrg} />
-        ) : view === "clients" ? (
+          <Dashboard onGoToLeads={() => setView("leads")} stages={stages} ownerOrg={isOwnerOrg} />
+        ) : view === "leads" ? (
           <Clients stages={stages} ownerOrg={isOwnerOrg} />
+        ) : view === "clients" ? (
+          <ClientsDirectory stages={stages} ownerOrg={isOwnerOrg} />
         ) : view === "tasks" ? (
           <Tasks />
         ) : view === "finance" ? (
