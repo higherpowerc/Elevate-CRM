@@ -733,6 +733,24 @@ legend.field-label {
   gap: 26px;
 }
 
+/* Fit the header without horizontal scroll on ~1024-1200px desktops
+   (owner request 2026-08-14: everything viewable, no right scrollbar). */
+@media (max-width: 1200px) {
+  .nav-inner {
+    gap: 14px;
+    padding: 0 16px;
+  }
+  .tab {
+    padding: 8px 9px;
+  }
+  .nav-user {
+    max-width: 120px;
+  }
+  .brand-sub {
+    display: none;
+  }
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -1193,6 +1211,7 @@ legend.field-label {
 
 .table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -1204,13 +1223,15 @@ legend.field-label {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 13px 16px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .table td {
-  padding: 13px 16px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
@@ -1250,11 +1271,28 @@ legend.field-label {
   font-weight: 400;
   margin-top: 1px;
 }
+/* Sub-lines inside table cells (address, email, phone, industry) truncate
+   with ellipsis rather than widening the column. Full value is in title. */
+.table td .cell-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .cell-company {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+/* Company/client name inside the flex row — shrinks with ellipsis instead
+   of stretching the table (table-layout: fixed needs min-width: 0). */
+.cell-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cell-contact {
@@ -1262,7 +1300,10 @@ legend.field-label {
 }
 
 .cell-next {
-  max-width: 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stage-cell {
@@ -1270,7 +1311,14 @@ legend.field-label {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  min-width: 120px;
+  min-width: 100px;
+}
+/* Long stage names in the badge truncate gracefully (full name in title,
+   and always available in the adjacent dropdown). */
+.table .stage-cell .badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stage-select {
@@ -1295,6 +1343,13 @@ legend.field-label {
   gap: 6px;
   justify-content: flex-end;
   white-space: nowrap;
+  min-width: 0;
+}
+/* Compact action buttons inside tables so the Actions column never forces
+   horizontal overflow (owner request: everything viewable without scroll). */
+.table .icon-btn {
+  padding: 5px 7px;
+  font-size: 12px;
 }
 
 .icon-btn {
@@ -1424,6 +1479,13 @@ legend.field-label {
 .admin-table .table th:last-child,
 .admin-table .table td:last-child {
   padding-right: 2px;
+}
+/* Auto-provisioned workspace rows: the login/temp-password meta lines
+   truncate with ellipsis inside the fixed-layout table. */
+.admin-table .prov-row-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .password-row {
@@ -2208,6 +2270,21 @@ legend.field-label {
 
   .cell-next {
     max-width: none;
+    white-space: normal;
+    overflow: visible;
+  }
+
+  .table td .cell-sub,
+  .cell-name,
+  .prov-row-line {
+    max-width: none;
+    white-space: normal;
+    overflow: visible;
+  }
+
+  .table .stage-cell .badge {
+    max-width: none;
+    overflow: visible;
   }
 
   .stage-cell {

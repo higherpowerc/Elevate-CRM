@@ -110,6 +110,14 @@ export default function Dashboard({ onGoToClients, stages, ownerOrg = false }: P
       {hasClients ? (
         <div className="card table-wrap">
           <table className="table">
+            <colgroup>
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "17%" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>Company</th>
@@ -123,8 +131,16 @@ export default function Dashboard({ onGoToClients, stages, ownerOrg = false }: P
             <tbody>
               {data.recentClients.map((c) => (
                 <tr key={c.id}>
-                  <td className="cell-strong">{c.companyName}</td>
-                  <td className="cell-muted">{c.contactName || "—"}</td>
+                  <td className="cell-strong">
+                    <span className="cell-name" title={c.companyName}>
+                      {c.companyName}
+                    </span>
+                  </td>
+                  <td className="cell-muted">
+                    <span className="cell-name" title={c.contactName || undefined}>
+                      {c.contactName || "—"}
+                    </span>
+                  </td>
                   <td>
                     <ServiceChips services={c.services} />
                   </td>

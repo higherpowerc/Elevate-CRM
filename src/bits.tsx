@@ -5,7 +5,8 @@ import { stageTone } from "./types";
  *  (index 0 = gray, cycling through the palette) because stage names are
  *  tenant-defined. */
 export function StageBadge({ stage, index = 0 }: { stage: Stage; index?: number }) {
-  return <span className={`badge tone-${stageTone(index)}`}>{stage}</span>;
+  // title so a truncated stage badge in a table row still shows the full name
+  return <span className={`badge tone-${stageTone(index)}`} title={stage}>{stage}</span>;
 }
 
 export function ServiceChips({ services }: { services: string[] }) {
