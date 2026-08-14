@@ -1798,8 +1798,228 @@ FINAL_ORG=$(ORG_COUNT)
 [ "$FINAL_ORG" -eq "$BEFORE_ORG" ] && echo "  ✓ org count back to $BEFORE_ORG (cleanup complete)" || echo "  ✗ org count after cleanup: $FINAL_ORG (expected $BEFORE_ORG)"
 rm -f "$JARPROV" "$JARTEN" "$JARDB1"
 
+echo "== 27. Intake + welcome emails (3g-4) =="
+# Self-contained: spins up throwaway CRM servers (fresh DBs on :3002–3004) that
+# POST emails to a mock Resend endpoint on :3199, which records every request
+# as a JSONL file. The MAIN server on $BASE is untouched by this section.
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MOCK=$(mktemp -d)
+MOCK_EMAILS="$MOCK/emails.jsonl"
+: > "$MOCK_EMAILS"
+cat > "$MOCK/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const PORT = 3199;
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock resend on " + PORT);
+TS
+MOCK_OUT="$MOCK_EMAILS" nohup bun "$MOCK/resend.ts" > "$MOCK/resend.log" 2>&1 &
+MOCK_PID=$!
+i=0; until curl -sf http://127.0.0.1:3199/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+if curl -sf http://127.0.0.1:3199/health >/dev/null 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ mock Resend endpoint up on :3199"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ mock Resend endpoint failed to start"
+fi
+# start_crm <port> <datadir> <logfile> <pidfile> [env...] — starts a throwaway
+# CRM server with its own fresh DB and waits until it answers.
+start_crm() {
+  local port=$1 dir=$2 logf=$3 pidf=$4; shift 4
+  ( cd "$APP_DIR" && env "$@" DATA_DIR="$dir" PORT="$port" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" nohup bun ./server/index.ts > "$logf" 2>&1 & echo $! > "$pidf" )
+  local i=0
+  until curl -s -o /dev/null "http://localhost:$port/api/auth/me" 2>/dev/null; do
+    i=$((i+1)); [ "$i" -gt 50 ] && { echo "  ✗ CRM server on :$port failed to start (see $logf)"; return 1; }
+    sleep 0.2
+  done
+}
+stop_crm() { kill "$(cat "$1")" 2>/dev/null; }
+
+echo "-- 27a. RESEND_API_KEY unset → provision succeeds, email skipped, no crash =="
+start_crm 3002 "$MOCK/db-a" "$MOCK/srv-a.log" "$MOCK/srv-a.pid" -u RESEND_API_KEY -u RESEND_URL -u TEST_EMAIL_TO
+JA=$(mktemp)
+S=$(code -c "$JA" -b "$JA" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "http://localhost:3002/api/auth/login")
+check "no-key: login → 200" 200 "$S"
+S=$(code -b "$JA" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"NoKey Provision Co","contactName":"Nora Key","email":"nokey@example.com","industry":"Cleaning","clientType":"commercial","dealValue":4000,"stage":"Leads"}' "http://localhost:3002/api/clients")
+check "no-key: create lead → 201" 201 "$S"
+NK_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA" -X PUT -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"NoKey Provision Co","contactName":"Nora Key","email":"nokey@example.com","industry":"Cleaning","clientType":"commercial","dealValue":4000,"stage":"Sold"}' "http://localhost:3002/api/clients/$NK_ID")
+check "no-key: move lead into Sold → 200" 200 "$S"
+S=$(code -b "$JA" "http://localhost:3002/api/admin/orgs")
+check "no-key: admin orgs → 200" 200 "$S"
+if grep -q "NoKey Provision Co" /tmp/body.json && grep -q "nokey@example.com" /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ no-key: workspace provisioned (provision never needs email)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no-key: provision missing from orgs list"
+fi
+if [ ! -s "$MOCK_EMAILS" ]; then
+  PASS=$((PASS+1)); echo "  ✓ no-key: mock received NO emails"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no-key: unexpected email sent: $(cat "$MOCK_EMAILS")"
+fi
+if grep -Fq "[email] RESEND_API_KEY not configured — skipping Welcome to Elevate Studio — your workspace is ready to nokey@example.com" "$MOCK/srv-a.log"; then
+  PASS=$((PASS+1)); echo "  ✓ no-key: skip line logged, app healthy"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no-key: skip line missing: $(grep '\[email\]' "$MOCK/srv-a.log")"
+fi
+stop_crm "$MOCK/srv-a.pid"; rm -f "$JA"
+
+echo "-- 27b. Key + mock → intake on provision, welcome once on first login =="
+: > "$MOCK_EMAILS"
+start_crm 3003 "$MOCK/db-b" "$MOCK/srv-b.log" "$MOCK/srv-b.pid" -u TEST_EMAIL_TO RESEND_API_KEY=test-key-123 RESEND_URL=http://127.0.0.1:3199
+JB=$(mktemp)
+S=$(code -c "$JB" -b "$JB" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "http://localhost:3003/api/auth/login")
+check "keyed: login → 200" 200 "$S"
+S=$(code -b "$JB" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"Email Test Co","contactName":"Sam Buyer","email":"buyer@example.com","industry":"Cleaning","clientType":"commercial","dealValue":5000,"stage":"Leads"}' "http://localhost:3003/api/clients")
+check "keyed: create lead → 201" 201 "$S"
+ET_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JB" -X PUT -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"Email Test Co","contactName":"Sam Buyer","email":"buyer@example.com","industry":"Cleaning","clientType":"commercial","dealValue":5000,"stage":"Sold"}' "http://localhost:3003/api/clients/$ET_ID")
+check "keyed: move lead into Sold → 200" 200 "$S"
+sleep 1
+if python3 - "$MOCK_EMAILS" <<'PY' 2>"$MOCK/intake.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+assert len(lines) == 1, [(l.get("subject"), l.get("to")) for l in lines]
+e = lines[0]
+assert e["to"] == ["buyer@example.com"], e["to"]
+assert e["subject"] == "Welcome to Elevate Studio — your workspace is ready", e["subject"]
+t = e["text"]
+assert "Email Test Co" in t, t
+assert "Sign in here: https://crm.example.test" in t, t
+assert "Email:    buyer@example.com" in t, t
+assert "Password: " in t, t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ intake email: recipient, subject, org name, origin URL + credentials"; else FAIL=$((FAIL+1)); echo "  ✗ intake email mismatch:"; cat "$MOCK/intake.err"; fi
+S=$(code -b "$JB" "http://localhost:3003/api/admin/orgs")
+check "keyed: admin orgs → 200" 200 "$S"
+PROV_EMAIL=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['loginEmail'] for o in d['orgs'] if o.get('provisionedFromClient') == $ET_ID][0])")
+PROV_PW=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['tempPassword'] for o in d['orgs'] if o.get('provisionedFromClient') == $ET_ID][0])")
+JBM=$(mktemp)
+S=$(code -c "$JBM" -b "$JBM" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$PROV_EMAIL\",\"password\":\"$PROV_PW\"}" "http://localhost:3003/api/auth/login")
+check "keyed: provisioned member login (first) → 200" 200 "$S"
+sleep 1
+if python3 - "$MOCK_EMAILS" "$PROV_PW" <<'PY' 2>"$MOCK/welcome.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+assert len(lines) == 2, [(l.get("subject"), l.get("to")) for l in lines]
+e = lines[1]
+assert e["to"] == ["buyer@example.com"], e["to"]
+assert e["subject"] == "Welcome to Email Test Co — let's get started", e["subject"]
+t = e["text"]
+assert "Email Test Co" in t, t
+assert "pipeline" in t and "clients" in t and "tasks and invoices" in t, t
+assert "Sign in anytime at: https://elevate-crm-mwp7.onrender.com" in t, t
+assert "Password:" not in t and sys.argv[2] not in t, t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ welcome email: recipient, subject, orientation, fallback URL, NO credentials"; else FAIL=$((FAIL+1)); echo "  ✗ welcome email mismatch:"; cat "$MOCK/welcome.err"; fi
+S=$(code -c "$JBM" -b "$JBM" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$PROV_EMAIL\",\"password\":\"$PROV_PW\"}" "http://localhost:3003/api/auth/login")
+check "keyed: member second login → 200" 200 "$S"
+sleep 1
+if [ "$(wc -l < "$MOCK_EMAILS")" -eq 2 ]; then
+  PASS=$((PASS+1)); echo "  ✓ second login sends NO new email (welcome is once-only)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ second login re-sent an email: $(cat "$MOCK_EMAILS")"
+fi
+cat > "$MOCK/fl.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+const email = process.env.USER_EMAIL ?? "";
+const row = db.query("SELECT first_login_at FROM users WHERE email = ?").get(email) as { first_login_at: string | null } | null;
+console.log(row?.first_login_at ?? "NULL");
+TS
+FL1=$(DB_FILE="$MOCK/db-b/crm.db" USER_EMAIL="$PROV_EMAIL" bun "$MOCK/fl.ts")
+if [ "$FL1" != "NULL" ]; then PASS=$((PASS+1)); echo "  ✓ first_login_at set after first login ($FL1)"; else FAIL=$((FAIL+1)); echo "  ✗ first_login_at not set ($FL1)"; fi
+# A fresh tenant whose member has never logged in: impersonation must NOT set
+# first_login_at and must NOT fire the welcome email.
+S=$(code -b "$JB" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"Impersonation Email Co","contactName":"Ima Owner","email":"imp@example.com","industry":"Cleaning","clientType":"commercial","dealValue":3000,"stage":"Leads"}' "http://localhost:3003/api/clients")
+check "keyed: create second lead → 201" 201 "$S"
+IMP_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JB" -X PUT -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"Impersonation Email Co","contactName":"Ima Owner","email":"imp@example.com","industry":"Cleaning","clientType":"commercial","dealValue":3000,"stage":"Sold"}' "http://localhost:3003/api/clients/$IMP_ID")
+check "keyed: move second lead into Sold → 200" 200 "$S"
+sleep 1
+S=$(code -b "$JB" "http://localhost:3003/api/admin/orgs")
+IMP_ORG=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $IMP_ID][0])")
+FL_IMP_BEFORE=$(DB_FILE="$MOCK/db-b/crm.db" USER_EMAIL="imp@example.com" bun "$MOCK/fl.ts")
+if [ "$FL_IMP_BEFORE" = "NULL" ]; then PASS=$((PASS+1)); echo "  ✓ fresh tenant member has no first_login_at yet"; else FAIL=$((FAIL+1)); echo "  ✗ fresh tenant first_login_at set prematurely ($FL_IMP_BEFORE)"; fi
+LINES_BEFORE_IMP=$(wc -l < "$MOCK_EMAILS")
+S=$(code -c "$JB" -b "$JB" -X POST -H 'Content-Type: application/json' \
+  -d "{\"orgId\":$IMP_ORG}" "http://localhost:3003/api/admin/impersonate")
+check "keyed: admin impersonates never-logged-in tenant → 200" 200 "$S"
+sleep 1
+FL_IMP_AFTER=$(DB_FILE="$MOCK/db-b/crm.db" USER_EMAIL="imp@example.com" bun "$MOCK/fl.ts")
+if [ "$FL_IMP_AFTER" = "NULL" ]; then PASS=$((PASS+1)); echo "  ✓ impersonation does NOT set first_login_at"; else FAIL=$((FAIL+1)); echo "  ✗ impersonation set first_login_at ($FL_IMP_AFTER)"; fi
+if [ "$(wc -l < "$MOCK_EMAILS")" -eq "$LINES_BEFORE_IMP" ]; then
+  PASS=$((PASS+1)); echo "  ✓ impersonation sent NO email (no welcome on session swap)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ impersonation fired an email: $(tail -1 "$MOCK_EMAILS")"
+fi
+S=$(code -c "$JB" -b "$JB" -X POST "http://localhost:3003/api/auth/impersonate-return")
+check "keyed: impersonate-return → 200" 200 "$S"
+stop_crm "$MOCK/srv-b.pid"; rm -f "$JB" "$JBM"
+
+echo "-- 27c. TEST_EMAIL_TO redirects intake delivery to the owner's mailbox =="
+: > "$MOCK_EMAILS"
+start_crm 3004 "$MOCK/db-c" "$MOCK/srv-c.log" "$MOCK/srv-c.pid" RESEND_API_KEY=test-key-123 RESEND_URL=http://127.0.0.1:3199 TEST_EMAIL_TO=owner-test@gmail.com
+JC=$(mktemp)
+S=$(code -c "$JC" -b "$JC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "http://localhost:3004/api/auth/login")
+check "redirect: login → 200" 200 "$S"
+S=$(code -b "$JC" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"Redirect Test Co","contactName":"Ray Client","email":"real-client@example.com","industry":"Cleaning","clientType":"commercial","dealValue":6000,"stage":"Leads"}' "http://localhost:3004/api/clients")
+check "redirect: create lead → 201" 201 "$S"
+RC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JC" -X PUT -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"companyName":"Redirect Test Co","contactName":"Ray Client","email":"real-client@example.com","industry":"Cleaning","clientType":"commercial","dealValue":6000,"stage":"Sold"}' "http://localhost:3004/api/clients/$RC_ID")
+check "redirect: move lead into Sold → 200" 200 "$S"
+sleep 1
+if python3 - "$MOCK_EMAILS" <<'PY' 2>"$MOCK/redirect.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+assert len(lines) == 1, [(l.get("subject"), l.get("to")) for l in lines]
+e = lines[0]
+assert e["to"] == ["owner-test@gmail.com"], e["to"]
+t = e["text"]
+assert t.startswith("[TEST] Intended for real-client@example.com"), t
+assert "Email:    real-client@example.com" in t, t
+assert "Password: " in t, t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ TEST_EMAIL_TO: delivered to owner with [TEST] intended-for prefix"; else FAIL=$((FAIL+1)); echo "  ✗ redirect mismatch:"; cat "$MOCK/redirect.err"; fi
+stop_crm "$MOCK/srv-c.pid"; rm -f "$JC"
+stop_crm "$MOCK/srv-a.pid" 2>/dev/null
+stop_crm "$MOCK/srv-b.pid" 2>/dev/null
+kill "$MOCK_PID" 2>/dev/null
+rm -rf "$MOCK"
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
+
+rm -f "$JAR" /tmp/body.json
+[ "$FAIL" -eq 0 ]
+
 
 rm -f "$JAR" /tmp/body.json
 [ "$FAIL" -eq 0 ]

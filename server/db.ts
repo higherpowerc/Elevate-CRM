@@ -276,12 +276,13 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    email         TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    org_id        INTEGER NOT NULL REFERENCES orgs(id),
-    role          TEXT NOT NULL DEFAULT 'member',
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    email          TEXT NOT NULL UNIQUE,
+    password_hash  TEXT NOT NULL,
+    org_id         INTEGER NOT NULL REFERENCES orgs(id),
+    role           TEXT NOT NULL DEFAULT 'member',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    first_login_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS clients (
@@ -390,6 +391,13 @@ db.exec(`
   }
   if (!userCols.some((c) => c.name === "role")) {
     db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+  }
+  // 3g-4: durable "has this member logged in before" marker — NULL until the
+  // member's first successful password login sets it (never by impersonation,
+  // which swaps sessions without one). Drives the one-time welcome email.
+  // Additive + idempotent — safe on every boot.
+  if (!userCols.some((c) => c.name === "first_login_at")) {
+    db.exec("ALTER TABLE users ADD COLUMN first_login_at TEXT");
   }
   // Pre-existing users were single-tenant admins — they all belong to the
   // default org as admins. Runs once (only rows still at org_id 0).
