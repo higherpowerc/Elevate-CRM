@@ -556,14 +556,6 @@ db.exec(`
   }
 }
 
-// 3g-2: migrate the owner org's pipeline (Leads → Intakes → Sold) at boot.
-// Runs after every schema migration above so the stages column + users table
-// exist. On an existing database the admin user is already present, so this
-// import-time pass performs the migration immediately; on a fresh database the
-// admin is created a moment later in ensureAdmin(), which re-invokes the same
-// idempotent migration (see auth.ts).
-migrateOwnerPipeline();
-
 /**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
@@ -585,6 +577,21 @@ migrateOwnerPipeline();
  * (3g-3), not part of this data migration.
  */
 export const OWNER_PIPELINE = ["Leads", "Intakes", "Sold"] as const;
+
+// 3g-2: migrate the owner org's pipeline (Leads → Intakes → Sold) at boot.
+// Runs after every schema migration above so the stages column + users table
+// exist. On an existing database the admin user is already present, so this
+// import-time pass performs the migration immediately; on a fresh database the
+// admin is created a moment later in ensureAdmin(), which re-invokes the same
+// idempotent migration (see auth.ts).
+//
+// IMPORTANT: this call must stay BELOW the OWNER_PIPELINE declaration above.
+// `const` lives in the temporal dead zone until its declaration executes, so
+// invoking migrateOwnerPipeline() (which reads [...OWNER_PIPELINE]) before the
+// declaration would throw ReferenceError at boot on any DB where an admin
+// already exists with the legacy pipeline (the prod crash). Regression-tested
+// by the fresh-process boot test in test/api-e2e.sh (section 25).
+migrateOwnerPipeline();
 
 /** True when the org's stages are the legacy 6-stage default pipeline
  *  (case-insensitive; position 5 may be "Launch" or "Sold" — prod renamed it

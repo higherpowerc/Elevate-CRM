@@ -1489,6 +1489,94 @@ S=$(code -b "$JAR" "$BASE/api/settings")
 grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ owner org ends clean: stages back to Leads → Intakes → Sold, test clients removed" || echo "  ✗ owner end state: $(cat /tmp/body.json)"
 rm -f /tmp/mig_run.ts /tmp/mig_result.json
 
+echo "== 25. Fresh-process boot: prod-style import-time migration (TDZ regression) =="
+# Section 24 exercises the migration from a process where server/db.ts is
+# already FULLY loaded, so it cannot catch the boot crash that took down prod
+# on 2026-08-14 (two failed 3g-2 deploys): db.ts invokes migrateOwnerPipeline()
+# at import time, and on a database where the admin already exists with the
+# legacy 6-stage pipeline that import-time pass reads [...OWNER_PIPELINE] —
+# which was declared AFTER the call site and was still in its temporal dead
+# zone → ReferenceError at boot → update_failed. This section replays the exact
+# prod-style path in an isolated throwaway DB:
+#   (a) seed a fresh DB (schema + admin + org), then revert the owner org to
+#       the legacy 6-stage pipeline via RAW SQL only (no db.ts import, so no
+#       migration can run during setup) and park a client in an old stage;
+#   (b) import server/db.ts in a NEW bun process — the import itself must
+#       succeed (no TDZ ReferenceError) and the import-time pass must migrate
+#       the owner org to Leads → Intakes → Sold with the client remapped
+#       positionally (Kickoff = band [3-4] → Intakes).
+# If the TDZ bug ever regresses, this section fails while section 24 stays
+# green — exactly the failure mode that hit prod.
+BOOT_DIR=$(mktemp -d)
+(cd /home/team/shared/crm-app && DATA_DIR="$BOOT_DIR" ADMIN_EMAIL=owner@elevate.studio \
+  ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
+  bun ./server/seed.ts >/dev/null 2>&1)
+cat > "$BOOT_DIR/setup_legacy.ts" <<'TS'
+// Revert the owner org to the legacy 6-stage pipeline and park one client in
+// an old stage — raw bun:sqlite only, deliberately NOT importing server/db.ts
+// (its import-time migration would run first and defeat the test). This is
+// exactly prod's pre-3g-2 state.
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+const legacy = ["Prospect", "Intake", "Kickoff", "Build", "Launch", "Retainer"];
+const admin = db
+  .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
+  .get() as { org_id: number };
+db.query("UPDATE orgs SET stages = ? WHERE id = ?").run(JSON.stringify(legacy), admin.org_id);
+db.query("INSERT INTO clients (org_id, company_name, stage) VALUES (?, 'Boot Legacy Co', 'Kickoff')").run(
+  admin.org_id,
+);
+console.log("LEGACY_OK");
+TS
+BOOT_SETUP=$(DATA_DIR="$BOOT_DIR" bun "$BOOT_DIR/setup_legacy.ts" 2>&1)
+if echo "$BOOT_SETUP" | grep -q LEGACY_OK; then
+  PASS=$((PASS+1)); echo "  ✓ throwaway DB in prod-style legacy state (admin + 6-stage owner pipeline)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ legacy-state setup failed: $BOOT_SETUP"
+fi
+cat > "$BOOT_DIR/boot_import.ts" <<'TS'
+// THE regression probe: import server/db.ts in a fresh process against the
+// prod-style DB. The import-time migrateOwnerPipeline() call must succeed and
+// migrate the owner org to Leads → Intakes → Sold. On a regression of the TDZ
+// bug this throws ReferenceError before the import completes and BOOT_RESULT
+// is never printed.
+import { db, getOrg, parseStages, OWNER_PIPELINE } from "/home/team/shared/crm-app/server/db.ts";
+const admin = db
+  .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
+  .get() as { org_id: number };
+const org = getOrg(admin.org_id)!;
+const row = db
+  .query("SELECT stage FROM clients WHERE org_id = ? AND company_name = 'Boot Legacy Co'")
+  .get(admin.org_id) as { stage: string };
+console.log(
+  "BOOT_RESULT " +
+    JSON.stringify({ stages: parseStages(org.stages), client: row.stage, expected: [...OWNER_PIPELINE] }),
+);
+TS
+BOOT_OUT=$(DATA_DIR="$BOOT_DIR" bun "$BOOT_DIR/boot_import.ts" 2>&1)
+if echo "$BOOT_OUT" | grep -q '^BOOT_RESULT '; then
+  PASS=$((PASS+1)); echo "  ✓ fresh-process db.ts import succeeded (no TDZ ReferenceError)"
+  echo "$BOOT_OUT" | grep '^BOOT_RESULT ' | sed 's/^BOOT_RESULT //' > /tmp/boot_result.json
+  if python3 - <<'PY'
+import json
+d = json.load(open('/tmp/boot_result.json'))
+assert d['stages'] == d['expected'], (d['stages'], d['expected'])
+assert d['client'] == 'Intakes', d['client']  # old Kickoff = band [3-4] → Intakes
+print("  ✓ owner org migrated at import: " + " → ".join(d['stages']))
+print("  ✓ positional client remap ran from the boot path (Kickoff → Intakes)")
+PY
+  then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ migration result mismatch: $(cat /tmp/boot_result.json)"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ fresh-process db.ts import FAILED — boot-crash regression present:"
+  echo "$BOOT_OUT" | head -4
+fi
+rm -rf "$BOOT_DIR" /tmp/boot_result.json
+
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json
