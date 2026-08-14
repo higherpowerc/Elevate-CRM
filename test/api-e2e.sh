@@ -2370,6 +2370,83 @@ check "28i: admin deletes tenant B → 200" 200 $(code -b "$JA28" -X DELETE "htt
 stop_crm "$MOCK28/srv.pid" 2>/dev/null
 kill "$MOCK28_PID" 2>/dev/null
 rm -rf "$MOCK28" "$JA28" "$JRESETA" "$JRESETB" "$JRESETC" "$JRESETD" "$JRESETE" "$JRESETF"
+echo "== 29. Leads stage chips (owner request 2026-08-14) =="
+echo "-- 29a. UI surface strings in the built bundle =="
+NEWEST_JS29=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS29" ] && [ -f "$NEWEST_JS29" ]; then
+  if grep -q "Filter by stage" "$NEWEST_JS29" && grep -q "stage-chip" "$NEWEST_JS29" \
+     && grep -q "in the pipeline" "$NEWEST_JS29"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the stage-chip row (\"Filter by stage\") + dashboard deep-link (\"View … in the pipeline\")"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ stage-chip / deep-link strings missing from $NEWEST_JS29"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 29a bundle surface check"
+fi
+echo "-- 29b. Chip counts = non-archived clients per stage (same numbers as the dashboard stage breakdown) =="
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+cp /tmp/body.json /tmp/clients29.json
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+cp /tmp/body.json /tmp/dash29.json
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+from collections import Counter
+clients = json.load(open('/tmp/clients29.json'))['clients']
+dash = json.load(open('/tmp/dash29.json'))
+counts = Counter(c['stage'] for c in clients if not c['archived'])
+for s, n in dash['stageCounts'].items():
+    assert counts.get(s, 0) == n, (s, counts.get(s, 0), n)
+print("  ✓ non-archived per-stage counts from the loaded client list == dashboard stageCounts for every stage")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ chip counts match the stage breakdown (non-archived per stage)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ chip counts disagree with the dashboard stage breakdown"; cat "$PASS_TMP"
+fi
+echo "-- 29c. Renamed stage keeps filtering (chips are driven by the org's CURRENT stages) =="
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert d['settings']['stages'][0] == 'Leads', d['settings']['stages']
+print("  ✓ owner stage[0] is Leads before the rename")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ pre-rename stage[0] is Leads (rename target is valid)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ pre-rename stage[0] != Leads"; cat "$PASS_TMP"
+fi
+PRE_CNT=$(python3 -c "import json; d=json.load(open('/tmp/dash29.json')); print(d['stageCounts'].get('Leads', 0))")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Pipeline Leads","Intakes","Sold"]}' "$BASE/api/settings")
+check "29c: rename Leads → \"Pipeline Leads\" → 200" 200 "$S"
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/settings29.json
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+cp /tmp/body.json /tmp/clients29b.json
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+cp /tmp/body.json /tmp/dash29b.json
+code -b "$JAR" "$BASE/api/auth/me" > /dev/null
+cp /tmp/body.json /tmp/me29.json
+if PRE_CNT="$PRE_CNT" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+settings = json.load(open('/tmp/settings29.json'))
+st = settings['settings']['stages']
+assert st == ['Pipeline Leads', 'Intakes', 'Sold'], st
+clients = json.load(open('/tmp/clients29b.json'))['clients']
+assert not [c for c in clients if c['stage'] == 'Leads'], "clients still in old stage"
+moved = [c for c in clients if c['stage'] == 'Pipeline Leads']
+dash = json.load(open('/tmp/dash29b.json'))
+me = json.load(open('/tmp/me29.json'))
+assert dash['stageCounts'].get('Pipeline Leads', 0) == int(os.environ['PRE_CNT']), dash['stageCounts']
+assert me['user']['stages'][0] == 'Pipeline Leads', me['user']['stages']
+print(f"  ✓ renamed stage \"Pipeline Leads\" holds {len(moved)} client(s); count {dash['stageCounts'].get('Pipeline Leads')} unchanged; session stages follow (deep-link uses the new name)")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ renamed stage keeps filtering correctly (settings + clients + counts + session agree)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ renamed-stage check failed"; cat "$PASS_TMP"
+fi
 
 
 echo ""

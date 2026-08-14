@@ -37,6 +37,11 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState<View>("dashboard");
+  /** Owner request 2026-08-14 — deep-linked stage filter for the Leads view.
+   *  The Dashboard's stage-card "View →" stores the stage name here and
+   *  switches to the leads view; the nav "Leads"/"Clients" tab clears it so
+   *  a normal tab visit opens the pipeline on "All". */
+  const [leadsStage, setLeadsStage] = useState<string | null>(null);
   /** 3k — a reset token from the URL hash (`#/reset?token=…`), shown while
    *  the user is signed out. */
   const [resetToken, setResetToken] = useState<string | null>(null);
@@ -91,6 +96,7 @@ export default function App() {
     setImpersonating(false);
     setView("dashboard");
     setResetToken(null);
+    setLeadsStage(null);
   }, []);
 
   /* Phase 3d — "View account" from the owner's Admin tab: the server swaps
@@ -119,6 +125,16 @@ export default function App() {
     } finally {
       setReturning(false);
     }
+  }, []);
+
+  /* Owner request 2026-08-14 — open the Leads pipeline, optionally
+     pre-filtered to one stage. Called by the Dashboard's stage-card
+     "View →" (with the stage name) and its empty-state CTA (no stage →
+     "All"). The nav tab calls setView directly and clears leadsStage so a
+     plain tab visit never inherits a stale deep-link. */
+  const goToLeads = useCallback((stage?: string) => {
+    setLeadsStage(stage ?? null);
+    setView("leads");
   }, []);
 
   if (!booted) {
@@ -225,7 +241,10 @@ export default function App() {
                 the "Clients" label and the directory reads "All clients". */}
             <button
               className={view === "leads" ? "tab active" : "tab"}
-              onClick={() => setView("leads")}
+              onClick={() => {
+                setLeadsStage(null);
+                setView("leads");
+              }}
             >
               {isOwnerOrg ? "Leads" : "Clients"}
             </button>
@@ -275,9 +294,9 @@ export default function App() {
       </header>
       <main className="main">
         {view === "dashboard" ? (
-          <Dashboard onGoToLeads={() => setView("leads")} stages={stages} ownerOrg={isOwnerOrg} />
+          <Dashboard onGoToLeads={goToLeads} stages={stages} ownerOrg={isOwnerOrg} />
         ) : view === "leads" ? (
-          <Clients stages={stages} ownerOrg={isOwnerOrg} />
+          <Clients stages={stages} ownerOrg={isOwnerOrg} initialStage={leadsStage} />
         ) : view === "clients" ? (
           <ClientsDirectory stages={stages} ownerOrg={isOwnerOrg} />
         ) : view === "tasks" ? (

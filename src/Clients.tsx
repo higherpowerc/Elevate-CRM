@@ -23,6 +23,12 @@ interface Props {
    *  directory tab reads "All clients"). Purely presentational; data and
    *  stages are untouched. */
   ownerOrg?: boolean;
+  /** Owner request 2026-08-14 — deep-linked stage filter: the Dashboard's
+   *  "View →" on a stage card hands its stage name here, and this view opens
+   *  with that stage chip selected. Names arrive from the org's CURRENT stage
+   *  list (the dashboard cards are driven by the same settings), so a renamed
+   *  stage deep-links to itself. null/undefined = "All". */
+  initialStage?: string | null;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -33,7 +39,7 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   return value;
 }
 
-export default function Clients({ stages, ownerOrg = false }: Props) {
+export default function Clients({ stages, ownerOrg = false, initialStage = null }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -54,6 +60,11 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("active");
   const [query, setQuery] = useState("");
+  /* Owner request 2026-08-14 — stage chip filter (null = "All"). Initialized
+     from the dashboard deep-link (initialStage) when this view mounts; the
+     chips row below selects/toggles it. Composes with the Active/Archived/All
+     toggle and search — all three intersect in the visible memo. */
+  const [stageFilter, setStageFilter] = useState<string | null>(initialStage);
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
@@ -104,6 +115,9 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
       const matchFilter =
         filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
       if (!matchFilter) return false;
+      /* Stage chip filter — intersects with the toggle above and the search
+         below. A selected chip narrows to exactly that pipeline stage. */
+      if (stageFilter && c.stage !== stageFilter) return false;
       if (!q) return true;
       return [
         c.companyName,
@@ -120,7 +134,22 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
         .toLowerCase()
         .includes(q);
     });
-  }, [clients, filter, query]);
+  }, [clients, filter, query, stageFilter]);
+
+  /* Owner request 2026-08-14 — chip counts. Non-archived clients per stage,
+     computed live from the same loaded list the table renders, so the chips
+     always agree with the dashboard's stage breakdown (which is also
+     non-archived per stage) and with the "Active" count above. */
+  const stageCountsActive = useMemo(() => {
+    const m: Record<string, number> = {};
+    if (clients) {
+      for (const c of clients) {
+        if (c.archived) continue;
+        m[c.stage] = (m[c.stage] ?? 0) + 1;
+      }
+    }
+    return m;
+  }, [clients]);
 
   const totalValue = useMemo(
     () => visible.filter((c) => !c.archived).reduce((sum, c) => sum + (c.dealValue || 0), 0),
@@ -258,6 +287,36 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search clients"
         />
+        {/* Owner request 2026-08-14 — stage chip row: "All" + one chip per
+            org stage, each with its live non-archived count (same numbers as
+            the dashboard stage breakdown). Clicking a chip filters the table
+            to that stage; clicking the active chip again toggles it off;
+            "All" clears. Stage names come from the org's CURRENT stages
+            (orgStages, refreshed with every load), so renames show up here
+            immediately. */}
+        <div className="stage-chips" role="group" aria-label="Filter by stage">
+          <button
+            type="button"
+            className={stageFilter === null ? "stage-chip active" : "stage-chip"}
+            aria-pressed={stageFilter === null}
+            onClick={() => setStageFilter(null)}
+          >
+            All
+            <span className="seg-count">{counts.active}</span>
+          </button>
+          {orgStages.map((s) => (
+            <button
+              type="button"
+              key={s}
+              className={stageFilter === s ? "stage-chip active" : "stage-chip"}
+              aria-pressed={stageFilter === s}
+              onClick={() => setStageFilter((cur) => (cur === s ? null : s))}
+            >
+              {s}
+              <span className="seg-count">{stageCountsActive[s] ?? 0}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {visible.length === 0 ? (

@@ -7,8 +7,11 @@ import ProvisionNotices from "./ProvisionNotices";
 interface Props {
   /** Owner request 2026-08-14 — the pipeline now lives on its own "Leads"
    *  tab (the split-out "Clients" tab is the flat directory), so every
-   *  "View →" / empty-state CTA from the dashboard deep-links there. */
-  onGoToLeads: () => void;
+   *  "View →" / empty-state CTA from the dashboard deep-links there. Each
+   *  stage card hands its stage name along, so the Leads view opens with
+   *  that stage's chip pre-selected; the empty-state CTA (no stage) opens
+   *  with "All". */
+  onGoToLeads: (stage?: string) => void;
   /** The tenant's ordered pipeline stages (drives the breakdown grid + KPI). */
   stages: Stage[];
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
@@ -178,7 +181,11 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
             <div className="stage-rule" />
             <div className="stage-bottom">
               <span className="stage-caption">{stageCaption}</span>
-              <button className="link-btn" onClick={onGoToLeads}>
+              <button
+                className="link-btn"
+                onClick={() => onGoToLeads(stage)}
+                aria-label={`View ${stage} in the pipeline`}
+              >
                 View →
               </button>
             </div>
@@ -292,7 +299,7 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
         <div className="card empty">
           <p className="empty-title">{emptyTitle}</p>
           <p className="empty-sub">Add your first prospect and the pipeline starts filling in.</p>
-          <button className="btn btn-primary" onClick={onGoToLeads}>
+          <button className="btn btn-primary" onClick={() => onGoToLeads()}>
             {emptyCta}
           </button>
         </div>

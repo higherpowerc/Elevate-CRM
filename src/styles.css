@@ -1614,6 +1614,46 @@ legend.field-label {
 .search {
   max-width: 320px;
 }
+/* ── Leads stage chips (2026-08-14 owner request) ────────────
+   Full-width row under the seg/search toolbar: "All" + one pill per org
+   stage with its live count. Same visual language as .seg but lighter;
+   the active chip glows like an active seg button. */
+.stage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+.stage-chip:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.stage-chip.active {
+  background: var(--lime-dim);
+  border-color: var(--lime);
+  color: var(--lime);
+}
+.stage-chip .seg-count {
+  background: rgba(242, 241, 236, 0.08);
+}
+.stage-chip.active .seg-count {
+  background: rgba(214, 255, 63, 0.18);
+}
 
 /* ── Admin (tenant provisioning) ─────────────────────────────── */
 
