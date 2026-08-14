@@ -32,6 +32,13 @@ import {
   type InvoiceStatus,
 } from "./db";
 import {
+  GENERAL_VERTICAL,
+  VERTICAL_MAP,
+  getVertical,
+  templateFieldDefs,
+  type StoredFieldDef,
+} from "../src/verticals";
+import {
   createSession,
   verifySession,
   verifySessionPayload,
@@ -800,6 +807,10 @@ interface NewOrgInput {
   name: string;
   email: string;
   password: string;
+  /** Business type (vertical template key, 3f-1). "" / "general" = no
+   *  preset — the org starts from the default pipeline with no seeded
+   *  fields, exactly like before this feature. */
+  verticalKey: string;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -823,7 +834,21 @@ function validateNewOrg(
   if (!password) return { ok: false, error: "Password is required." };
   if (password.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
 
-  return { ok: true, value: { name, email, password } };
+  // 3f-1: optional business type. Any known vertical key, or "general" /
+  // absent / "" for the no-preset org. Unknown keys are rejected.
+  let verticalKey = "";
+  if (body.vertical !== undefined && body.vertical !== null && body.vertical !== "") {
+    if (typeof body.vertical !== "string") {
+      return { ok: false, error: "Business type must be one of the provided options." };
+    }
+    verticalKey = body.vertical.trim().toLowerCase();
+    if (!getVertical(verticalKey)) {
+      return { ok: false, error: `Unknown business type: ${body.vertical}.` };
+    }
+    if (verticalKey === GENERAL_VERTICAL.key) verticalKey = ""; // normalize
+  }
+
+  return { ok: true, value: { name, email, password, verticalKey } };
 }
 
 /* ── Org settings (Phase 3a/3b): branding + per-tenant pipeline stages
@@ -891,12 +916,42 @@ function validateCustomFields(
     if (name.length > 50) return { ok: false, error: "Custom field names must be under 51 characters." };
     const type = obj.type;
     if (!isCustomFieldType(type)) {
-      return { ok: false, error: `Custom field type must be one of: text, number, date, checkbox.` };
+      return {
+        ok: false,
+        error: `Custom field type must be one of: text, number, date, checkbox, select.`,
+      };
+    }
+    // 3f-1: select fields carry their options — required, 1..50 non-empty
+    // options, each under 101 characters (mirrors the intake-group select
+    // rules). Options are stored with the definition, org-scoped.
+    let options: string[] | undefined;
+    if (type === "select") {
+      if (!Array.isArray(obj.options) || obj.options.length === 0) {
+        return {
+          ok: false,
+          error: `Custom field "${name}" needs at least one option for type select.`,
+        };
+      }
+      if (obj.options.length > 50) {
+        return { ok: false, error: `Custom field "${name}" has too many options (max 50).` };
+      }
+      options = [];
+      for (const o of obj.options) {
+        if (typeof o !== "string") {
+          return { ok: false, error: `Custom field "${name}" options must be text.` };
+        }
+        const t = o.trim();
+        if (!t) return { ok: false, error: `Custom field "${name}" options cannot be empty.` };
+        if (t.length > 100) {
+          return { ok: false, error: `Custom field "${name}" options must be under 101 characters.` };
+        }
+        options.push(t);
+      }
     }
     const key = name.toLowerCase();
     if (seen.has(key)) return { ok: false, error: `Duplicate custom field: ${name}.` };
     seen.add(key);
-    out.push({ name, type });
+    out.push({ name, type, ...(options ? { options } : {}) });
   }
   return { ok: true, value: out };
 }
@@ -1135,8 +1190,33 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (taken) return err("An account with this email already exists.", 400);
 
     const hash = await hashPassword(v.value.password);
+    // 3f-1: a business type seeds the new org's pipeline stages, vertical
+    // custom fields and account-level vertical config from the template. The
+    // org is brand new (no clients yet), so seeding is always safe. General
+    // (verticalKey "") keeps today's defaults — the INSERT only adds name.
+    const tpl = v.value.verticalKey ? VERTICAL_MAP[v.value.verticalKey] : null;
     const tx = db.transaction(() => {
-      const orgIdNew = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(v.value.name).lastInsertRowid);
+      let orgIdNew: number;
+      if (tpl) {
+        orgIdNew = Number(
+          db
+            .query(
+              `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              v.value.name,
+              JSON.stringify(tpl.defaultStages),
+              JSON.stringify(templateFieldDefs(tpl.defaultFields)),
+              tpl.serviceModel,
+              tpl.deliveryType,
+              tpl.industry,
+              tpl.key,
+            ).lastInsertRowid,
+        );
+      } else {
+        orgIdNew = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(v.value.name).lastInsertRowid);
+      }
       const userId = Number(
         db
           .query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')")
@@ -1278,6 +1358,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         intakeOpts: parseIntakeOpts(org.intake_opts),
         // Adaptive intake Phase 3: tenant-defined custom conditional groups.
         customIntakeGroups: parseCustomIntakeGroups(org.custom_intake_groups),
+        // 3f-1: the org's business type (vertical template key; '' = General).
+        verticalKey: org.vertical_key ?? "",
       },
     });
   }
@@ -1413,6 +1495,58 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       params.push(JSON.stringify(out));
     }
 
+    /* Adaptive intake 3f-1: apply a vertical template (change business type).
+       STRICTLY ADDITIVE AND NON-DESTRUCTIVE: appends the template's missing
+       stages (at the end, case-insensitive) and missing custom fields; updates
+       industry / service model / delivery type + vertical_key; NEVER renames,
+       removes or reorders existing stages or fields (they may hold data).
+       "general" resets the vertical config to defaults and touches no stages
+       or fields. The org always comes from the session — no cross-org path. */
+    if (body.verticalKey !== undefined) {
+      if (typeof body.verticalKey !== "string") {
+        return err("Business type must be one of the provided options.", 400);
+      }
+      const key = body.verticalKey.trim().toLowerCase();
+      if (key === "" || key === GENERAL_VERTICAL.key) {
+        sets.push("vertical_key = ?", "industry = ?", "service_model = ?", "delivery_type = ?");
+        params.push("", "", "both", "both");
+      } else {
+        const tpl = VERTICAL_MAP[key];
+        if (!tpl) return err(`Unknown business type: ${body.verticalKey}.`, 400);
+        // Stages: append only the template stages the org doesn't already
+        // have (case-insensitive), keeping the org's order and renames.
+        const prevStages = parseStages(org.stages);
+        const nextStages = [...prevStages];
+        for (const s of tpl.defaultStages) {
+          if (!nextStages.some((x) => x.toLowerCase() === s.toLowerCase())) nextStages.push(s);
+        }
+        const vs = validateStages(nextStages);
+        if (!vs.ok) {
+          return err(`Cannot apply ${tpl.label}: ${vs.error}.`, 400);
+        }
+        sets.push("stages = ?");
+        params.push(JSON.stringify(vs.value));
+        // Custom fields: append only the template's fields the org doesn't
+        // already have (case-insensitive by name), keeping the org's list.
+        const prevFields = parseCustomFields(org.custom_fields);
+        const tplDefs = templateFieldDefs(tpl.defaultFields) as StoredFieldDef[];
+        const nextFields: CustomFieldDef[] = [...prevFields];
+        for (const f of tplDefs) {
+          if (!nextFields.some((x) => x.name.toLowerCase() === f.name.toLowerCase())) {
+            nextFields.push({ name: f.name, type: f.type, ...(f.options ? { options: f.options } : {}) });
+          }
+        }
+        const vf = validateCustomFields(nextFields);
+        if (!vf.ok) {
+          return err(`Cannot apply ${tpl.label}: ${vf.error}.`, 400);
+        }
+        sets.push("custom_fields = ?");
+        params.push(JSON.stringify(vf.value));
+        sets.push("vertical_key = ?", "industry = ?", "service_model = ?", "delivery_type = ?");
+        params.push(tpl.key, tpl.industry, tpl.serviceModel, tpl.deliveryType);
+      }
+    }
+
     /* Adaptive intake Phase 3: custom conditional field groups. The shape is
        validated strictly (see validateCustomIntakeGroups); keys must be unique
        across all groups AND not collide with the tenant's custom-field names
@@ -1448,6 +1582,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         industry: updated.industry,
         intakeOpts: parseIntakeOpts(updated.intake_opts),
         customIntakeGroups: parseCustomIntakeGroups(updated.custom_intake_groups),
+        verticalKey: updated.vertical_key ?? "",
       },
     });
   }

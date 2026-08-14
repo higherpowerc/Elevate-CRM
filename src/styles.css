@@ -2364,6 +2364,19 @@ legend.field-label {
   flex: none;
   margin-left: auto;
 }
+/* 3f-1: a custom-field item (row + optional select-options editor). */
+.cfdef-item {
+  border-bottom: 1px solid var(--line);
+}
+.cfdef-item:last-child {
+  border-bottom: none;
+}
+.cfdef-item .cfdef-row {
+  border-bottom: none;
+}
+.cfdef-opts.cg-opts {
+  margin: 2px 0 10px 8px;
+}
 
 .cfdef-confirm {
   display: inline-flex;

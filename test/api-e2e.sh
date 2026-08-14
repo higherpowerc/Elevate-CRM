@@ -1191,6 +1191,164 @@ code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"customIntakeGrou
 code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"serviceModel":"both","deliveryType":"both","industry":"","intakeOpts":[]}' "$BASE/api/settings" > /dev/null
 
+echo "== 23. Vertical templates (3f-1): business-type delegation at signup =="
+echo "-- 23a. Admin creates a Pest Control org — stages + fields seeded =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Pest Patrol LLC","email":"pest@example.com","password":"pestpass123","vertical":"pest_control"}' "$BASE/api/admin/orgs")
+check "admin creates Pest Control org → 201" 201 "$S"
+PEST_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARPEST=$(mktemp)
+S=$(code -c "$JARPEST" -b "$JARPEST" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"pest@example.com","password":"pestpass123"}' "$BASE/api/auth/login")
+check "pest org login → 200" 200 "$S"
+S=$(code -b "$JARPEST" "$BASE/api/settings")
+check "pest org GET settings → 200" 200 "$S"
+grep -q '"stages":\["Leads","Inspections","Recurring treatments","Renewals"\]' /tmp/body.json && echo "  ✓ pest stages seeded (owner's exact names, in order)" || echo "  ✗ pest stages: $(cat /tmp/body.json)"
+grep -q '"verticalKey":"pest_control"' /tmp/body.json && echo "  ✓ verticalKey=pest_control seeded" || echo "  ✗ verticalKey: $(cat /tmp/body.json)"
+grep -q '"industry":"home_services"' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && grep -q '"deliveryType":"we_go"' /tmp/body.json && echo "  ✓ vertical settings seeded (home_services / both / we_go)" || echo "  ✗ vertical settings: $(cat /tmp/body.json)"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+fields = {f['name']: f for f in d['customFields']}
+want = {"Pest type": "select", "Treatment frequency": "select", "Renewal reminder": "text", "COI required": "checkbox"}
+assert set(fields) == set(want), fields
+for name, typ in want.items():
+    assert fields[name]['type'] == typ, (name, fields[name])
+assert fields['Pest type']['options'] == ["Ants","Rodents","Termites","Bed bugs","Cockroaches","Mosquitoes","Other"], fields['Pest type']
+assert fields['Treatment frequency']['options'] == ["Monthly","Quarterly","Semi-annual","Annual","One-time"], fields['Treatment frequency']
+print("  ✓ pest custom fields seeded with correct types + select options")
+PY
+
+echo "-- 23b. General (no preset) behaves exactly as before =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Generic Co","email":"generic@example.com","password":"genericpass123","vertical":"general"}' "$BASE/api/admin/orgs")
+check "admin creates General org → 201" 201 "$S"
+GEN_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARGEN=$(mktemp)
+S=$(code -c "$JARGEN" -b "$JARGEN" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"generic@example.com","password":"genericpass123"}' "$BASE/api/auth/login")
+check "general org login → 200" 200 "$S"
+S=$(code -b "$JARGEN" "$BASE/api/settings")
+check "general org GET settings → 200" 200 "$S"
+grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ General org starts from default stages" || echo "  ✗ General stages: $(cat /tmp/body.json)"
+grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ General org has NO seeded custom fields" || echo "  ✗ General fields: $(cat /tmp/body.json)"
+grep -q '"verticalKey":""' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && echo "  ✓ General org verticalKey/industry empty" || echo "  ✗ General vertical: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"No Vertical Co","email":"novertica@example.com","password":"noverticapass123"}' "$BASE/api/admin/orgs")
+check "admin creates org WITHOUT vertical → 201 (same as General)" 201 "$S"
+NOVERT_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+check "admin deletes No Vertical Co → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$NOVERT_ID")
+
+echo "-- 23c. Template seeds are org-isolated (no leak) =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Glow Med Spa","email":"glow@example.com","password":"glowpass123","vertical":"med_spa"}' "$BASE/api/admin/orgs")
+check "admin creates Med Spa org → 201" 201 "$S"
+MED_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARMED=$(mktemp)
+S=$(code -c "$JARMED" -b "$JARMED" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"glow@example.com","password":"glowpass123"}' "$BASE/api/auth/login")
+check "med spa login → 200" 200 "$S"
+S=$(code -b "$JARMED" "$BASE/api/settings")
+check "med spa GET settings → 200" 200 "$S"
+grep -q '"stages":\["Leads","Consultations","Booked","Treatments","Retention"\]' /tmp/body.json && echo "  ✓ med spa stages seeded" || echo "  ✗ med spa stages: $(cat /tmp/body.json)"
+grep -q '"verticalKey":"med_spa"' /tmp/body.json && grep -q '"industry":"mobile_personal"' /tmp/body.json && grep -q '"deliveryType":"client_comes"' /tmp/body.json && echo "  ✓ med spa vertical settings (mobile_personal / client_comes)" || echo "  ✗ med spa settings: $(cat /tmp/body.json)"
+grep -qv 'Pest type' /tmp/body.json && grep -qv 'COI required' /tmp/body.json && echo "  ✓ med spa does NOT see pest fields (isolation)" || echo "  ✗ pest fields leaked to med spa: $(cat /tmp/body.json)"
+S=$(code -b "$JARPEST" "$BASE/api/settings")
+check "pest org settings still pest → 200" 200 "$S"
+grep -q '"verticalKey":"pest_control"' /tmp/body.json && grep -q '"name":"Pest type"' /tmp/body.json && grep -qv 'Consultations' /tmp/body.json && echo "  ✓ pest org unaffected by med spa (isolation)" || echo "  ✗ pest org: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -qv 'Pest type' /tmp/body.json && grep -qv '"Leads","Inspections"' /tmp/body.json && echo "  ✓ owner org untouched by any template seed" || echo "  ✗ owner org got seeded stages/fields: $(cat /tmp/body.json)"
+check "bad vertical on create → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Bad Vert Co","email":"badvert@example.com","password":"badvertpass123","vertical":"quantum_cleaning"}' "$BASE/api/admin/orgs")
+check "member cannot create orgs (admin-only) → 403" 403 $(code -b "$JARPEST" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Hack Co","email":"hack@example.com","password":"hackpass123","vertical":"pest_control"}' "$BASE/api/admin/orgs")
+
+echo "-- 23d. Additive apply: missing stages/fields appended, existing untouched =="
+S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["New leads","Inspections","Recurring treatments","Renewals"]}' "$BASE/api/settings")
+check "pest org renames a stage (Leads→New leads) → 200" 200 "$S"
+S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"Pest type","type":"select","options":["Ants","Rodents","Termites","Bed bugs","Cockroaches","Mosquitoes","Other"]},{"name":"Treatment frequency","type":"select","options":["Monthly","Quarterly","Semi-annual","Annual","One-time"]},{"name":"Renewal reminder","type":"text"},{"name":"COI required","type":"checkbox"},{"name":"Extra field","type":"text"}]}' "$BASE/api/settings")
+check "pest org adds its own custom field → 200" 200 "$S"
+S=$(code -b "$JARPEST" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Termite Tower","clientType":"commercial","stage":"New leads","dealValue":900,"customFields":[{"name":"Pest type","value":"Termites"},{"name":"COI required","value":true}]}' "$BASE/api/clients")
+check "pest org creates client in renamed stage + seeded field values → 201" 201 "$S"
+grep -q '"name":"Pest type","value":"Termites"' /tmp/body.json && grep -q '"name":"COI required","value":"1"' /tmp/body.json && echo "  ✓ seeded select + checkbox values stored" || echo "  ✗ client values: $(cat /tmp/body.json)"
+grep -q '"stage":"New leads"' /tmp/body.json && echo "  ✓ client in renamed stage" || echo "  ✗ stage: $(cat /tmp/body.json)"
+S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"painting"}' "$BASE/api/settings")
+check "apply Painting template to pest org → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+stages = d['stages']
+assert stages == ["New leads","Inspections","Recurring treatments","Renewals","Leads","Estimates","Projects","Crews","Payments"], stages
+fields = {f['name']: f for f in d['customFields']}
+names = list(fields)
+assert names[0:4] == ["Pest type","Treatment frequency","Renewal reminder","COI required"], names
+assert names.index("Extra field") == 4, names
+assert names[-4:] == ["Interior / exterior","Square footage","Paint brand preference","Assigned crew"], names
+assert fields["Interior / exterior"]["type"] == "select" and fields["Interior / exterior"]["options"] == ["Interior","Exterior","Both"], fields["Interior / exterior"]
+assert d['verticalKey'] == 'painting' and d['industry'] == 'home_services' and d['deliveryType'] == 'we_go', d
+print("  ✓ additive apply: renamed stage kept, missing stages/fields appended, vertical settings updated")
+PY
+S=$(code -b "$JARPEST" "$BASE/api/clients")
+check "pest client list after apply → 200" 200 "$S"
+grep -q 'Termite Tower' /tmp/body.json && grep -q '"stage":"New leads"' /tmp/body.json && echo "  ✓ client untouched by template apply (still in renamed stage)" || echo "  ✗ client after apply: $(cat /tmp/body.json)"
+S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"painting"}' "$BASE/api/settings")
+check "apply same template again → 200 (idempotent)" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+assert d['stages'] == ["New leads","Inspections","Recurring treatments","Renewals","Leads","Estimates","Projects","Crews","Payments"], d['stages']
+assert len(d['customFields']) == 9, len(d['customFields'])
+print("  ✓ re-apply adds nothing (no duplicates)")
+PY
+S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"general"}' "$BASE/api/settings")
+check "apply General (back to no preset) → 200" 200 "$S"
+grep -q '"verticalKey":""' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && echo "  ✓ General resets vertical config to defaults" || echo "  ✗ after general: $(cat /tmp/body.json)"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+assert d['stages'] == ["New leads","Inspections","Recurring treatments","Renewals","Leads","Estimates","Projects","Crews","Payments"], d['stages']
+assert len(d['customFields']) == 9, len(d['customFields'])
+print("  ✓ General apply leaves stages + fields untouched (non-destructive)")
+PY
+check "bad verticalKey on apply → 400" 400 $(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"quantum_cleaning"}' "$BASE/api/settings")
+check "non-string verticalKey on apply → 400" 400 $(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":42}' "$BASE/api/settings")
+
+echo "-- 23e. Cross-org isolation for seeded definitions =="
+S=$(code -b "$JARMED" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Spa Client Zero","clientType":"residential","customFields":[{"name":"Pest type","value":"Termites"}]}' "$BASE/api/clients")
+check "med spa cannot write pest-org field → 400" 400 "$S"
+grep -q 'Unknown custom field' /tmp/body.json && echo "  ✓ error is the unknown-field guard" || echo "  ✗ error: $(cat /tmp/body.json)"
+S=$(code -b "$JARMED" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Spa Client One","clientType":"residential","customFields":[{"name":"Treatment types","value":"Laser"},{"name":"License number","value":"CA-993"}]}' "$BASE/api/clients")
+check "med spa writes its own seeded field values → 201" 201 "$S"
+grep -q '"name":"Treatment types","value":"Laser"' /tmp/body.json && grep -q '"name":"License number","value":"CA-993"' /tmp/body.json && echo "  ✓ med spa seeded select + text values round-trip" || echo "  ✗ med spa client: $(cat /tmp/body.json)"
+
+echo "-- 23f. UI surface strings in the built bundle =="
+NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
+  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q "General (no preset)" "$NEWEST_JS" && grep -q "Recurring treatments" "$NEWEST_JS" && grep -q "Pest type" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + vertical seeds"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ vertical-template strings missing from $NEWEST_JS"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for bundle surface check"
+fi
+
+echo "-- 23g. Cleanup =="
+check "admin deletes pest org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$PEST_ORG_ID")
+check "admin deletes med spa org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$MED_ORG_ID")
+check "admin deletes General org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$GEN_ORG_ID")
+rm -f "$JARPEST" "$JARGEN" "$JARMED"
+
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 rm -f "$JAR" /tmp/body.json

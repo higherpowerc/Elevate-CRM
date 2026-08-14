@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { fmtDate, type Org } from "./types";
+import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDialog from "./ConfirmDialog";
 
 interface Props {
@@ -40,8 +41,16 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  /** 3f-1: the business type picker — "general" = no preset (current
+   *  behavior); any vertical seeds stages + custom fields for the new org. */
+  const [vertical, setVertical] = useState("general");
   const [formError, setFormError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ orgName: string; email: string; password: string } | null>(null);
+  const [created, setCreated] = useState<{
+    orgName: string;
+    email: string;
+    password: string;
+    verticalLabel: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   /* Delete-tenant confirm */
@@ -71,12 +80,14 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
         name: name.trim(),
         email: email.trim(),
         password,
+        vertical,
       });
-      setCreated({ orgName: org.name, email: user.email, password });
+      setCreated({ orgName: org.name, email: user.email, password, verticalLabel: verticalLabel(vertical) });
       setName("");
       setEmail("");
       setPassword("");
       setShowPassword(false);
+      setVertical("general");
       await load();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Create failed.");
@@ -156,6 +167,9 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                 <b>{created.orgName}</b> · {created.email}
               </p>
               <p className="created-line">
+                Business type: <b>{created.verticalLabel}</b>
+              </p>
+              <p className="created-line">
                 Temp password: <code>{created.password}</code>
               </p>
               <p className="created-hint">
@@ -176,6 +190,21 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                 required
                 autoFocus
               />
+            </label>
+            <label className="field">
+              <span className="field-label">Business type</span>
+              <select value={vertical} onChange={(e) => setVertical(e.target.value)}>
+                {ALL_VERTICALS.map((v) => (
+                  <option key={v.key} value={v.key}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                The new workspace is pre-configured for this business — its pipeline stages and
+                custom fields are seeded automatically. The client can rename, reorder or remove
+                anything later in Settings.
+              </span>
             </label>
             <label className="field">
               <span className="field-label">Client email *</span>

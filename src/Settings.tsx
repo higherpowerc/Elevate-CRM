@@ -11,6 +11,7 @@ import {
   type OrgSettings,
 } from "./types";
 import StageEditor from "./StageEditor";
+import { ALL_VERTICALS, verticalLabel } from "./verticals";
 
 const MAX_CUSTOM_FIELDS = 20;
 const MAX_INTAKE_GROUPS = 10;
@@ -52,11 +53,15 @@ export default function Settings() {
   const [orgName, setOrgName] = useState("");
   const [accentColor, setAccentColor] = useState("#d6ff3f");
 
-  /* Custom fields (Phase 3b) */
+  /* Custom fields (Phase 3b; 3f-1 adds select fields with options) */
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldType, setNewFieldType] = useState<CustomFieldType>("text");
+  const [newFieldOptions, setNewFieldOptions] = useState<string[]>([]);
   const [confirmRemoveField, setConfirmRemoveField] = useState<number | null>(null);
+
+  /* 3f-1: the business type picker for the additive "Apply template" path */
+  const [applyVertical, setApplyVertical] = useState("general");
 
   /* Adaptive intake (Phase 1): account-level vertical config */
   const [serviceModel, setServiceModel] = useState<OrgSettings["serviceModel"]>("both");
@@ -85,6 +90,7 @@ export default function Settings() {
       setIndustry(settings.industry);
       setIntakeOpts(settings.intakeOpts);
       setIntakeGroups(settings.customIntakeGroups);
+      setApplyVertical(settings.verticalKey || "general");
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -155,6 +161,24 @@ export default function Settings() {
     }
   }
 
+  /* ── 3f-1: apply a vertical template (change business type) ────── */
+  async function applyVerticalTemplate() {
+    setError(null);
+    setSaved(null);
+    setBusy(true);
+    try {
+      await api.updateSettings({ verticalKey: applyVertical });
+      setSaved(
+        `Business type updated to ${verticalLabel(applyVertical)} — only missing stages and custom fields were added, nothing was renamed, removed or reordered.`,
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Apply failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /* ── Custom fields (Phase 3b) ─────────────────────────────────── */
 
   function validateCustomFieldList(list: CustomFieldDef[]): string | null {
@@ -166,6 +190,14 @@ export default function Settings() {
       const key = f.name.trim().toLowerCase();
       if (seen.has(key)) return `Duplicate custom field: ${f.name}.`;
       seen.add(key);
+      if (f.type === "select") {
+        const opts = (f.options ?? []).filter((o) => o.trim());
+        if (opts.length === 0) return `Field "${f.name}" needs at least one option for type select.`;
+        if (opts.length > 50) return `Field "${f.name}" has too many options (max 50).`;
+        for (const o of opts) {
+          if (o.trim().length > 100) return `Field "${f.name}" options must be under 101 characters.`;
+        }
+      }
     }
     return null;
   }
@@ -186,13 +218,18 @@ export default function Settings() {
       setError(`You can define up to ${MAX_CUSTOM_FIELDS} custom fields.`);
       return;
     }
-    const problem = validateCustomFieldList([...customFields, { name, type: newFieldType }]);
+    const def: CustomFieldDef =
+      newFieldType === "select"
+        ? { name, type: "select", options: newFieldOptions.map((o) => o.trim()).filter(Boolean) }
+        : { name, type: newFieldType };
+    const problem = validateCustomFieldList([...customFields, def]);
     if (problem) {
       setError(problem);
       return;
     }
-    setCustomFields((list) => [...list, { name, type: newFieldType }]);
+    setCustomFields((list) => [...list, def]);
     setNewFieldName("");
+    setNewFieldOptions([]);
   }
 
   function removeField(i: number) {
@@ -200,6 +237,56 @@ export default function Settings() {
     setSaved(null);
     setConfirmRemoveField(null);
     setCustomFields((list) => list.filter((_, j) => j !== i));
+  }
+
+  /* 3f-1: select custom fields carry editable options (same UI as intake
+     group selects). */
+  function updateFieldOption(i: number, oi: number, value: string) {
+    setError(null);
+    setSaved(null);
+    setCustomFields((list) =>
+      list.map((f, j) =>
+        j === i
+          ? { ...f, options: (f.options ?? []).map((o, m) => (m === oi ? value : o)) }
+          : f,
+      ),
+    );
+  }
+
+  function addFieldOption(i: number) {
+    setError(null);
+    setSaved(null);
+    setCustomFields((list) =>
+      list.map((f, j) => (j === i ? { ...f, options: [...(f.options ?? []), ""] } : f)),
+    );
+  }
+
+  function removeFieldOption(i: number, oi: number) {
+    setError(null);
+    setSaved(null);
+    setCustomFields((list) =>
+      list.map((f, j) =>
+        j === i ? { ...f, options: (f.options ?? []).filter((_, m) => m !== oi) } : f,
+      ),
+    );
+  }
+
+  function updateNewFieldOption(oi: number, value: string) {
+    setError(null);
+    setSaved(null);
+    setNewFieldOptions((list) => list.map((o, m) => (m === oi ? value : o)));
+  }
+
+  function addNewFieldOption() {
+    setError(null);
+    setSaved(null);
+    setNewFieldOptions((list) => [...list, ""]);
+  }
+
+  function removeNewFieldOption(oi: number) {
+    setError(null);
+    setSaved(null);
+    setNewFieldOptions((list) => list.filter((_, m) => m !== oi));
   }
 
   async function saveCustomFields() {
@@ -213,7 +300,13 @@ export default function Settings() {
     setBusy(true);
     try {
       await api.updateSettings({
-        customFields: customFields.map((f) => ({ name: f.name.trim(), type: f.type })),
+        customFields: customFields.map((f) => ({
+          name: f.name.trim(),
+          type: f.type,
+          ...(f.type === "select"
+            ? { options: (f.options ?? []).map((o) => o.trim()).filter(Boolean) }
+            : {}),
+        })),
       });
       setSaved("Custom fields saved.");
       await load();
@@ -503,6 +596,55 @@ export default function Settings() {
               {busy ? "Saving…" : "Save branding"}
             </button>
           </form>
+        </div>
+
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Business type</h2>
+            <p className="admin-card-sub">
+              The type this workspace was set up for — it seeded your pipeline stages and
+              custom fields when the account was created. You can switch anytime.
+            </p>
+          </div>
+          <div className="form">
+            <div className="field">
+              <span className="field-label">Current business type</span>
+              <div>
+                <span className="badge tone-lime">{verticalLabel(settings.verticalKey)}</span>
+              </div>
+            </div>
+            <div className="field">
+              <label className="field-label" htmlFor="apply-vertical">
+                Apply a different type
+              </label>
+              <select
+                id="apply-vertical"
+                value={applyVertical}
+                onChange={(e) => {
+                  setError(null);
+                  setSaved(null);
+                  setApplyVertical(e.target.value);
+                }}
+              >
+                {ALL_VERTICALS.map((v) => (
+                  <option key={v.key} value={v.key}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                Applying is <strong>additive and non-destructive</strong>: stages and custom
+                fields the type presets that you don't already have are added at the end —
+                nothing is renamed, removed or reordered. Your industry / service model /
+                delivery settings update to the type's defaults.
+              </span>
+            </div>
+            <div className="stage-save">
+              <button className="btn btn-primary" disabled={busy} onClick={applyVerticalTemplate}>
+                {busy ? "Applying…" : "Apply template"}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="card admin-form">
@@ -812,39 +954,68 @@ export default function Settings() {
           ) : (
             <div className="cfdef-list">
               {customFields.map((f, i) => (
-                <div className="cfdef-row" key={i}>
-                  <span className="cfdef-name">{f.name}</span>
-                  <span className="badge tone-gray cfdef-type">{f.type}</span>
-                  {confirmRemoveField === i ? (
-                    <span className="cfdef-confirm">
-                      <span className="cfdef-confirm-q">Remove — clients keep their values?</span>
+                <div className="cfdef-item" key={i}>
+                  <div className="cfdef-row">
+                    <span className="cfdef-name">{f.name}</span>
+                    <span className="badge tone-gray cfdef-type">{f.type}</span>
+                    {confirmRemoveField === i ? (
+                      <span className="cfdef-confirm">
+                        <span className="cfdef-confirm-q">Remove — clients keep their values?</span>
+                        <button
+                          type="button"
+                          className="icon-btn danger"
+                          onClick={() => removeField(i)}
+                          disabled={busy}
+                        >
+                          Yes, remove
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => setConfirmRemoveField(null)}
+                          disabled={busy}
+                        >
+                          Keep
+                        </button>
+                      </span>
+                    ) : (
                       <button
                         type="button"
                         className="icon-btn danger"
-                        onClick={() => removeField(i)}
+                        onClick={() => setConfirmRemoveField(i)}
                         disabled={busy}
+                        aria-label={`Remove custom field ${f.name}`}
                       >
-                        Yes, remove
+                        Remove
                       </button>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        onClick={() => setConfirmRemoveField(null)}
-                        disabled={busy}
-                      >
-                        Keep
+                    )}
+                  </div>
+                  {f.type === "select" && (
+                    <div className="cg-opts cfdef-opts">
+                      {(f.options ?? []).map((o, oi) => (
+                        <div className="cg-opt" key={oi}>
+                          <input
+                            value={o}
+                            onChange={(e) => updateFieldOption(i, oi, e.target.value)}
+                            placeholder={`Option ${oi + 1}`}
+                            maxLength={100}
+                            aria-label={`Option ${oi + 1} for ${f.name}`}
+                          />
+                          <button
+                            type="button"
+                            className="icon-btn danger"
+                            onClick={() => removeFieldOption(i, oi)}
+                            disabled={busy}
+                            aria-label={`Remove option ${oi + 1} for ${f.name}`}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => addFieldOption(i)}>
+                        + Add option
                       </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="icon-btn danger"
-                      onClick={() => setConfirmRemoveField(i)}
-                      disabled={busy}
-                      aria-label={`Remove custom field ${f.name}`}
-                    >
-                      Remove
-                    </button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -879,6 +1050,33 @@ export default function Settings() {
               + Add field
             </button>
           </div>
+          {newFieldType === "select" && (
+            <div className="cg-opts cfdef-opts">
+              {newFieldOptions.map((o, oi) => (
+                <div className="cg-opt" key={oi}>
+                  <input
+                    value={o}
+                    onChange={(e) => updateNewFieldOption(oi, e.target.value)}
+                    placeholder={`Option ${oi + 1}`}
+                    maxLength={100}
+                    aria-label={`New field option ${oi + 1}`}
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn danger"
+                    onClick={() => removeNewFieldOption(oi)}
+                    disabled={busy}
+                    aria-label={`Remove new field option ${oi + 1}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addNewFieldOption}>
+                + Add option
+              </button>
+            </div>
+          )}
           <div className="stage-save">
             <button className="btn btn-primary" disabled={busy} onClick={saveCustomFields}>
               {busy ? "Saving…" : "Save custom fields"}

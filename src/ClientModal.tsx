@@ -683,6 +683,21 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
                       </label>
                     );
                   }
+                  if (def.type === "select") {
+                    return (
+                      <label className="field" key={def.name}>
+                        <span className="field-label">{def.name}</span>
+                        <select value={value} onChange={(e) => setValue(def.name, e.target.value)}>
+                          <option value="">—</option>
+                          {(def.options ?? []).map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  }
                   return (
                     <label className="field" key={def.name}>
                       <span className="field-label">{def.name}</span>

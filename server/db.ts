@@ -194,8 +194,9 @@ export type Role = "admin" | "member";
 
 export const DEFAULT_ORG_NAME = "Elevate Studio";
 
-/** The four custom-field value types a tenant can define (Phase 3b). */
-export const CUSTOM_FIELD_TYPES = ["text", "number", "date", "checkbox"] as const;
+/** The custom-field value types a tenant can define (Phase 3b; 3f-1 adds
+ *  "select" for vertical templates — a dropdown with options). */
+export const CUSTOM_FIELD_TYPES = ["text", "number", "date", "checkbox", "select"] as const;
 export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
 
 export function isCustomFieldType(v: unknown): v is CustomFieldType {
@@ -203,10 +204,13 @@ export function isCustomFieldType(v: unknown): v is CustomFieldType {
 }
 
 /** A tenant's custom-field DEFINITION (orgs.custom_fields entry): the field's
- *  display name and its value type. Tenants define these in Settings. */
+ *  display name and its value type. Tenants define these in Settings; vertical
+ *  templates (3f-1) seed them per business type. `options` is required for
+ *  type "select" (the dropdown choices rendered in the client form). */
 export interface CustomFieldDef {
   name: string;
   type: CustomFieldType;
+  options?: string[];
 }
 
 /** A client's stored custom-field VALUE: the field name (must match one of the
@@ -233,10 +237,20 @@ export function parseCustomFields(raw: string | null | undefined): CustomFieldDe
       if (!name || name.length > 50) continue;
       const type = obj.type;
       if (!isCustomFieldType(type)) continue;
+      // 3f-1: select fields carry their options (stored alongside the def).
+      let options: string[] | undefined;
+      if (type === "select") {
+        if (!Array.isArray(obj.options)) continue; // malformed select — drop
+        const opts = obj.options
+          .filter((o): o is string => typeof o === "string" && o.trim() !== "")
+          .map((o) => o.trim().slice(0, 100));
+        if (opts.length === 0) continue; // select with no options is unusable
+        options = opts;
+      }
       const key = name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ name, type });
+      out.push({ name, type, ...(options ? { options } : {}) });
     }
     return out;
   } catch {
@@ -529,6 +543,20 @@ db.exec(`
 }
 
 /**
+ * Vertical templates migration (Adaptive Intake 3f-1). Idempotent — safe on
+ * every boot. Adds orgs.vertical_key (the business type the owner picked at
+ * account creation, e.g. "pest_control"; '' = no preset / General). Purely
+ * informational + drives the Settings "Business type" display and the
+ * additive "Apply vertical template" path — existing orgs keep '' (General).
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "vertical_key")) {
+    db.exec(`ALTER TABLE orgs ADD COLUMN vertical_key TEXT NOT NULL DEFAULT ''`);
+  }
+}
+
+/**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
@@ -556,13 +584,16 @@ export interface OrgRow {
   intake_opts: string;
   /** Adaptive intake Phase 3: tenant-defined custom conditional field groups. */
   custom_intake_groups: string;
+  /** Adaptive intake 3f-1: the org's business type (vertical template key;
+   *  '' = no preset / General). */
+  vertical_key: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }
