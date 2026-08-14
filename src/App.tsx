@@ -213,7 +213,7 @@ export default function App() {
       </header>
       <main className="main">
         {view === "dashboard" ? (
-          <Dashboard onGoToClients={() => setView("clients")} stages={stages} />
+          <Dashboard onGoToClients={() => setView("clients")} stages={stages} ownerOrg={isOwnerOrg} />
         ) : view === "clients" ? (
           <Clients stages={stages} ownerOrg={isOwnerOrg} />
         ) : view === "tasks" ? (
