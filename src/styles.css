@@ -1117,6 +1117,160 @@ legend.field-label {
   color: var(--lime);
 }
 
+/* Dashboard privacy eye (2026-08-14 owner request) */
+.kpi-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.eye-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.eye-btn:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.eye-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Blurs money figures when the privacy eye is off; a subtle transition so
+   the toggle feels smooth rather than jarring. */
+.money-blur {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+
+/* Dashboard task overview (2026-08-14 owner request) */
+
+.task-overview {
+  padding: 18px 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.task-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-stat-num {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-stat-num.danger {
+  color: var(--danger);
+}
+
+.task-stat-num.muted {
+  color: var(--muted);
+}
+
+.task-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.task-overview-rule {
+  height: 1px;
+  background: var(--line);
+}
+
+.task-upcoming {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.task-upcoming-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.task-upcoming-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-upcoming-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.task-upcoming-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  max-width: 55%;
+}
+
+.task-upcoming-due {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.task-upcoming-due.overdue {
+  color: var(--danger);
+}
+
+.task-upcoming-due.today {
+  color: var(--lime);
+}
+
+.task-upcoming-due.soon {
+  color: var(--green);
+}
+
+.task-upcoming-empty {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+
 /* ── Badges & chips ────────────────────────────────────────── */
 
 .badge {
@@ -2121,6 +2275,10 @@ legend.field-label {
 @media (max-width: 1020px) {
   .stage-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .task-stats {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .kpi-row {

@@ -1780,6 +1780,19 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     return json({ ok: true, message: "Your password has been updated." });
   }
 
+  /* Dashboard task overview (2026-08-14 owner request) — the aggregate
+     buckets are computed against the server's local date, which is the same
+     YYYY-MM-DD convention the task date inputs store (Tasks.tsx localToday). */
+  const todayKey = (d: Date = new Date()): string => {
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${day}`;
+  };
+  const addDaysKey = (key: string, days: number): string => {
+    const [y, m, d] = key.split("-").map(Number);
+    return todayKey(new Date(y, m - 1, d + days));
+  };
+
   /* Dashboard */
   if (pathname === "/api/dashboard" && method === "GET") {
     const org = getOrg(orgId);
@@ -1806,12 +1819,56 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         .all(orgId) as ClientRow[]
     ).map(toClient);
 
+    /* Task overview (2026-08-14 owner request): open / overdue / due soon /
+       done counts plus the next few open tasks with a due date. Every query
+       is scoped to the session org like the stats above — no cross-org reads.
+       "Due soon" = due within the next 7 days (inclusive), excluding
+       overdue (past due). Upcoming = open tasks with a due date, earliest
+       first, capped at 4 to keep the payload small. */
+    const today = todayKey();
+    const soon = addDaysKey(today, 7);
+    const openAgg = db.query("SELECT COUNT(*) AS c FROM tasks WHERE org_id = ? AND done = 0").get(orgId) as { c: number };
+    const doneAgg = db.query("SELECT COUNT(*) AS c FROM tasks WHERE org_id = ? AND done = 1").get(orgId) as { c: number };
+    const overdueAgg = db
+      .query("SELECT COUNT(*) AS c FROM tasks WHERE org_id = ? AND done = 0 AND due_date != '' AND due_date < ?")
+      .get(orgId, today) as { c: number };
+    const dueSoonAgg = db
+      .query(
+        "SELECT COUNT(*) AS c FROM tasks WHERE org_id = ? AND done = 0 AND due_date != '' AND due_date >= ? AND due_date <= ?",
+      )
+      .get(orgId, today, soon) as { c: number };
+    const upcoming = (
+      db
+        .query(
+          `SELECT t.id, t.title, t.due_date, t.done, c.company_name AS client_name
+           FROM tasks t
+           LEFT JOIN clients c ON c.id = t.client_id
+           WHERE t.org_id = ? AND t.done = 0 AND t.due_date != ''
+           ORDER BY t.due_date ASC, t.id ASC
+           LIMIT 4`,
+        )
+        .all(orgId) as { id: number; title: string; due_date: string; done: number; client_name: string | null }[]
+    ).map((r) => ({
+      id: r.id,
+      title: r.title,
+      dueDate: r.due_date,
+      done: r.done === 1,
+      clientName: r.client_name ?? "",
+    }));
+
     return json({
       stageCounts,
       projectedPipeline: value.v,
       totalClients: total.c,
       archivedClients: archived.c,
       recentClients: recent,
+      tasks: {
+        open: openAgg.c,
+        overdue: overdueAgg.c,
+        dueSoon: dueSoonAgg.c,
+        done: doneAgg.c,
+        upcoming,
+      },
     });
   }
 

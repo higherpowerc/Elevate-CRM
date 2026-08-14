@@ -19,9 +19,72 @@ interface Props {
   ownerOrg?: boolean;
 }
 
+/** Local YYYY-MM-DD — the same convention the task date inputs store
+ *  (Tasks.tsx localToday), so overdue/due-soon comparisons stay consistent
+ *  between the dashboard and the Task board. */
+function localToday(d: Date = new Date()): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function addDaysKey(key: string, days: number): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return localToday(new Date(y, m - 1, d + days));
+}
+
+/** Due tone + label for an upcoming task row (mirrors Tasks.tsx dueTone). */
+function dueInfo(dueDate: string): { tone: "" | "overdue" | "today" | "soon"; label: string } {
+  if (!dueDate) return { tone: "", label: "" };
+  const today = localToday();
+  const soon = addDaysKey(today, 7);
+  if (dueDate < today) return { tone: "overdue", label: `Overdue · ${fmtDate(dueDate)}` };
+  if (dueDate === today) return { tone: "today", label: `Due today · ${fmtDate(dueDate)}` };
+  if (dueDate <= soon) return { tone: "soon", label: `Due ${fmtDate(dueDate)}` };
+  return { tone: "", label: `Due ${fmtDate(dueDate)}` };
+}
+
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
 export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /* Privacy eye (2026-08-14 owner request): blur/hide every money figure on
+     the dashboard (the projected-pipeline KPI and the Deal column of Recently
+     updated) until toggled. Default visible; the choice persists per browser
+     via localStorage. */
+  const MONEY_HIDDEN_KEY = "crm:money-hidden";
+  const [moneyHidden, setMoneyHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(MONEY_HIDDEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(MONEY_HIDDEN_KEY, moneyHidden ? "1" : "0");
+    } catch {
+      /* storage unavailable (private mode) — the toggle just won't persist */
+    }
+  }, [moneyHidden]);
 
   useEffect(() => {
     api
@@ -52,6 +115,8 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
   const stageCaption = ownerOrg ? "leads" : "clients";
   const emptyTitle = ownerOrg ? "No leads yet" : "No clients yet";
   const emptyCta = ownerOrg ? "Add a lead" : "Add a client";
+  const moneyTitle = moneyHidden ? "Show amounts" : "Hide amounts";
+  const blur = (on: boolean) => (on ? " money-blur" : "");
 
   return (
     <div className="page">
@@ -73,8 +138,20 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
 
       <div className="kpi-row">
         <div className="card kpi">
-          <span className="kpi-label">Projected pipeline</span>
-          <span className="kpi-value lime">{money(data.projectedPipeline)}</span>
+          <span className="kpi-label kpi-label-row">
+            Projected pipeline
+            <button
+              type="button"
+              className="eye-btn"
+              onClick={() => setMoneyHidden((v) => !v)}
+              aria-label={moneyTitle}
+              aria-pressed={moneyHidden}
+              title={moneyTitle}
+            >
+              {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </span>
+          <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
           <span className="kpi-note">{pipelineNote}</span>
         </div>
         <div className="card kpi">
@@ -107,6 +184,58 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Task overview (2026-08-14 owner request) — org-scoped task stats
+          plus the next few open tasks with a due date. Compact so the page
+          still fits the no-scroll layout; wording is task-centric (the same
+          for owner and tenant orgs). */}
+      <h2 className="section-title">Task overview</h2>
+      <div className="card task-overview">
+        <div className="task-stats">
+          <div className="task-stat">
+            <span className="task-stat-num">{data.tasks.open}</span>
+            <span className="task-stat-label">Open</span>
+          </div>
+          <div className="task-stat">
+            <span className={`task-stat-num${data.tasks.overdue > 0 ? " danger" : ""}`}>{data.tasks.overdue}</span>
+            <span className="task-stat-label">Overdue</span>
+          </div>
+          <div className="task-stat">
+            <span className="task-stat-num">{data.tasks.dueSoon}</span>
+            <span className="task-stat-label">Due soon</span>
+          </div>
+          <div className="task-stat">
+            <span className="task-stat-num muted">{data.tasks.done}</span>
+            <span className="task-stat-label">Done</span>
+          </div>
+        </div>
+        <div className="task-overview-rule" />
+        <div className="task-upcoming">
+          <span className="task-upcoming-label">Upcoming</span>
+          {data.tasks.upcoming.length > 0 ? (
+            <ul className="task-upcoming-list">
+              {data.tasks.upcoming.map((t) => {
+                const due = dueInfo(t.dueDate);
+                return (
+                  <li className="task-upcoming-item" key={t.id}>
+                    <span className="task-upcoming-title" title={t.title}>
+                      {t.title}
+                    </span>
+                    {t.clientName && <span className="chip">{t.clientName}</span>}
+                    <span className={`task-upcoming-due${due.tone ? ` ${due.tone}` : ""}`}>{due.label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <span className="task-upcoming-empty">
+              {data.tasks.open === 0 && data.tasks.done === 0
+                ? "No tasks yet — add one from the Tasks tab."
+                : "Nothing due — you're all set."}
+            </span>
+          )}
+        </div>
       </div>
 
       <h2 className="section-title">Recently updated</h2>
@@ -147,7 +276,9 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
                   <td>
                     <ServiceChips services={c.services} />
                   </td>
-                  <td className="num cell-strong">{money(c.dealValue)}</td>
+                  <td className="num cell-strong">
+                    <span className={blur(moneyHidden)}>{money(c.dealValue)}</span>
+                  </td>
                   <td>
                     <StageBadge stage={c.stage} index={Math.max(0, stages.indexOf(c.stage))} />
                   </td>
