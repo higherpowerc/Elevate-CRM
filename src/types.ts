@@ -185,6 +185,10 @@ export interface Org {
    *  and only until the member's first successful login clears it. Owner-only
    *  (the Admin list); never reachable from tenant-scoped endpoints. */
   tempPassword?: string;
+  /** 3k: plaintext temp password from the Admin tab's per-tenant "Reset
+   *  password" action — same delivery semantics as tempPassword (cleared on
+   *  the member's first login). Owner-only. */
+  resetPassword?: string;
   /** 3g-3: owner-org client id this workspace was auto-provisioned from
    *  (absent for manually created accounts). */
   provisionedFromClient?: number;
