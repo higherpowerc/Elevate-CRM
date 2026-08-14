@@ -33,10 +33,12 @@ import {
 } from "./db";
 import {
   GENERAL_VERTICAL,
+  VERTICALS,
   VERTICAL_MAP,
   getVertical,
   templateFieldDefs,
   type StoredFieldDef,
+  type VerticalTemplate,
 } from "../src/verticals";
 import {
   createSession,
@@ -791,6 +793,15 @@ interface OrgRow {
   created_at: string;
   user_count: number;
   client_count: number;
+  /** 3g-3: first member's login email ('' when the org has no users). */
+  login_email: string;
+  /** 3g-3: owner-org client id this org was auto-provisioned from (0 = manual). */
+  provisioned_from_client: number;
+  /** 3g-3: plaintext temp password while undelivered ('' once the member
+   *  logs in) — owner-only, never exposed via tenant-scoped endpoints. */
+  provisioned_temp_password: string;
+  /** 3g-3: source lead's company/contact name ('' when not auto-provisioned). */
+  provisioned_client_name: string;
 }
 
 function toOrg(row: OrgRow) {
@@ -800,6 +811,12 @@ function toOrg(row: OrgRow) {
     createdAt: row.created_at,
     userCount: row.user_count,
     clientCount: row.client_count,
+    loginEmail: row.login_email || "",
+    /** 3g-3: only auto-provisioned orgs carry a temp password, and only until
+     *  the member's first successful login clears it. */
+    tempPassword: row.provisioned_temp_password || undefined,
+    provisionedFromClient: row.provisioned_from_client || undefined,
+    provisionedFromClientName: row.provisioned_client_name || undefined,
   };
 }
 
@@ -849,6 +866,227 @@ function validateNewOrg(
   }
 
   return { ok: true, value: { name, email, password, verticalKey } };
+}
+
+/**
+ * Insert a brand-new org + its first member user inside one transaction —
+ * the single shared provisioning path used by BOTH the Admin "create client
+ * account" form and the 3g-3 sold-lead auto-provisioning hook, so the two
+ * never diverge. `verticalKey` seeds stages / vertical custom fields / the
+ * account-level vertical config from the matching template; "" / "general"
+ * keeps today's defaults (bare org).
+ *
+ * Email uniqueness is re-checked INSIDE the transaction (synchronous — no
+ * interleaving can occur between the check and the insert), so a colliding
+ * address aborts the whole provision cleanly with a throw.
+ */
+function insertOrgWithMember(input: {
+  name: string;
+  email: string;
+  passwordHash: string;
+  verticalKey: string;
+}): { orgId: number; userId: number } {
+  const tpl = input.verticalKey ? VERTICAL_MAP[input.verticalKey] : null;
+  return db.transaction(() => {
+    const taken = db.query("SELECT id FROM users WHERE email = ?").get(input.email);
+    if (taken) throw new Error(`An account with this email already exists: ${input.email}`);
+    let orgIdNew: number;
+    if (tpl) {
+      orgIdNew = Number(
+        db
+          .query(
+            `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            input.name,
+            JSON.stringify(tpl.defaultStages),
+            JSON.stringify(templateFieldDefs(tpl.defaultFields)),
+            tpl.serviceModel,
+            tpl.deliveryType,
+            tpl.industry,
+            tpl.key,
+          ).lastInsertRowid,
+      );
+    } else {
+      orgIdNew = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(input.name).lastInsertRowid);
+    }
+    const userId = Number(
+      db
+        .query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')")
+        .run(input.email, input.passwordHash, orgIdNew).lastInsertRowid,
+    );
+    return { orgId: orgIdNew, userId };
+  })();
+}
+
+/* ── 3g-3: sold-lead auto-provisioning ─────────────────────── */
+
+/** The owner orgs = the orgs of admin-role users (the same flag that gates
+ *  the Admin tab). Name-based lookup is NOT safe here — tenants (and the
+ *  owner) can rename their org in Settings. */
+function ownerOrgIds(): number[] {
+  const rows = db.query("SELECT DISTINCT org_id FROM users WHERE role = 'admin'").all() as {
+    org_id: number;
+  }[];
+  return rows.map((r) => r.org_id);
+}
+
+/** True when the client's stage is the FINAL stage of this org's pipeline
+ *  (case-insensitive exact match on the last stage name). For the owner org
+ *  that final stage is "Sold". */
+function isFinalStage(orgId: number, stage: string): boolean {
+  const org = getOrg(orgId);
+  if (!org) return false;
+  const stages = parseStages(org.stages);
+  if (stages.length === 0) return false;
+  return stage.trim().toLowerCase() === stages[stages.length - 1].toLowerCase();
+}
+
+/** Match a client's free-text industry against the vertical catalog:
+ *  case-insensitive match on the template KEY (the requirement), with a
+ *  label fallback so "Pest Control" / "Med Spa" / "Real Estate" — the way
+ *  the owner actually types industries — also resolve. No match → null
+ *  (General / bare org). */
+function verticalForIndustry(industry: string): VerticalTemplate | null {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/[\s_]+/g, "_");
+  const target = norm(industry);
+  if (!target) return null;
+  for (const v of VERTICALS) {
+    if (norm(v.key) === target) return v;
+  }
+  for (const v of VERTICALS) {
+    if (norm(v.label) === target) return v;
+  }
+  return null;
+}
+
+/** Crypto-grade temp password: ≥1 from each class (upper/lower/digit/symbol)
+ *  in a 16-char shuffled string. Server-side only — the Admin form's
+ *  generator stays client-side for manual creation. */
+function generateTempPassword(): string {
+  const sets = [
+    "ABCDEFGHJKLMNPQRSTUVWXYZ",
+    "abcdefghijkmnopqrstuvwxyz",
+    "23456789",
+    "!@#$%^&*-_=+",
+  ];
+  const all = sets.join("");
+  const randInt = (n: number): number => {
+    const b = new Uint8Array(1);
+    crypto.getRandomValues(b);
+    return b[0] % n;
+  };
+  const chars: string[] = sets.map((s) => s[randInt(s.length)]);
+  for (let i = 4; i < 16; i++) chars.push(all[randInt(all.length)]);
+  // Fisher–Yates shuffle so the guaranteed classes aren't clustered.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+/** Login email for the new workspace: the client's email when it looks like
+ *  one, else a slug derived from the company name at @elevate.studio. */
+function loginEmailForClient(client: ClientRow): string {
+  const email = client.email.trim().toLowerCase();
+  if (EMAIL_RE.test(email)) return email;
+  const slug = (client.company_name.trim() || client.contact_name.trim() || "client")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `${slug || "client"}@elevate.studio`;
+}
+
+/** Append a numeric suffix until the address is unused (sync SELECT loop —
+ *  call inside the provisioning transaction so nothing can interleave). */
+function pickUniqueUserEmail(base: string): string {
+  let email = base;
+  for (let i = 1; db.query("SELECT id FROM users WHERE email = ?").get(email); i++) {
+    const at = base.lastIndexOf("@");
+    email = base.slice(0, at) + i + base.slice(at);
+  }
+  return email;
+}
+
+/**
+ * Provision a brand-new CLEAN tenant workspace for a sold client (3g-3):
+ * org seeded from the vertical matching the client's industry, a member
+ * login (client email or derived slug@elevate.studio, numeric suffix when
+ * taken), a crypto temp password, and the org's owner-visible provision
+ * record + notification event. The client record itself stays in the OWNER's
+ * pipeline — nothing carries over. Everything is one transaction: on any
+ * failure nothing is created and the client stays unprovisioned (retried on
+ * the next update of that record).
+ */
+async function provisionSoldClient(client: ClientRow): Promise<{
+  orgId: number;
+  userId: number;
+  email: string;
+  password: string;
+  verticalKey: string;
+}> {
+  const tpl = verticalForIndustry(client.industry);
+  const verticalKey = tpl?.key ?? "";
+  const orgName = client.company_name.trim() || client.contact_name.trim() || "New client";
+  const password = generateTempPassword();
+  const passwordHash = await hashPassword(password);
+  const baseEmail = loginEmailForClient(client);
+
+  const out = db.transaction((): { orgId: number; userId: number; email: string } | null => {
+    // Re-check idempotency inside the transaction: the bcrypt await above
+    // means another request could have provisioned this client meanwhile.
+    const cur = db.query("SELECT provisioned_org_id FROM clients WHERE id = ?").get(client.id) as
+      | { provisioned_org_id: number }
+      | null;
+    if (!cur || cur.provisioned_org_id !== 0) return null;
+    const email = pickUniqueUserEmail(baseEmail);
+    const { orgId, userId } = insertOrgWithMember({ name: orgName, email, passwordHash, verticalKey });
+    db.query("UPDATE clients SET provisioned_org_id = ? WHERE id = ?").run(orgId, client.id);
+    db.query("UPDATE orgs SET provisioned_from_client = ?, provisioned_temp_password = ? WHERE id = ?").run(
+      client.id,
+      password,
+      orgId,
+    );
+    db.query(
+      `INSERT INTO provision_events (client_id, source_org_id, new_org_id, client_name, org_name)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(client.id, client.org_id, orgId, client.company_name || client.contact_name, orgName);
+    return { orgId, userId, email };
+  })();
+  if (!out) {
+    return { orgId: 0, userId: 0, email: baseEmail, password, verticalKey };
+  }
+  return { orgId: out.orgId, userId: out.userId, email: out.email, password, verticalKey };
+}
+
+/**
+ * The single trigger hook for 3g-3: after ANY client update (PUT) in the
+ * owner org, if the record now sits in the final "Sold" stage and has no
+ * provisioned org yet, provision one. The idempotency check IS the retry:
+ * a sold client that failed to provision stays at provisioned_org_id = 0 and
+ * is retried on the next update of that record. Never throws — a provision
+ * failure must not fail the stage change that triggered it (the stage change
+ * is already committed by the caller).
+ */
+async function maybeAutoProvisionSoldClient(orgId: number, client: ClientRow): Promise<void> {
+  if (!ownerOrgIds().includes(orgId)) return; // tenant orgs never auto-provision
+  if (client.provisioned_org_id !== 0) return; // one provision per client, forever
+  if (!isFinalStage(orgId, client.stage)) return; // only INTO the final Sold stage
+  try {
+    const out = await provisionSoldClient(client);
+    if (out.orgId !== 0) {
+      console.log(
+        `[3g-3] sold lead "${client.company_name}" (client ${client.id}) → provisioned workspace "${out.orgId}" (${out.email}, vertical ${out.verticalKey || "general"})`,
+      );
+    }
+  } catch (e) {
+    // The client's stage change has already committed — log and leave the
+    // record unprovisioned so a later update retries it.
+    console.error(`[3g-3] auto-provision failed for sold client ${client.id}:`, e);
+  }
 }
 
 /* ── Org settings (Phase 3a/3b): branding + per-tenant pipeline stages
@@ -1108,6 +1346,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (!user || !(await verifyPassword(password, user.password_hash))) {
       return err("Invalid email or password.", 401);
     }
+    // 3g-3: the first successful login with the temp password clears it from
+    // the owner's Admin list — the credential has been "delivered" (the owner
+    // hands it over; 3g-4 will email it). Never cleared by impersonation,
+    // which swaps sessions without verifying a password.
+    if (user.org_id !== 0) {
+      db.query("UPDATE orgs SET provisioned_temp_password = '' WHERE id = ? AND provisioned_temp_password != ''").run(
+        user.org_id,
+      );
+    }
     const token = createSession(user.id);
     return json(
       { user: toUser(user), impersonating: false, ok: true },
@@ -1167,6 +1414,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const rows = db
       .query(
         `SELECT o.id, o.name, o.created_at,
+                o.provisioned_from_client,
+                o.provisioned_temp_password,
+                (SELECT c.company_name FROM clients c WHERE c.id = o.provisioned_from_client) AS provisioned_client_name,
+                (SELECT u.email FROM users u WHERE u.org_id = o.id ORDER BY u.id ASC LIMIT 1) AS login_email,
                 COUNT(DISTINCT u.id) AS user_count,
                 COUNT(DISTINCT c.id) AS client_count
          FROM orgs o
@@ -1179,6 +1430,41 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     return json({ orgs: rows.map(toOrg) });
   }
 
+  /* 3g-3 — owner notifications: undismissed "auto-provisioned from sold lead"
+     events, newest first. Owner-only (requireAdmin), like every /api/admin
+     route. */
+  if (pathname === "/api/admin/provisions" && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const rows = db
+      .query(
+        `SELECT id, client_name, org_name, new_org_id, created_at
+         FROM provision_events
+         WHERE dismissed = 0
+         ORDER BY id DESC`,
+      )
+      .all() as { id: number; client_name: string; org_name: string; new_org_id: number; created_at: string }[];
+    return json({
+      provisions: rows.map((r) => ({
+        id: r.id,
+        clientName: r.client_name,
+        orgName: r.org_name,
+        orgId: r.new_org_id,
+        createdAt: r.created_at,
+      })),
+    });
+  }
+
+  const provisionMatch = pathname.match(/^\/api\/admin\/provisions\/(\d+)\/dismiss$/);
+  if (provisionMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(provisionMatch[1]);
+    const res = db.query("UPDATE provision_events SET dismissed = 1 WHERE id = ?").run(id);
+    if (res.changes === 0) return err("Provision notification not found.", 404);
+    return json({ ok: true });
+  }
+
   if (pathname === "/api/admin/orgs" && method === "POST") {
     const admin = requireAdmin(req);
     if (admin instanceof Response) return admin;
@@ -1186,45 +1472,27 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (!body) return err("Invalid JSON body.", 400);
     const v = validateNewOrg(body);
     if (!v.ok) return err(v.error, 400);
-    const taken = db.query("SELECT id FROM users WHERE email = ?").get(v.value.email);
-    if (taken) return err("An account with this email already exists.", 400);
 
     const hash = await hashPassword(v.value.password);
     // 3f-1: a business type seeds the new org's pipeline stages, vertical
-    // custom fields and account-level vertical config from the template. The
-    // org is brand new (no clients yet), so seeding is always safe. General
-    // (verticalKey "") keeps today's defaults — the INSERT only adds name.
-    const tpl = v.value.verticalKey ? VERTICAL_MAP[v.value.verticalKey] : null;
-    const tx = db.transaction(() => {
-      let orgIdNew: number;
-      if (tpl) {
-        orgIdNew = Number(
-          db
-            .query(
-              `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            )
-            .run(
-              v.value.name,
-              JSON.stringify(tpl.defaultStages),
-              JSON.stringify(templateFieldDefs(tpl.defaultFields)),
-              tpl.serviceModel,
-              tpl.deliveryType,
-              tpl.industry,
-              tpl.key,
-            ).lastInsertRowid,
-        );
-      } else {
-        orgIdNew = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(v.value.name).lastInsertRowid);
+    // custom fields and account-level vertical config from the template
+    // (insertOrgWithMember — the SAME path the 3g-3 sold-lead hook uses).
+    // General (verticalKey "") keeps today's defaults.
+    let provisioned: { orgId: number; userId: number };
+    try {
+      provisioned = insertOrgWithMember({
+        name: v.value.name,
+        email: v.value.email,
+        passwordHash: hash,
+        verticalKey: v.value.verticalKey,
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("already exists")) {
+        return err("An account with this email already exists.", 400);
       }
-      const userId = Number(
-        db
-          .query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')")
-          .run(v.value.email, hash, orgIdNew).lastInsertRowid,
-      );
-      return { orgId: orgIdNew, userId };
-    });
-    const { orgId: newOrgId, userId } = tx();
+      throw e;
+    }
+    const { orgId: newOrgId, userId } = provisioned;
     const org = db.query("SELECT id, name, created_at FROM orgs WHERE id = ?").get(newOrgId) as {
       id: number;
       name: string;
@@ -1712,6 +1980,13 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       params.push(id, orgId);
       db.query(`UPDATE clients SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
       const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
+      // 3g-3: the single trigger hook — after ANY owner-org client update, if
+      // the record is now in the final "Sold" stage (and not provisioned yet)
+      // a brand-new tenant workspace is provisioned for it. The stage change
+      // above is already committed; a provision failure never fails the PUT.
+      // The idempotency check inside also makes this the retry path for a
+      // sold client whose earlier provision failed.
+      await maybeAutoProvisionSoldClient(orgId, updated);
       return json({ client: toClient(updated) });
     }
 

@@ -335,6 +335,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_client_id   ON tasks(client_id);
   CREATE INDEX IF NOT EXISTS idx_invoices_status   ON invoices(status);
   CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
+
+  -- 3g-3: owner's dismissible "auto-provisioned from sold lead" notifications.
+  CREATE TABLE IF NOT EXISTS provision_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id     INTEGER NOT NULL,
+    source_org_id INTEGER NOT NULL,
+    new_org_id    INTEGER NOT NULL,
+    client_name   TEXT NOT NULL,
+    org_name      TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    dismissed     INTEGER NOT NULL DEFAULT 0
+  );
 `);
 
 // Simple migration for databases created before custom_fields existed:
@@ -557,6 +569,50 @@ db.exec(`
 }
 
 /**
+ * Sold-lead auto-provisioning migration (3g-3). Idempotent — safe on every
+ * boot.
+ *
+ * When the OWNER moves one of their pipeline client records into the final
+ * "Sold" stage, the system provisions a brand-new tenant workspace for that
+ * sold client (see server/api.ts maybeAutoProvisionSoldClient). This migration
+ * adds the bookkeeping that makes that safe and idempotent:
+ *
+ *   clients.provisioned_org_id        the new org provisioned for this sold
+ *                                     client (0 = none yet) — the idempotency
+ *                                     link: "one provision per client, forever"
+ *   orgs.provisioned_from_client      the owner-org client id this workspace
+ *                                     was auto-provisioned from (0 = not
+ *                                     auto-provisioned) — drives the Admin
+ *                                     list "auto-provisioned from sold lead"
+ *                                     marker + source-lead name
+ *   orgs.provisioned_temp_password    the plaintext temp password, visible to
+ *                                     the owner ONLY via the admin orgs
+ *                                     response, cleared on the member's first
+ *                                     successful login
+ *   provision_events                  the owner's dismissible in-app
+ *                                     notification (naming the sold client +
+ *                                     new workspace)
+ *
+ * All columns are plain INTEGER/TEXT with DEFAULTs, so existing rows backfill
+ * cleanly and no FK games are needed.
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  const addOrgCol = (name: string, ddl: string) => {
+    if (!orgCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE orgs ADD COLUMN ${ddl}`);
+    }
+  };
+  addOrgCol("provisioned_from_client", "provisioned_from_client INTEGER NOT NULL DEFAULT 0");
+  addOrgCol("provisioned_temp_password", "provisioned_temp_password TEXT NOT NULL DEFAULT ''");
+
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "provisioned_org_id")) {
+    db.exec(`ALTER TABLE clients ADD COLUMN provisioned_org_id INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
@@ -749,6 +805,10 @@ export interface ClientRow {
   preferred_service_location: string;
   created_at: string;
   updated_at: string;
+  /** 3g-3: the new tenant org auto-provisioned when the owner sold this
+   *  client (0 = not provisioned yet). Idempotency link — one provision per
+   *  client record, forever. */
+  provisioned_org_id: number;
 }
 
 export interface TaskRow {

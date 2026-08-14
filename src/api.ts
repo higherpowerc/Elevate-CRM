@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, ProvisionEvent, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -108,6 +108,11 @@ export const api = {
     }),
   adminDeleteOrg: (id: number) =>
     request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
+  /* 3g-3 — sold-lead auto-provisioning notifications (owner-only): the
+     undismissed list + dismiss. */
+  adminProvisions: () => request<{ provisions: ProvisionEvent[] }>("/api/admin/provisions"),
+  adminDismissProvision: (id: number) =>
+    request<{ ok: true }>(`/api/admin/provisions/${id}/dismiss`, { method: "POST" }),
   /* Phase 3d — owner impersonation: swap the owner's session into a tenant
      workspace (response is that tenant's user + impersonating: true), and
      swap back to the owner's own session. */

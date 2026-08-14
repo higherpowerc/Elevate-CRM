@@ -179,6 +179,25 @@ export interface Org {
   createdAt: string;
   userCount: number;
   clientCount: number;
+  /** 3g-3: the org's first member login email. */
+  loginEmail?: string;
+  /** 3g-3: the plaintext temp password — set ONLY for auto-provisioned orgs,
+   *  and only until the member's first successful login clears it. Owner-only
+   *  (the Admin list); never reachable from tenant-scoped endpoints. */
+  tempPassword?: string;
+  /** 3g-3: owner-org client id this workspace was auto-provisioned from
+   *  (absent for manually created accounts). */
+  provisionedFromClient?: number;
+  /** 3g-3: the sold lead's name this workspace was auto-provisioned from. */
+  provisionedFromClientName?: string;
+}
+/** 3g-3: an owner notification that a sold lead got auto-provisioned. */
+export interface ProvisionEvent {
+  id: number;
+  clientName: string;
+  orgName: string;
+  orgId: number;
+  createdAt: string;
 }
 
 /** Shape of /api/auth/me, /api/auth/login, /api/admin/impersonate and

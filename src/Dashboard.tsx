@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { stageTone, money, fmtDate, type DashboardData, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
+import ProvisionNotices from "./ProvisionNotices";
 
 interface Props {
   onGoToClients: () => void;
@@ -62,6 +63,10 @@ export default function Dashboard({ onGoToClients, stages, ownerOrg = false }: P
           </p>
         </div>
       </div>
+
+      {/* 3g-3 — owner-only: sold-lead auto-provisioning notices (dismissed on
+          view; the Admin tab carries the full credentials). */}
+      {ownerOrg && <ProvisionNotices />}
 
       <div className="kpi-row">
         <div className="card kpi">

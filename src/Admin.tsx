@@ -3,6 +3,7 @@ import { api } from "./api";
 import { fmtDate, type Org } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDialog from "./ConfirmDialog";
+import ProvisionNotices from "./ProvisionNotices";
 
 interface Props {
   /** The admin's own org id — the owner workspace is never deletable. */
@@ -144,6 +145,10 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
           {error}
         </div>
       )}
+
+      {/* 3g-3 — sold-lead auto-provisioning notices: name the sold client +
+          the new workspace, dismissed on view. */}
+      <ProvisionNotices onViewAccount={(orgId) => handleViewAccount({ id: orgId } as Org)} />
 
       <div className="admin-grid">
         <div className="card admin-form">
@@ -293,7 +298,39 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                         <div className="cell-company">
                           {o.name}
                           {isOwner && <span className="chip chip-owner">owner</span>}
+                          {o.provisionedFromClient && (
+                            <span
+                              className="chip chip-provisioned"
+                              title="This workspace was auto-created when a sold lead moved into the Sold stage"
+                            >
+                              auto-provisioned
+                            </span>
+                          )}
                         </div>
+                        {/* 3g-3 — for auto-provisioned orgs: the source lead
+                            name + the login credentials the owner hands over.
+                            The temp password disappears once the member's
+                            first login clears it. */}
+                        {o.provisionedFromClient && (
+                          <div className="prov-row-meta">
+                            <p className="prov-row-line">
+                              New — auto-provisioned from sold lead ·{" "}
+                              <b>{o.provisionedFromClientName || "—"}</b>
+                            </p>
+                            <p className="prov-row-line">
+                              Login: <code>{o.loginEmail}</code>
+                              {o.tempPassword ? (
+                                <>
+                                  {" "}· Temp password: <code>{o.tempPassword}</code>
+                                </>
+                              ) : (
+                                <span className="cell-muted">
+                                  {" "}· password delivered — member has logged in
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        )}
                       </td>
                       <td className="num" data-label="Members">
                         {o.userCount}
