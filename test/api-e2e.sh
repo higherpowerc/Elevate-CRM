@@ -2013,6 +2013,262 @@ stop_crm "$MOCK/srv-a.pid" 2>/dev/null
 stop_crm "$MOCK/srv-b.pid" 2>/dev/null
 kill "$MOCK_PID" 2>/dev/null
 rm -rf "$MOCK"
+echo "== 28. Password reset (3k) =="
+# Self-contained like section 27: a throwaway CRM server on :3005 with a fresh
+# DB posts emails to a mock Resend endpoint on :3198, which records every
+# request as JSONL. The MAIN server on $BASE is untouched. start_crm/stop_crm
+# (defined in section 27) are reused here.
+MOCK28=$(mktemp -d)
+MOCK28_EMAILS="$MOCK28/emails.jsonl"
+: > "$MOCK28_EMAILS"
+cat > "$MOCK28/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const PORT = 3198;
+const OUT = process.env.MOCK28_OUT ?? "/tmp/mock28-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock28 resend on " + PORT);
+TS
+MOCK28_OUT="$MOCK28_EMAILS" nohup bun "$MOCK28/resend.ts" > "$MOCK28/resend.log" 2>&1 &
+MOCK28_PID=$!
+i=0; until curl -sf http://127.0.0.1:3198/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+if curl -sf http://127.0.0.1:3198/health >/dev/null 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ mock Resend endpoint up on :3198"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ mock Resend endpoint failed to start"
+fi
+# Token storage helpers (hashed-only check + forced expiry).
+cat > "$MOCK28/hashcheck.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+const rows = db.query("SELECT token_hash FROM password_resets").all() as { token_hash: string }[];
+const raw = process.env.RAWTOKEN ?? "";
+if (rows.length === 0) { console.log("NO_ROWS"); process.exit(2); }
+if (rows.some((r) => r.token_hash === raw)) { console.log("RAW_FOUND"); process.exit(2); }
+if (!rows.every((r) => /^[0-9a-f]{64}$/.test(r.token_hash))) { console.log("BAD_HASH"); process.exit(2); }
+console.log("HASHED_ONLY");
+TS
+cat > "$MOCK28/expire.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+db.query(
+  "UPDATE password_resets SET expires_at = 1 WHERE user_id = (SELECT id FROM users WHERE email = ?)",
+).run(process.env.EXP_EMAIL ?? "");
+console.log("expired");
+TS
+
+echo "-- 28a. Provision two tenants; forgot-password mints a token + emails the link =="
+start_crm 3005 "$MOCK28/db" "$MOCK28/srv.log" "$MOCK28/srv.pid" -u TEST_EMAIL_TO RESEND_API_KEY=test-key-123 RESEND_URL=http://127.0.0.1:3198
+JA28=$(mktemp)    # owner (admin) session
+JRESETA=$(mktemp) # tenant A's own session
+JRESETB=$(mktemp) # tenant B's own session
+JRESETC=$(mktemp) # empty jar (unauthenticated)
+JRESETD=$(mktemp) # tenant A session after reset (28e)
+JRESETE=$(mktemp) # tenant A session after Settings change (28f)
+JRESETF=$(mktemp) # tenant A session with admin temp password (28g)
+S=$(code -c "$JA28" -b "$JA28" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "http://localhost:3005/api/auth/login")
+check "28a: admin login → 200" 200 "$S"
+S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Reset Tenant A","email":"reseta@example.com","password":"ResetApass123!"}' "http://localhost:3005/api/admin/orgs")
+check "28a: admin creates tenant A → 201" 201 "$S"
+ORGA_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Reset Tenant B","email":"resetb@example.com","password":"ResetBpass123!"}' "http://localhost:3005/api/admin/orgs")
+check "28a: admin creates tenant B → 201" 201 "$S"
+ORGB_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"email":"reseta@example.com"}' "http://localhost:3005/api/auth/forgot")
+check "28a: forgot-password for known email → 200" 200 "$S"
+grep -Fq "a reset link is on its way" /tmp/body.json && echo "  ✓ generic success message returned" || echo "  ✗ forgot response: $(cat /tmp/body.json)"
+sleep 1
+if python3 - "$MOCK28_EMAILS" <<'PY' 2>"$MOCK28/emails-a.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+assert len(lines) == 1, [(l.get("subject"), l.get("to")) for l in lines]
+e = lines[0]
+assert e["to"] == ["reseta@example.com"], e["to"]
+assert e["subject"] == "Reset your password", e["subject"]
+t = e["text"]
+assert "https://crm.example.test/#/reset?token=" in t, t
+assert "45 minutes" in t and "once" in t, t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ reset email: recipient, subject, origin URL with token, expiry note"; else FAIL=$((FAIL+1)); echo "  ✗ reset email mismatch:"; cat "$MOCK28/emails-a.err"; fi
+TOKENA=$(python3 - "$MOCK28_EMAILS" <<'PY'
+import json, sys, re
+lines = [json.loads(l) for l in open(sys.argv[1])]
+t = lines[0]["text"]
+m = re.search(r"token=([0-9a-f]{64})", t)
+assert m, t
+print(m.group(1))
+PY
+)
+echo "    (tenant A token: ${TOKENA:0:8}…)"
+# No-account enumeration: unknown email gets the SAME message and NO email.
+S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"nobody@example.com"}' "http://localhost:3005/api/auth/forgot")
+check "28a: forgot for unknown email → 200" 200 "$S"
+grep -Fq "a reset link is on its way" /tmp/body.json && echo "  ✓ identical generic message (no account enumeration)" || echo "  ✗ forgot response: $(cat /tmp/body.json)"
+if [ "$(wc -l < "$MOCK28_EMAILS")" -eq 1 ]; then
+  PASS=$((PASS+1)); echo "  ✓ unknown email sent NO reset email"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ unexpected email for unknown account: $(cat "$MOCK28_EMAILS")"
+fi
+
+echo "-- 28b. Token validation: wrong token, weak password, hashed storage =="
+check "28b: redeem wrong token → 400" 400 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d '{"token":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","password":"Whatever123!"}' "http://localhost:3005/api/auth/reset")
+check "28b: redeem with short password → 400" 400 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKENA\",\"password\":\"short\"}" "http://localhost:3005/api/auth/reset")
+HC=$(DB_FILE="$MOCK28/db/crm.db" RAWTOKEN="$TOKENA" bun "$MOCK28/hashcheck.ts")
+if [ "$HC" = "HASHED_ONLY" ]; then PASS=$((PASS+1)); echo "  ✓ token stored as sha256 hash only (raw token never in DB)"; else FAIL=$((FAIL+1)); echo "  ✗ token storage: $HC"; fi
+
+echo "-- 28c. Multi-tenant isolation: tenant B cannot redeem tenant A's token =="
+S=$(code -c "$JRESETB" -b "$JRESETB" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"resetb@example.com","password":"ResetBpass123!"}' "http://localhost:3005/api/auth/login")
+check "28c: tenant B login → 200" 200 "$S"
+S=$(code -b "$JRESETB" -X POST -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKENA\",\"password\":\"Hijacked123!\"}" "http://localhost:3005/api/auth/reset")
+check "28c: B redeems A's token while signed in → 403" 403 "$S"
+grep -Fq "Forbidden" /tmp/body.json && echo "  ✓ cross-org redemption forbidden" || echo "  ✗ reset response: $(cat /tmp/body.json)"
+# Neither password may have changed: A still logs in with its old password,
+# B with its old password.
+S=$(code -c "$JRESETA" -b "$JRESETA" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"reseta@example.com","password":"ResetApass123!"}' "http://localhost:3005/api/auth/login")
+check "28c: A login with ORIGINAL password → 200 (unchanged)" 200 "$S"
+S=$(code -c "$JRESETB" -b "$JRESETB" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"resetb@example.com","password":"ResetBpass123!"}' "http://localhost:3005/api/auth/login")
+check "28c: B login with ORIGINAL password → 200 (unchanged)" 200 "$S"
+
+echo "-- 28d. Expired token rejected =="
+S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"email":"reseta@example.com"}' "http://localhost:3005/api/auth/forgot")
+check "28d: mint a second token → 200" 200 "$S"
+sleep 1
+TOKENA2=$(python3 - "$MOCK28_EMAILS" <<'PY'
+import json, sys, re
+lines = [json.loads(l) for l in open(sys.argv[1])]
+m = re.search(r"token=([0-9a-f]{64})", lines[-1]["text"])
+assert m, lines[-1]["text"]
+print(m.group(1))
+PY
+)
+EXP=$(DB_FILE="$MOCK28/db/crm.db" EXP_EMAIL="reseta@example.com" bun "$MOCK28/expire.ts")
+[ "$EXP" = "expired" ] && echo "  ✓ forced all of A's tokens to expire (DB)" || echo "  ✗ expiry script failed: $EXP"
+check "28d: redeem expired token → 400" 400 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKENA2\",\"password\":\"Whatever123!\"}" "http://localhost:3005/api/auth/reset")
+grep -Fq "invalid or has expired" /tmp/body.json && echo "  ✓ expired message returned" || echo "  ✗ reset response: $(cat /tmp/body.json)"
+
+echo "-- 28e. Happy path: single-use token resets the password =="
+S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d '{"email":"reseta@example.com"}' "http://localhost:3005/api/auth/forgot")
+check "28e: mint a third token → 200" 200 "$S"
+sleep 1
+TOKENA3=$(python3 - "$MOCK28_EMAILS" <<'PY'
+import json, sys, re
+lines = [json.loads(l) for l in open(sys.argv[1])]
+m = re.search(r"token=([0-9a-f]{64})", lines[-1]["text"])
+assert m, lines[-1]["text"]
+print(m.group(1))
+PY
+)
+S=$(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKENA3\",\"password\":\"ResetAnew123!\"}" "http://localhost:3005/api/auth/reset")
+check "28e: unauthenticated redemption → 200" 200 "$S"
+grep -Fq "has been reset" /tmp/body.json && echo "  ✓ success message returned" || echo "  ✗ reset response: $(cat /tmp/body.json)"
+check "28e: SAME token redeemed twice → 400 (single-use)" 400 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKENA3\",\"password\":\"ResetAnew456!\"}" "http://localhost:3005/api/auth/reset")
+check "28e: login with OLD password → 401" 401 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"reseta@example.com","password":"ResetApass123!"}' "http://localhost:3005/api/auth/login")
+S=$(code -c "$JRESETD" -b "$JRESETD" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"reseta@example.com","password":"ResetAnew123!"}' "http://localhost:3005/api/auth/login")
+check "28e: login with NEW password → 200" 200 "$S"
+
+echo "-- 28f. Change password in Settings (authenticated, session stays valid) =="
+check "28f: change-password without cookie → 401" 401 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"ResetAnew123!","newPassword":"ResetAchange1!"}' "http://localhost:3005/api/auth/change-password")
+check "28f: wrong current password → 400" 400 $(code -b "$JRESETD" -X POST -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"nope","newPassword":"ResetAchange1!"}' "http://localhost:3005/api/auth/change-password")
+check "28f: short new password → 400" 400 $(code -b "$JRESETD" -X POST -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"ResetAnew123!","newPassword":"short"}' "http://localhost:3005/api/auth/change-password")
+S=$(code -b "$JRESETD" -X POST -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"ResetAnew123!","newPassword":"ResetAchange1!"}' "http://localhost:3005/api/auth/change-password")
+check "28f: correct current password → 200" 200 "$S"
+check "28f: existing session STILL valid after change (me → 200)" 200 $(code -b "$JRESETD" "http://localhost:3005/api/auth/me")
+S=$(code -c "$JRESETE" -b "$JRESETE" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"reseta@example.com","password":"ResetAchange1!"}' "http://localhost:3005/api/auth/login")
+check "28f: login with CHANGED password → 200" 200 "$S"
+check "28f: login with pre-change password → 401" 401 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"reseta@example.com","password":"ResetAnew123!"}' "http://localhost:3005/api/auth/login")
+
+echo "-- 28g. Admin-tab per-tenant reset password =="
+check "28g: admin reset without cookie → 401" 401 $(code -b "$JRESETC" -X POST "http://localhost:3005/api/admin/orgs/$ORGA_ID/reset-password")
+check "28g: member calls admin reset → 403" 403 $(code -b "$JRESETD" -X POST "http://localhost:3005/api/admin/orgs/$ORGA_ID/reset-password")
+check "28g: admin resets owner org → 400" 400 $(code -b "$JA28" -X POST "http://localhost:3005/api/admin/orgs/1/reset-password")
+check "28g: admin resets missing org → 404" 404 $(code -b "$JA28" -X POST "http://localhost:3005/api/admin/orgs/999999/reset-password")
+S=$(code -b "$JA28" -X POST "http://localhost:3005/api/admin/orgs/$ORGA_ID/reset-password")
+check "28g: admin resets tenant A password → 200" 200 "$S"
+grep -Fq '"ok":true' /tmp/body.json && grep -Fq '"email":"reseta@example.com"' /tmp/body.json && echo "  ✓ response carries the login email" || echo "  ✗ reset response: $(cat /tmp/body.json)"
+TEMP28=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['password'])")
+[ ${#TEMP28} -ge 16 ] && echo "  ✓ crypto temp password returned to owner (${#TEMP28} chars)" || echo "  ✗ temp password too short: $TEMP28"
+S=$(code -b "$JA28" "http://localhost:3005/api/admin/orgs")
+check "28g: admin orgs list → 200" 200 "$S"
+if python3 - "$ORGA_ID" "$TEMP28" <<'PY' 2>/dev/null
+import json, sys
+d = json.load(open('/tmp/body.json'))
+o = next(o for o in d['orgs'] if o['id'] == int(sys.argv[1]))
+assert o.get('resetPassword') == sys.argv[2], o.get('resetPassword')
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ Admin list shows the new reset temp password"; else FAIL=$((FAIL+1)); echo "  ✗ resetPassword missing from Admin list"; fi
+check "28g: old password fails after admin reset → 401" 401 $(code -b "$JRESETC" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"reseta@example.com","password":"ResetAchange1!"}' "http://localhost:3005/api/auth/login")
+S=$(code -c "$JRESETF" -b "$JRESETF" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"reseta@example.com\",\"password\":\"$TEMP28\"}" "http://localhost:3005/api/auth/login")
+check "28g: new temp password logs the member in → 200" 200 "$S"
+S=$(code -b "$JA28" "http://localhost:3005/api/admin/orgs")
+check "28g: admin orgs list after member login → 200" 200 "$S"
+if python3 - "$ORGA_ID" <<'PY' 2>/dev/null
+import json, sys
+d = json.load(open('/tmp/body.json'))
+o = next(o for o in d['orgs'] if o['id'] == int(sys.argv[1]))
+assert o.get('resetPassword') is None, o.get('resetPassword')
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ reset temp password cleared after member login (delivered)"; else FAIL=$((FAIL+1)); echo "  ✗ resetPassword still visible after login"; fi
+
+echo "-- 28h. UI surface strings in the built bundle =="
+NEWEST_JS28=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS28" ] && [ -f "$NEWEST_JS28" ]; then
+  if grep -q "Forgot password?" "$NEWEST_JS28" && grep -q "Set new password" "$NEWEST_JS28" \
+     && grep -q "Change password" "$NEWEST_JS28" && grep -q "Reset password" "$NEWEST_JS28"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the 3k UI strings (forgot / reset / change / admin reset)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ 3k strings missing from $NEWEST_JS28"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 3k bundle surface check"
+fi
+
+echo "-- 28i. Cleanup =="
+check "28i: admin deletes tenant A → 200" 200 $(code -b "$JA28" -X DELETE "http://localhost:3005/api/admin/orgs/$ORGA_ID")
+check "28i: admin deletes tenant B → 200" 200 $(code -b "$JA28" -X DELETE "http://localhost:3005/api/admin/orgs/$ORGB_ID")
+stop_crm "$MOCK28/srv.pid" 2>/dev/null
+kill "$MOCK28_PID" 2>/dev/null
+rm -rf "$MOCK28" "$JA28" "$JRESETA" "$JRESETB" "$JRESETC" "$JRESETD" "$JRESETE" "$JRESETF"
+
 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"

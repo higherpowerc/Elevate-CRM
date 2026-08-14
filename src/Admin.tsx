@@ -36,6 +36,15 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   const [error, setError] = useState<string | null>(null);
   /** Org whose "View account" is in flight (shows a spinner on that row). */
   const [viewingOrgId, setViewingOrgId] = useState<number | null>(null);
+  /** 3k — org whose "Reset password" is in flight. */
+  const [resettingOrgId, setResettingOrgId] = useState<number | null>(null);
+  /** 3k — the fresh temp password from the last reset, shown in a modal so
+   *  the owner can hand it to the client. */
+  const [resetResult, setResetResult] = useState<{
+    orgName: string;
+    email: string;
+    password: string;
+  } | null>(null);
 
   /* Create-account form */
   const [name, setName] = useState("");
@@ -126,6 +135,35 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
       setViewingOrgId(null);
     }
   }
+
+  /* 3k — generate a fresh temp password for a tenant (the interim answer to
+     "client forgot their password and has no email access"). The password
+     comes back once, in the modal; it also stays on the Admin list until the
+     client's first successful login clears it. */
+  async function handleResetPassword(o: Org) {
+    setResettingOrgId(o.id);
+    setError(null);
+    setResetResult(null);
+    try {
+      const res = await api.adminResetOrgPassword(o.id);
+      setResetResult({ orgName: o.name, email: res.email, password: res.password });
+      await load(); // refresh so the list shows the new resetPassword value
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reset failed.");
+    } finally {
+      setResettingOrgId(null);
+    }
+  }
+
+  /* 3k — Esc closes the temp-password modal (same as every other modal). */
+  useEffect(() => {
+    if (!resetResult) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setResetResult(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [resetResult]);
 
   return (
     <div className="page">
@@ -340,6 +378,15 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                             </p>
                           </div>
                         )}
+                        {/* 3k — an Admin-tab reset temp password while
+                            undelivered: shown for ANY org (not just
+                            auto-provisioned), cleared on first login. */}
+                        {o.resetPassword && (
+                          <p className="prov-row-line">
+                            Reset password: <code>{o.resetPassword}</code>{" "}
+                            <span className="cell-muted">· shown until the client signs in</span>
+                          </p>
+                        )}
                       </td>
                       <td className="num" data-label="Members">
                         {o.userCount}
@@ -363,16 +410,25 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                                 className="btn btn-primary btn-sm"
                                 title="Open this workspace as the client sees it"
                                 aria-label={`View ${o.name} account`}
-                                disabled={viewingOrgId !== null}
+                                disabled={viewingOrgId !== null || resettingOrgId !== null}
                                 onClick={() => handleViewAccount(o)}
                               >
                                 {viewingOrgId === o.id ? "Opening…" : "View account"}
                               </button>
                               <button
+                                className="btn btn-ghost btn-sm"
+                                title="Generate a new temporary password for this client"
+                                aria-label={`Reset ${o.name} password`}
+                                disabled={viewingOrgId !== null || resettingOrgId !== null}
+                                onClick={() => handleResetPassword(o)}
+                              >
+                                {resettingOrgId === o.id ? "Resetting…" : "Reset password"}
+                              </button>
+                              <button
                                 className="icon-btn danger"
                                 title="Delete this client account"
                                 aria-label={`Delete ${o.name}`}
-                                disabled={viewingOrgId !== null}
+                                disabled={viewingOrgId !== null || resettingOrgId !== null}
                                 onClick={() => setDeleting(o)}
                               >
                                 Delete
@@ -404,6 +460,41 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}
         />
+      )}
+
+      {/* 3k — the fresh temp password from the Admin "Reset password" action,
+          shown once so the owner can hand it to the client securely. */}
+      {resetResult && (
+        <div className="overlay" role="dialog" aria-modal="true" aria-label="Password reset">
+          <div className="modal modal-sm">
+            <div className="modal-head">
+              <h2>Password reset</h2>
+              <button className="icon-btn" onClick={() => setResetResult(null)} aria-label="Close">
+                ✕
+              </button>
+            </div>
+            <div className="confirm-body">
+              <p className="confirm-delete-msg">
+                <strong>{resetResult.orgName}</strong> has a new temporary password.
+              </p>
+              <p className="created-line">
+                Login: <code>{resetResult.email}</code>
+              </p>
+              <p className="created-line">
+                Temp password: <code>{resetResult.password}</code>
+              </p>
+              <p className="created-hint">
+                Share it with the client securely (not by email). It is also shown on the Admin
+                list until they sign in.
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setResetResult(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Login from "./Login";
+import ResetPassword from "./ResetPassword";
 import Dashboard from "./Dashboard";
 import Clients from "./Clients";
 import Tasks from "./Tasks";
@@ -12,10 +13,24 @@ import { initials } from "./bits";
 
 type View = "dashboard" | "clients" | "tasks" | "finance" | "admin" | "settings";
 
+/** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
+ *  token out of the hash on boot so the login screen can render the
+ *  reset-password form in place of the sign-in card. */
+function resetTokenFromHash(): string | null {
+  const h = window.location.hash;
+  if (!h.startsWith("#/reset")) return null;
+  const q = h.includes("?") ? h.slice(h.indexOf("?")) : "";
+  const token = new URLSearchParams(q).get("token");
+  return token && token.trim() ? token.trim() : null;
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState<View>("dashboard");
+  /** 3k — a reset token from the URL hash (`#/reset?token=…`), shown while
+   *  the user is signed out. */
+  const [resetToken, setResetToken] = useState<string | null>(null);
   /* Phase 3d — owner impersonation. True while the owner's session is swapped
      into a client tenant's workspace; drives the banner in the shell. */
   const [impersonating, setImpersonating] = useState(false);
@@ -28,6 +43,7 @@ export default function App() {
         return null;
       });
       setImpersonating(false);
+      setResetToken(null);
     };
     window.addEventListener("crm:unauthorized", onUnauthorized);
     api
@@ -38,6 +54,7 @@ export default function App() {
       })
       .catch(() => setUser(null))
       .finally(() => setBooted(true));
+    setResetToken(resetTokenFromHash());
     return () => window.removeEventListener("crm:unauthorized", onUnauthorized);
   }, []);
 
@@ -64,6 +81,7 @@ export default function App() {
     setUser(null);
     setImpersonating(false);
     setView("dashboard");
+    setResetToken(null);
   }, []);
 
   /* Phase 3d — "View account" from the owner's Admin tab: the server swaps
@@ -110,7 +128,31 @@ export default function App() {
     );
   }
 
-  if (!user) return <Login onLogin={(u) => setUser(u)} />;
+  if (!user) {
+    // 3k — the reset page replaces the sign-in card while the URL hash carries
+    // a token (`#/reset?token=…`). "Sign in" after a successful reset clears
+    // the hash and returns to the normal login card.
+    if (resetToken) {
+      return (
+        <ResetPassword
+          token={resetToken}
+          onDone={() => {
+            window.location.hash = "";
+            setResetToken(null);
+          }}
+        />
+      );
+    }
+    return (
+      <Login
+        onLogin={(u) => {
+          setUser(u);
+          setResetToken(null);
+          if (window.location.hash.startsWith("#/reset")) window.location.hash = "";
+        }}
+      />
+    );
+  }
 
   const isOwner = orgName === "Elevate Studio";
   const brandMark = isOwner ? "E" : initials(orgName) || "E";

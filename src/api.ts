@@ -124,6 +124,34 @@ export const api = {
   impersonateReturn: () =>
     request<MeResponse>("/api/auth/impersonate-return", { method: "POST" }),
 
+  /* 3k — password reset: forgot-password (public, mints + emails a token),
+     token redemption (public), and change-password from Settings
+     (authenticated; session stays valid). */
+  forgotPassword: (email: string) =>
+    request<{ ok: true; message: string }>("/api/auth/forgot", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (token: string, password: string) =>
+    request<{ ok: true; message: string }>("/api/auth/reset", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true; message: string }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  /* 3k — owner-only: generate a fresh temp password for a tenant (the interim
+     "client forgot their password and has no email access" answer). The
+     plaintext comes back ONCE in this response (and stays on the Admin list
+     until the member's first login). */
+  adminResetOrgPassword: (orgId: number) =>
+    request<{ ok: true; orgId: number; email: string; password: string }>(
+      `/api/admin/orgs/${orgId}/reset-password`,
+      { method: "POST" },
+    ),
+
   /* Org settings (Phase 3a/3b — branding, per-tenant stages, custom fields;
      Phase 1 adaptive intake — vertical config). Any signed-in member of the
      org can read/update their own org's settings. */

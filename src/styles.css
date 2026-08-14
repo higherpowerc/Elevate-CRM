@@ -217,6 +217,33 @@ textarea {
 .btn-block {
   width: 100%;
 }
+/* 3k — "Forgot password?" link under the sign-in form (and its "Back to
+   sign in" counterpart on the reset-request form): a quiet link-styled
+   button, centered, that inherits the accent on hover. */
+.forgot-link {
+  background: none;
+  border: none;
+  padding: 2px 0 0;
+  margin: -4px auto 0;
+  display: block;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--ink-dim) 45%, transparent);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.forgot-link:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
+.forgot-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
 
 /* ── Login ─────────────────────────────────────────────────── */
 

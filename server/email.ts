@@ -144,3 +144,34 @@ export function sendWelcomeEmail(opts: {
     text,
   });
 }
+
+/** 3k — password reset email, sent from the forgot-password flow. The raw
+ *  token appears ONLY in this email (the server stores a SHA-256 hash); the
+ *  link is a single-use, time-boxed reset page in the SPA. `appUrl` comes
+ *  from appUrlFrom(req) exactly like the 3g-4 emails, so the link points at
+ *  the origin the user actually came from (production fallback otherwise). */
+export function sendPasswordResetEmail(opts: {
+  to: string;
+  appUrl: string;
+  token: string;
+}): Promise<void> {
+  const resetUrl = `${opts.appUrl}/#/reset?token=${opts.token}`;
+  const text = [
+    "Hi there,",
+    "",
+    "We got a request to reset your Elevate Studio password. Open the link below to choose a new one:",
+    "",
+    resetUrl,
+    "",
+    "This link works for 45 minutes and can only be used once.",
+    "",
+    "If you didn't ask to reset your password, you can safely ignore this email — your password won't change.",
+    "",
+    "— Elevate Studio",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: "Reset your password",
+    text,
+  });
+}

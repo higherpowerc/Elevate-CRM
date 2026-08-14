@@ -185,6 +185,10 @@ provisioning (signup, per-tenant login) is Phase 2; the schema is ready for it.
 | GET      | `/api/auth/me`       | —                                              | Current user (`impersonating`/`impersonatedFrom` set during Phase 3d owner impersonation) |
 | POST     | `/api/admin/impersonate` | `{orgId}`                                  | Owner-only (403 for members): swap the session into that tenant's user — no password, no new users; `impersonating:true` + `impersonatedFrom` in response |
 | POST     | `/api/auth/impersonate-return` | —                                        | Swap back to the owner's own session (400 if not impersonating) |
+| POST     | `/api/auth/forgot` | `{email}`                                      | Public (3k): if the email has an account, emails a single-use reset link. Identical response whether or not the email exists (no account enumeration); token stored SHA-256-hashed only |
+| POST     | `/api/auth/reset`  | `{token, password}`                            | Public (3k): validates the token (exists, unexpired — 45 min — unused), sets the new password (min 8 chars), marks the token used. Token is bound to one user/org; a signed-in user from a DIFFERENT org gets 403 |
+| POST     | `/api/auth/change-password` | `{currentPassword, newPassword}`        | Authenticated (3k): verifies the current password server-side, updates to the new one; the existing session stays valid |
+| POST     | `/api/admin/orgs/:id/reset-password` | —                              | Owner-only (3k): generates a crypto temp password for the tenant member (returns it once; stored in `orgs.admin_reset_password`, cleared on the member's first login) |
 | GET      | `/api/dashboard`     | —                                              | Stage counts, projectedPipeline (active only), recent clients |
 | GET      | `/api/clients`       | `?archived=1` `?q=term`                        | List (archived hidden by default)  |
 | POST     | `/api/clients`       | full client object (incl. `services` string[] and `customFields` {label,value}[]) | 201 on create; 400 on invalid      |
@@ -197,6 +201,7 @@ Run the end-to-end suite (needs a running server with the QA admin from `.env`):
 ```bash
 bash test/api-e2e.sh        # auth guards → login → CRUD → stage moves → archive → delete →
                             # customFields round-trip → free-form services → decimal deal values → logout
+                            # → multi-tenant isolation → impersonation → emails (mock Resend) → password reset (3k)
 ```
 
 ---
@@ -204,6 +209,10 @@ bash test/api-e2e.sh        # auth guards → login → CRUD → stage moves →
 ## Auth & security notes (MVP-grade — read before launch)
 
 - Passwords are hashed with **bcrypt** (`Bun.password.hash`, cost 10) — never plaintext.
+- Password-reset tokens (3k) are single-use, expire after 45 minutes, and are stored as
+  **SHA-256 hashes only** — the raw token appears solely in the emailed reset link
+  (`<appUrl>/#/reset?token=…`). Tokens are bound to a user (and therefore an org), so
+  redemption can never change a password across tenant boundaries.
 - Sessions are **HMAC-SHA256-signed tokens** in an `HttpOnly; SameSite=Lax` cookie. Not
   stored server-side; logout works by expiring the cookie.
 - **Must harden before a public launch:**

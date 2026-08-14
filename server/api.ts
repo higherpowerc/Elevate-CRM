@@ -51,7 +51,8 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, appUrlFrom } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, appUrlFrom } from "./email";
+import { randomBytes } from "node:crypto";
 
 export const SESSION_COOKIE = "elevate_session";
 
@@ -135,6 +136,37 @@ function impersonationFrom(req: Request): number | null {
   if (!admin || admin.role !== "admin") return null;
   return payload.imp;
 }
+
+/* ── Password reset (3k, owner request) ────────────────────────────────
+ * Forgot-password flow: a single-use token (45-minute expiry) is emailed to
+ * the user; the server stores ONLY a SHA-256 hash of it (never the raw
+ * token). Redemption updates the bound user's password_hash — the token is
+ * tied to a user_id and therefore to one org, so it can never change a
+ * different tenant's password. As an extra multi-tenant guard, an
+ * AUTHENTICATED user from a different org gets a 403 when trying to redeem
+ * a token that belongs to another org (the normal emailed-link flow is
+ * unauthenticated and uses the token itself as the credential). */
+
+const RESET_TOKEN_TTL_MS = 45 * 60 * 1000; // 45 minutes
+const RESET_TOKEN_BYTES = 32; // 64 hex chars of entropy
+
+function generateResetToken(): string {
+  return randomBytes(RESET_TOKEN_BYTES).toString("hex");
+}
+
+/** SHA-256 hash of a reset token — the only thing ever stored/logged. The
+ *  "pwreset::" prefix keeps reset-token hashes distinct from any other use. */
+function hashResetToken(token: string): string {
+  return new Bun.CryptoHasher("sha256").update("pwreset::" + token).digest("hex");
+}
+
+/** The generic forgot-password response — identical whether or not the email
+ *  belongs to an account, so the endpoint never leaks which emails are
+ *  registered. */
+const FORGOT_OK = {
+  ok: true,
+  message: "If an account exists for that email, a reset link is on its way.",
+};
 
 /* ── Client row → API shape ─────────────────────────────────────────── */
 
@@ -801,6 +833,10 @@ interface OrgRow {
   /** 3g-3: plaintext temp password while undelivered ('' once the member
    *  logs in) — owner-only, never exposed via tenant-scoped endpoints. */
   provisioned_temp_password: string;
+  /** 3k: plaintext temp password from the Admin tab's per-tenant "Reset
+   *  password" action ('' once the member logs in) — owner-only, same
+   *  delivery semantics as provisioned_temp_password. */
+  admin_reset_password: string;
   /** 3g-3: source lead's company/contact name ('' when not auto-provisioned). */
   provisioned_client_name: string;
 }
@@ -816,6 +852,10 @@ function toOrg(row: OrgRow) {
     /** 3g-3: only auto-provisioned orgs carry a temp password, and only until
      *  the member's first successful login clears it. */
     tempPassword: row.provisioned_temp_password || undefined,
+    /** 3k: admin-initiated reset temp password while undelivered ('' once the
+     *  member logs in) — owner-only, shown in the Admin list like the 3g-3
+     *  auto-provisioned credential. */
+    resetPassword: row.admin_reset_password || undefined,
     provisionedFromClient: row.provisioned_from_client || undefined,
     provisionedFromClientName: row.provisioned_client_name || undefined,
   };
@@ -1365,6 +1405,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db.query("UPDATE orgs SET provisioned_temp_password = '' WHERE id = ? AND provisioned_temp_password != ''").run(
         user.org_id,
       );
+      // 3k: same delivery semantics for the Admin-tab reset temp password —
+      // once the member logs in (with ANY password), the credential has been
+      // delivered and disappears from the owner's Admin list.
+      db.query("UPDATE orgs SET admin_reset_password = '' WHERE id = ? AND admin_reset_password != ''").run(
+        user.org_id,
+      );
       // 3g-4: durable "has this member logged in before" marker — set
       // together with the temp-password clear, only on a real password login
       // (impersonation never reaches this handler). The welcome email fires
@@ -1391,6 +1437,69 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       200,
       { "Set-Cookie": sessionCookie(token) },
     );
+  }
+
+  /* 3k — forgot password (PUBLIC): mint a single-use reset token for the
+     email's account (if one exists) and email the reset link. The response is
+     identical whether or not the email is registered, so this endpoint never
+     leaks which emails have accounts. The raw token goes out ONLY in the
+     email; the DB stores its SHA-256 hash. Never throws — sendEmail degrades
+     to a logged skip when RESEND_API_KEY is unset, exactly like 3g-4. */
+  if (pathname === "/api/auth/forgot" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (email && EMAIL_RE.test(email)) {
+      const user = getUserByEmail(email);
+      if (user) {
+        const token = generateResetToken();
+        db.query("INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)").run(
+          user.id,
+          hashResetToken(token),
+          Date.now() + RESET_TOKEN_TTL_MS,
+        );
+        console.log(`[pwreset] reset link issued for user ${user.id} (org ${user.org_id}) — token stored hashed only`);
+        void sendPasswordResetEmail({ to: user.email, appUrl: appUrlFrom(req), token });
+      }
+    }
+    return json(FORGOT_OK);
+  }
+
+  /* 3k — redeem a reset token (PUBLIC): validates the token (exists, unexpired,
+     unused), sets the user's new password (same rules as signup), and marks
+     the token used — all in one transaction. The token is bound to a specific
+     user_id, so redemption can only ever change THAT user's password. Extra
+     multi-tenant guard: an authenticated session whose org differs from the
+     token's org gets 403 (the normal flow is unauthenticated — the link is
+     the credential). */
+  if (pathname === "/api/auth/reset" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!token || !password) return err("Token and new password are required.", 400);
+    if (password.length < 8) return err("Password must be at least 8 characters.", 400);
+    const row = db
+      .query(
+        `SELECT pr.id AS rid, pr.user_id, u.org_id
+         FROM password_resets pr
+         JOIN users u ON u.id = pr.user_id
+         WHERE pr.token_hash = ? AND pr.used_at IS NULL AND pr.expires_at > ?`,
+      )
+      .get(hashResetToken(token), Date.now()) as { rid: number; user_id: number; org_id: number } | null;
+    if (!row) return err("This reset link is invalid or has expired.", 400);
+    // Cross-org guard: a signed-in user may only redeem a token that belongs
+    // to their OWN org. Unauthenticated redemption (the emailed link) is fine.
+    const auth = requireAuth(req);
+    if (!(auth instanceof Response) && auth.orgId !== row.org_id) {
+      return err("Forbidden.", 403);
+    }
+    const hash = await hashPassword(password);
+    db.transaction(() => {
+      db.query("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, row.user_id);
+      db.query("UPDATE password_resets SET used_at = datetime('now') WHERE id = ?").run(row.rid);
+    })();
+    return json({ ok: true, message: "Your password has been reset. Sign in with your new password." });
   }
 
   if (pathname === "/api/auth/logout" && method === "POST") {
@@ -1446,6 +1555,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         `SELECT o.id, o.name, o.created_at,
                 o.provisioned_from_client,
                 o.provisioned_temp_password,
+                o.admin_reset_password,
                 (SELECT c.company_name FROM clients c WHERE c.id = o.provisioned_from_client) AS provisioned_client_name,
                 (SELECT u.email FROM users u WHERE u.org_id = o.id ORDER BY u.id ASC LIMIT 1) AS login_email,
                 COUNT(DISTINCT u.id) AS user_count,
@@ -1552,10 +1662,55 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
       db.query("DELETE FROM tasks WHERE org_id = ?").run(id);
       db.query("DELETE FROM clients WHERE org_id = ?").run(id);
+      // 3k: password_resets references users — drop this org's tokens first.
+      db.query("DELETE FROM password_resets WHERE user_id IN (SELECT id FROM users WHERE org_id = ?)").run(id);
       db.query("DELETE FROM users WHERE org_id = ?").run(id);
       db.query("DELETE FROM orgs WHERE id = ?").run(id);
     })();
     return json({ ok: true });
+  }
+
+  /* 3k — owner-only per-tenant "Reset password" (the Admin tab action for a
+     client who forgot their password and has no email access). Generates a
+     crypto temp password (the same generator the 3g-3 sold-lead provisioning
+     uses), hashes it into the tenant member's account, and stores the
+     plaintext in orgs.admin_reset_password so the owner can hand it over —
+     the same display/clearing pattern as the 3g-3 temp password. The owner
+     org itself is never reset; a member calling this gets 403 via
+     requireAdmin. */
+  const adminResetMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)\/reset-password$/);
+  if (adminResetMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminResetMatch[1]);
+    const org = db.query("SELECT id, name FROM orgs WHERE id = ?").get(id) as
+      | { id: number; name: string }
+      | null;
+    if (!org) return err("Org not found.", 404);
+    if (org.id === admin.orgId) return err("Cannot reset the owner workspace's password.", 400);
+    // Prefer the org's member login; fall back to any of its users (same rule
+    // as the impersonate route).
+    const member = db
+      .query("SELECT id, email FROM users WHERE org_id = ? AND role = 'member' ORDER BY id ASC LIMIT 1")
+      .get(org.id) as { id: number; email: string } | null;
+    const target =
+      member ??
+      (db.query("SELECT id, email FROM users WHERE org_id = ? ORDER BY id ASC LIMIT 1").get(org.id) as
+        | { id: number; email: string }
+        | null);
+    if (!target) return err("Org has no user accounts.", 400);
+    const password = generateTempPassword();
+    const hash = await hashPassword(password);
+    db.transaction(() => {
+      db.query("UPDATE users SET password_hash = ? WHERE id = ?").run(hash, target.id);
+      // The fresh password supersedes any undelivered auto-provision credential.
+      db.query("UPDATE orgs SET admin_reset_password = ?, provisioned_temp_password = '' WHERE id = ?").run(
+        password,
+        org.id,
+      );
+    })();
+    console.log(`[pwreset] admin reset password for org ${org.id} (user ${target.id}) — stored hashed, plaintext only in admin_reset_password`);
+    return json({ ok: true, orgId: org.id, email: target.email, password });
   }
 
   /* Phase 3d — owner impersonation: swap the admin's session for the target
@@ -1598,6 +1753,31 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       200,
       { "Set-Cookie": sessionCookie(token) },
     );
+  }
+
+  /* 3k — change password from Settings (authenticated): verifies the current
+     password server-side, then updates to the new one (same rules as signup).
+     The existing session stays valid — sessions are HMAC-signed and carry no
+     password material, so there is no re-login after a change. Scoped to the
+     session user AND org, so a member can only ever change their own. */
+  if (pathname === "/api/auth/change-password" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const current = typeof body.currentPassword === "string" ? body.currentPassword : "";
+    const next = typeof body.newPassword === "string" ? body.newPassword : "";
+    if (!current) return err("Current password is required.", 400);
+    if (!next) return err("New password is required.", 400);
+    if (next.length < 8) return err("Password must be at least 8 characters.", 400);
+    const row = db
+      .query("SELECT password_hash FROM users WHERE id = ? AND org_id = ?")
+      .get(auth.userId, auth.orgId) as { password_hash: string } | null;
+    if (!row) return err("Not signed in.", 401);
+    if (!(await verifyPassword(current, row.password_hash))) {
+      return err("Current password is incorrect.", 400);
+    }
+    const hash = await hashPassword(next);
+    db.query("UPDATE users SET password_hash = ? WHERE id = ? AND org_id = ?").run(hash, auth.userId, auth.orgId);
+    return json({ ok: true, message: "Your password has been updated." });
   }
 
   /* Dashboard */

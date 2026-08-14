@@ -78,6 +78,44 @@ export default function Settings() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
+  /* 3k — change password (authenticated; the existing session stays valid) */
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSaved, setPwSaved] = useState<string | null>(null);
+
+  async function savePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwError(null);
+    setPwSaved(null);
+    if (!curPw) {
+      setPwError("Enter your current password.");
+      return;
+    }
+    if (newPw.length < 8) {
+      setPwError("New password must be at least 8 characters.");
+      return;
+    }
+    if (newPw !== confirmPw) {
+      setPwError("New passwords don't match.");
+      return;
+    }
+    setPwBusy(true);
+    try {
+      const res = await api.changePassword(curPw, newPw);
+      setPwSaved(res.message);
+      setCurPw("");
+      setNewPw("");
+      setConfirmPw("");
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : "Change failed.");
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
   const load = useCallback(async () => {
     setLoadError(null);
     try {
@@ -1039,6 +1077,67 @@ export default function Settings() {
               {busy ? "Saving…" : "Save custom fields"}
             </button>
           </div>
+        </div>
+
+        {/* 3k — change password: current + new + confirm, verified server-side.
+            The existing session stays valid after the change. */}
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Change password</h2>
+            <p className="admin-card-sub">
+              Update the password you sign in with. You'll stay signed in here.
+            </p>
+          </div>
+          {pwError && (
+            <div className="alert alert-error" role="alert">
+              {pwError}
+            </div>
+          )}
+          {pwSaved && (
+            <div className="alert alert-success" role="status">
+              {pwSaved}
+            </div>
+          )}
+          <form onSubmit={savePassword} className="form">
+            <label className="field">
+              <span className="field-label">Current password</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={curPw}
+                onChange={(e) => setCurPw(e.target.value)}
+                placeholder="••••••••"
+                required
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">New password</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                placeholder="At least 8 characters"
+                minLength={8}
+                required
+              />
+            </label>
+            <label className="field">
+              <span className="field-label">Confirm new password</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                placeholder="Repeat the new password"
+                minLength={8}
+                required
+              />
+            </label>
+            <button className="btn btn-primary" disabled={pwBusy} type="submit">
+              {pwBusy ? "Updating…" : "Update password"}
+            </button>
+          </form>
         </div>
       </div>
       {confirmRemoveField !== null && (
