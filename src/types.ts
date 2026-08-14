@@ -147,6 +147,24 @@ export interface Invoice {
   updatedAt: string;
 }
 
+/** One row of the dashboard "Task overview" upcoming list. */
+export interface DashboardUpcomingTask {
+  id: number;
+  title: string;
+  dueDate: string;
+  done: boolean;
+  clientName: string;
+}
+
+/** Org-scoped task aggregates for the dashboard Task overview panel. */
+export interface DashboardTaskAgg {
+  open: number;
+  overdue: number;
+  dueSoon: number;
+  done: number;
+  upcoming: DashboardUpcomingTask[];
+}
+
 /** stageCounts keys are the tenant's own stage names (dynamic). */
 export interface DashboardData {
   stageCounts: Record<string, number>;
@@ -154,6 +172,8 @@ export interface DashboardData {
   totalClients: number;
   archivedClients: number;
   recentClients: Client[];
+  /** Task overview (2026-08-14 owner request) — same org scoping as the rest. */
+  tasks: DashboardTaskAgg;
 }
 
 export interface User {

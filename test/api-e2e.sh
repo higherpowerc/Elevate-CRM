@@ -20,6 +20,7 @@ check() { # check <name> <expected_status> <actual_status> [extra]
 }
 
 code() { curl -s -o /tmp/body.json -w "%{http_code}" "$@"; }
+PASS_TMP=$(mktemp)
 
 echo "== 1. Auth guards =="
 check "me without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/auth/me")
@@ -323,6 +324,48 @@ check "delete T2 → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T2")
 check "delete T2 again → 404" 404 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T2")
 check "toggle missing task → 404" 404 $(code -b "$JAR" -X POST "$BASE/api/tasks/999999/toggle")
 
+echo "-- 13a. Dashboard task overview aggregates (2026-08-14 owner request) =="
+# Owner org task state entering this section (from section 13):
+#   T1 "Send revised quote" (done, due 2026-08-25), T3 "Collect analytics
+#   access" (done, due 2026-08-12), T4 "Follow up with temp client" (open, no
+#   due date). So open=1, done=2, overdue=0, dueSoon=0, upcoming=[].
+# Dates are computed relative to today so the suite stays deterministic no
+# matter when it runs (server and test share the machine's local clock).
+TODAY_KEY=$(python3 -c "from datetime import date; print(date.today().isoformat())")
+OVERDUE_KEY=$(python3 -c "from datetime import date, timedelta; print((date.today() - timedelta(days=3)).isoformat())")
+SOON_KEY=$(python3 -c "from datetime import date, timedelta; print((date.today() + timedelta(days=2)).isoformat())")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Overdue follow-up call\",\"dueDate\":\"$OVERDUE_KEY\"}" "$BASE/api/tasks")
+check "13a: create overdue open task → 201" 201 "$S"
+T_OVERDUE=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Due-soon proposal\",\"dueDate\":\"$SOON_KEY\"}" "$BASE/api/tasks")
+check "13a: create due-soon open task → 201" 201 "$S"
+T_SOON=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+check "13a: dashboard carries task aggregates → 200" 200 "$S"
+if python3 - "$TODAY_KEY" "$OVERDUE_KEY" "$SOON_KEY" <<'PY' 2>"$PASS_TMP"
+import json, sys
+d = json.load(open('/tmp/body.json'))
+t = d.get('tasks')
+assert t, 'no tasks key in dashboard: %s' % list(d.keys())
+assert t['open'] == 3, t          # T4 + the two just created
+assert t['done'] == 2, t          # T1 + T3
+assert t['overdue'] == 1, t       # Overdue follow-up call only
+assert t['dueSoon'] == 1, t       # Due-soon proposal only
+up = t['upcoming']
+assert len(up) == 2, up           # T4 has no due date, so it is excluded
+assert up[0]['title'] == 'Overdue follow-up call' and up[0]['dueDate'] == sys.argv[2], up
+assert up[1]['title'] == 'Due-soon proposal' and up[1]['dueDate'] == sys.argv[3], up
+assert up[0]['done'] is False and up[0]['clientName'] == '', up
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ task overview aggregates: open/overdue/due soon/done counts + upcoming order (earliest due first)"
+else FAIL=$((FAIL+1)); echo "  ✗ task overview aggregates mismatch"; cat "$PASS_TMP"; fi
+# Restore the pre-13a task state so later sections see the same data as before.
+check "13a: delete overdue task → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T_OVERDUE")
+check "13a: delete due-soon task → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/$T_SOON")
+
 echo "== 14. Invoices =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"clientId\":$HVAC_ID,\"amount\":12345.50,\"dueDate\":\"2026-08-20\",\"notes\":\"Website build — deposit\"}" \
@@ -544,6 +587,15 @@ grep -q '"invoices":\[\]' /tmp/body.json && echo "  ✓ member sees NO default-o
 S=$(code -b "$JAR2" "$BASE/api/dashboard")
 check "member dashboard → 200" 200 "$S"
 grep -q '"projectedPipeline":0' /tmp/body.json && grep -q '"totalClients":0' /tmp/body.json && echo "  ✓ member dashboard is empty (no cross-org stats)" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+t = d.get('tasks', {})
+assert t.get('open') == 0 and t.get('done') == 0 and t.get('overdue') == 0     and t.get('dueSoon') == 0 and t.get('upcoming') == [], d
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ member dashboard task overview is empty (owner-org tasks not visible)"
+else FAIL=$((FAIL+1)); echo "  ✗ member dashboard task overview not empty"; cat "$PASS_TMP"; fi
 
 echo "-- 16d. Admin org list has the new tenant with correct counts =="
 S=$(code -b "$JAR" "$BASE/api/admin/orgs")
@@ -604,6 +656,17 @@ grep -q '"amount":777.77' /tmp/body.json && echo "  ✓ member sees their own in
 S=$(code -b "$JAR2" "$BASE/api/dashboard")
 check "member dashboard counts own data → 200" 200 "$S"
 grep -q '"projectedPipeline":5000' /tmp/body.json && grep -q '"totalClients":1' /tmp/body.json && echo "  ✓ member dashboard counts only their own data" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+t = d.get('tasks', {})
+# The member org has exactly one open task ("Member follow-up", no due date):
+# it must show in the member's aggregates, and in NO other org's.
+assert t.get('open') == 1 and t.get('done') == 0 and t.get('overdue') == 0     and t.get('dueSoon') == 0 and t.get('upcoming') == [], t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ member dashboard task overview counts only the member's own task"
+else FAIL=$((FAIL+1)); echo "  ✗ member dashboard task overview mismatch"; cat "$PASS_TMP"; fi
 
 echo "-- 16g. Default org cannot see member data =="
 S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -621,6 +684,18 @@ grep -qv '"amount":777.77' /tmp/body.json && echo "  ✓ admin does NOT see memb
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 check "admin dashboard → 200" 200 "$S"
 grep -qv 'Member Corp' /tmp/body.json && echo "  ✓ admin dashboard excludes member data" || echo "  ✗ member leaked into admin dashboard"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+t = d.get('tasks', {})
+# Owner org has T1 + T3 done and T4 open. If the member's open task leaked
+# into the owner dashboard, open would be 2 — it must stay 1.
+assert t.get('open') == 1 and t.get('done') == 2, t
+assert all(u['title'] != 'Member follow-up' for u in t.get('upcoming', [])), t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ admin dashboard task overview excludes the member org's task (open=1, done=2)"
+else FAIL=$((FAIL+1)); echo "  ✗ member task leaked into admin dashboard task overview"; cat "$PASS_TMP"; fi
 
 echo "-- 16h. Cross-org links rejected =="
 check "member task with default-org client → 400" 400 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
@@ -886,6 +961,17 @@ grep -qv 'Summit Heating' /tmp/body.json && grep -qv 'Willow & Stone' /tmp/body.
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 check "impersonated dashboard → 200" 200 "$S"
 grep -q '"totalClients":3' /tmp/body.json && echo "  ✓ dashboard counts only the tenant's 3 clients" || echo "  ✗ dashboard: $(cat /tmp/body.json)"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+t = d.get('tasks', {})
+# The impersonated tenant has no tasks of its own; the owner org's tasks
+# (T1/T3/T4) must NOT surface through the swapped session.
+assert t.get('open') == 0 and t.get('done') == 0 and t.get('upcoming') == [], t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ impersonated dashboard task overview is empty (owner tasks not visible)"
+else FAIL=$((FAIL+1)); echo "  ✗ owner tasks leaked into impersonated dashboard"; cat "$PASS_TMP"; fi
 check "impersonated session cannot use admin endpoints → 403" 403 $(code -b "$JAR" "$BASE/api/admin/orgs")
 
 echo "-- 18f. Return to the owner dashboard =="
@@ -949,6 +1035,13 @@ if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
     PASS=$((PASS+1)); echo "  ✓ bundle contains the split Leads/Clients nav (directory tab labels + search)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ split Leads/Clients nav strings missing from $NEWEST_JS"
+  fi
+  # 2026-08-14 owner requests — dashboard Task overview panel (stats + due
+  # tones) and the privacy eye (hide/show amounts, persisted via localStorage).
+  if grep -q "Task overview" "$NEWEST_JS" && grep -q "Due soon" "$NEWEST_JS" && grep -q "Hide amounts" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the Task overview panel + privacy-eye strings"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ Task overview / privacy-eye strings missing from $NEWEST_JS"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found — run \`bun run build\` before the suite"
@@ -2282,7 +2375,7 @@ rm -rf "$MOCK28" "$JA28" "$JRESETA" "$JRESETB" "$JRESETC" "$JRESETD" "$JRESETE" 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 
-rm -f "$JAR" /tmp/body.json
+rm -f "$JAR" /tmp/body.json "$PASS_TMP"
 [ "$FAIL" -eq 0 ]
 
 
