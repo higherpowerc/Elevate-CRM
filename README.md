@@ -37,6 +37,15 @@ same port. Nothing else to run.
   name, email, phone, industry, services (free-form chips — any industry: HVAC, legal, dog
   grooming…), deal value (any magnitude, decimals allowed), stage, next action, notes, and
   **per-client custom fields** (label/value rows — e.g. License #, Service area, Fleet size).
+- **Vertical templates (business-type delegation)** — when the owner creates a client
+  account they pick a business type (Cleaning, Plumbing, Landscaping, Pest Control, Pool
+  Service, Painting, Flooring, Med Spa, Real Estate, or General/no preset). The new org's
+  pipeline stages, vertical-specific custom fields (text / yes-no / select-with-options)
+  and vertical settings (industry, service model, delivery) are seeded automatically from
+  `src/verticals.ts` — no per-vertical code, one shared layout engine, and the tenant can
+  rename/reorder/remove everything afterward in Settings. Settings also lets a tenant
+  **apply a different template later**: strictly additive and non-destructive — only
+  missing stages/fields are appended, nothing is renamed, removed or reordered.
 - **UI** — premium dark interface (Inter + Instrument Serif, lime accent), branded loading
   splash (circular progress + Elevate Studio mark), responsive (desktop table → mobile
   stacked cards, bottom-sheet modals).

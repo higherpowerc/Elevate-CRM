@@ -17,14 +17,17 @@ export const STAGE_TONES = ["gray", "blue", "amber", "violet", "lime", "teal"] a
 export const stageTone = (index: number): string =>
   STAGE_TONES[((index % STAGE_TONES.length) + STAGE_TONES.length) % STAGE_TONES.length];
 
-/** The four custom-field value types a tenant can define (Phase 3b). */
-export const CUSTOM_FIELD_TYPES = ["text", "number", "date", "checkbox"] as const;
+/** The custom-field value types a tenant can define (Phase 3b; 3f-1 adds
+ *  "select" for vertical templates — a dropdown with options). */
+export const CUSTOM_FIELD_TYPES = ["text", "number", "date", "checkbox", "select"] as const;
 export type CustomFieldType = (typeof CUSTOM_FIELD_TYPES)[number];
 
-/** A tenant's custom-field definition (from /api/settings). */
+/** A tenant's custom-field definition (from /api/settings). `options` is
+ *  present only for type "select" — the dropdown choices. */
 export interface CustomFieldDef {
   name: string;
   type: CustomFieldType;
+  options?: string[];
 }
 
 /** A client's stored custom-field value (name must match a tenant definition). */
@@ -224,6 +227,9 @@ export interface OrgSettings {
   /** Adaptive intake Phase 3: the tenant's custom conditional field groups
    *  (defined in Settings; rendered by the intake modal per their rules). */
   customIntakeGroups: CustomIntakeGroup[];
+  /** Adaptive intake 3f-1: the org's business type (vertical template key;
+   *  '' = no preset / General). */
+  verticalKey: string;
 }
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is

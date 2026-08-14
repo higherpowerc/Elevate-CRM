@@ -101,7 +101,7 @@ export const api = {
   /* Owner-only admin endpoints (Phase 2 — tenant provisioning). A member
      calling these gets a 403 from the server. */
   adminOrgs: () => request<{ orgs: Org[] }>("/api/admin/orgs"),
-  adminCreateOrg: (data: { name: string; email: string; password: string }) =>
+  adminCreateOrg: (data: { name: string; email: string; password: string; vertical?: string }) =>
     request<{ org: CreatedOrg; user: CreatedOrgUser }>("/api/admin/orgs", {
       method: "POST",
       body: JSON.stringify(data),
@@ -133,6 +133,8 @@ export const api = {
     industry?: OrgSettings["industry"];
     intakeOpts?: string[];
     customIntakeGroups?: CustomIntakeGroup[];
+    /** 3f-1: apply a vertical template additively (business type change). */
+    verticalKey?: string;
   }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",
