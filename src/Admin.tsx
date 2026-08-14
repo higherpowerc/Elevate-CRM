@@ -280,6 +280,13 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
             </div>
           ) : (
             <table className="table">
+              <colgroup>
+                <col style={{ width: "37%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "27%" }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Clients</th>
@@ -296,7 +303,9 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                     <tr key={o.id}>
                       <td className="cell-strong" data-label="Clients">
                         <div className="cell-company">
-                          {o.name}
+                          <span className="cell-name" title={o.name}>
+                            {o.name}
+                          </span>
                           {isOwner && <span className="chip chip-owner">owner</span>}
                           {o.provisionedFromClient && (
                             <span

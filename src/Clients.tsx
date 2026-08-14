@@ -275,6 +275,15 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
       ) : (
         <div className="card table-wrap">
           <table className="table clients-table">
+            <colgroup>
+              <col style={{ width: "21%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "18%" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>Client</th>
@@ -293,7 +302,9 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
                     <td className="cell-strong" data-label="Client">
                       <div className="cell-company">
-                        {c.companyName}
+                        <span className="cell-name" title={c.companyName}>
+                          {c.companyName}
+                        </span>
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
                           {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
@@ -330,8 +341,8 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
                     <td data-label="Contact">
                       <div className="cell-contact">
                         {c.contactName || "—"}
-                        {c.email && <div className="cell-sub">{c.email}</div>}
-                        {c.phone && <div className="cell-sub">{c.phone}</div>}
+                        {c.email && <div className="cell-sub" title={c.email}>{c.email}</div>}
+                        {c.phone && <div className="cell-sub" title={c.phone}>{c.phone}</div>}
                       </div>
                     </td>
                     <td data-label="Services">
@@ -358,7 +369,7 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
                         </select>
                       </div>
                     </td>
-                    <td className="cell-muted cell-next" data-label="Next action">
+                    <td className="cell-muted cell-next" data-label="Next action" title={c.nextAction || undefined}>
                       {c.nextAction || "—"}
                     </td>
                     <td data-label="Actions">
