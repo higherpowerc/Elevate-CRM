@@ -51,6 +51,7 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
+import { sendIntakeEmail, sendWelcomeEmail, appUrlFrom } from "./email";
 
 export const SESSION_COOKIE = "elevate_session";
 
@@ -1071,7 +1072,7 @@ async function provisionSoldClient(client: ClientRow): Promise<{
  * failure must not fail the stage change that triggered it (the stage change
  * is already committed by the caller).
  */
-async function maybeAutoProvisionSoldClient(orgId: number, client: ClientRow): Promise<void> {
+async function maybeAutoProvisionSoldClient(orgId: number, client: ClientRow, req?: Request): Promise<void> {
   if (!ownerOrgIds().includes(orgId)) return; // tenant orgs never auto-provision
   if (client.provisioned_org_id !== 0) return; // one provision per client, forever
   if (!isFinalStage(orgId, client.stage)) return; // only INTO the final Sold stage
@@ -1081,6 +1082,16 @@ async function maybeAutoProvisionSoldClient(orgId: number, client: ClientRow): P
       console.log(
         `[3g-3] sold lead "${client.company_name}" (client ${client.id}) → provisioned workspace "${out.orgId}" (${out.email}, vertical ${out.verticalKey || "general"})`,
       );
+      // 3g-4: intake email — AFTER the provision committed, fire-and-forget.
+      // sendEmail never throws, so an email failure can never fail or delay
+      // the provisioning that already happened.
+      void sendIntakeEmail({
+        to: out.email,
+        orgName: getOrg(out.orgId)?.name ?? out.email,
+        loginEmail: out.email,
+        tempPassword: out.password,
+        appUrl: appUrlFrom(req),
+      });
     }
   } catch (e) {
     // The client's stage change has already committed — log and leave the
@@ -1347,13 +1358,32 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       return err("Invalid email or password.", 401);
     }
     // 3g-3: the first successful login with the temp password clears it from
-    // the owner's Admin list — the credential has been "delivered" (the owner
-    // hands it over; 3g-4 will email it). Never cleared by impersonation,
-    // which swaps sessions without verifying a password.
+    // the owner's Admin list — the credential has been "delivered" (3g-4
+    // emails it to the client). Never cleared by impersonation, which swaps
+    // sessions without verifying a password.
     if (user.org_id !== 0) {
       db.query("UPDATE orgs SET provisioned_temp_password = '' WHERE id = ? AND provisioned_temp_password != ''").run(
         user.org_id,
       );
+      // 3g-4: durable "has this member logged in before" marker — set
+      // together with the temp-password clear, only on a real password login
+      // (impersonation never reaches this handler). The welcome email fires
+      // exactly once: on the null → set transition. Fire-and-forget with a
+      // never-throwing sender — an email hiccup must never block login.
+      if (user.role === "member") {
+        const first = db
+          .query(
+            "UPDATE users SET first_login_at = COALESCE(first_login_at, datetime('now')) WHERE id = ? AND first_login_at IS NULL",
+          )
+          .run(user.id);
+        if (Number(first.changes) > 0) {
+          void sendWelcomeEmail({
+            to: user.email,
+            orgName: getOrg(user.org_id)?.name ?? "your workspace",
+            appUrl: appUrlFrom(req),
+          });
+        }
+      }
     }
     const token = createSession(user.id);
     return json(
@@ -1986,7 +2016,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       // above is already committed; a provision failure never fails the PUT.
       // The idempotency check inside also makes this the retry path for a
       // sold client whose earlier provision failed.
-      await maybeAutoProvisionSoldClient(orgId, updated);
+      await maybeAutoProvisionSoldClient(orgId, updated, req);
       return json({ client: toClient(updated) });
     }
 
