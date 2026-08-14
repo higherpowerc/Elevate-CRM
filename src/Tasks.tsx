@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { api, type TaskInput } from "./api";
 import { fmtDate, type Client, type Task } from "./types";
 import TaskModal from "./TaskModal";
-import ConfirmDialog from "./ConfirmDialog";
+import ConfirmDeleteModal from "./ConfirmDeleteModal";
 
 type Filter = "open" | "done" | "all";
 
@@ -305,16 +305,10 @@ export default function Tasks() {
         />
       )}
       {deleting && (
-        <ConfirmDialog
+        <ConfirmDeleteModal
           title="Delete task?"
-          body={
-            <>
-              <strong>{deleting.title}</strong> will be permanently removed. This cannot be
-              undone.
-            </>
-          }
+          entity={deleting.title}
           confirmLabel="Delete permanently"
-          danger
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

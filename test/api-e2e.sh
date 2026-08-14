@@ -27,6 +27,12 @@ check "clients without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/clients")
 check "tasks without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/tasks")
 check "invoices without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/invoices")
 check "admin orgs without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/admin/orgs")
+# Typed-delete confirmation is client-side; the DELETE endpoints must still
+# enforce auth/isolation server-side regardless of what the UI does.
+check "DELETE client without cookie → 401" 401 $(code -b "$JAR" -X DELETE "$BASE/api/clients/1")
+check "DELETE task without cookie → 401" 401 $(code -b "$JAR" -X DELETE "$BASE/api/tasks/1")
+check "DELETE invoice without cookie → 401" 401 $(code -b "$JAR" -X DELETE "$BASE/api/invoices/1")
+check "DELETE admin org without cookie → 401" 401 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/1")
 check "login wrong password → 401" 401 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"owner@elevate.studio","password":"nope"}' "$BASE/api/auth/login")
 

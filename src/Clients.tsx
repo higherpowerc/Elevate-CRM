@@ -4,7 +4,7 @@ import { money, fmtDate, type Client, type CustomFieldDef, type Stage } from "./
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
 import ClientModal from "./ClientModal";
-import ConfirmDialog from "./ConfirmDialog";
+import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import StageEditor from "./StageEditor";
 
 type Filter = "active" | "archived" | "all";
@@ -432,16 +432,15 @@ export default function Clients({ stages, ownerOrg = false }: Props) {
         </div>
       )}
       {deleting && (
-        <ConfirmDialog
+        <ConfirmDeleteModal
           title="Delete client?"
-          body={
-            <>
-              <strong>{deleting.companyName}</strong> will be permanently removed from the
-              pipeline. This cannot be undone. (Archive instead if you want to keep the record.)
-            </>
+          entity={deleting.companyName}
+          note={
+            <p className="confirm-delete-note">
+              Archive the record instead if you want to keep it.
+            </p>
           }
           confirmLabel="Delete permanently"
-          danger
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

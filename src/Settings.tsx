@@ -11,6 +11,7 @@ import {
   type OrgSettings,
 } from "./types";
 import StageEditor from "./StageEditor";
+import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 
 const MAX_CUSTOM_FIELDS = 20;
@@ -803,37 +804,15 @@ export default function Settings() {
                         <option value="individual">Individual only</option>
                       </select>
                     </div>
-                    {confirmRemoveGroup === gi ? (
-                      <span className="cfdef-confirm">
-                        <span className="cfdef-confirm-q">Remove this group? Existing client values are kept.</span>
-                        <button
-                          type="button"
-                          className="icon-btn danger"
-                          onClick={() => removeGroup(gi)}
-                          disabled={busy}
-                        >
-                          Yes, remove
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => setConfirmRemoveGroup(null)}
-                          disabled={busy}
-                        >
-                          Keep
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="icon-btn danger"
-                        onClick={() => setConfirmRemoveGroup(gi)}
-                        disabled={busy}
-                        aria-label={`Remove group ${g.name}`}
-                      >
-                        Remove group
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      onClick={() => setConfirmRemoveGroup(gi)}
+                      disabled={busy}
+                      aria-label={`Remove group ${g.name}`}
+                    >
+                      Remove group
+                    </button>
                   </div>
                   <div className="cg-fields">
                     {g.fields.map((f, fi) => (
@@ -958,37 +937,15 @@ export default function Settings() {
                   <div className="cfdef-row">
                     <span className="cfdef-name">{f.name}</span>
                     <span className="badge tone-gray cfdef-type">{f.type}</span>
-                    {confirmRemoveField === i ? (
-                      <span className="cfdef-confirm">
-                        <span className="cfdef-confirm-q">Remove — clients keep their values?</span>
-                        <button
-                          type="button"
-                          className="icon-btn danger"
-                          onClick={() => removeField(i)}
-                          disabled={busy}
-                        >
-                          Yes, remove
-                        </button>
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          onClick={() => setConfirmRemoveField(null)}
-                          disabled={busy}
-                        >
-                          Keep
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="icon-btn danger"
-                        onClick={() => setConfirmRemoveField(i)}
-                        disabled={busy}
-                        aria-label={`Remove custom field ${f.name}`}
-                      >
-                        Remove
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      onClick={() => setConfirmRemoveField(i)}
+                      disabled={busy}
+                      aria-label={`Remove custom field ${f.name}`}
+                    >
+                      Remove
+                    </button>
                   </div>
                   {f.type === "select" && (
                     <div className="cg-opts cfdef-opts">
@@ -1084,6 +1041,36 @@ export default function Settings() {
           </div>
         </div>
       </div>
+      {confirmRemoveField !== null && (
+        <ConfirmDeleteModal
+          title="Remove custom field?"
+          entity={customFields[confirmRemoveField]?.name || "this custom field"}
+          note={
+            <p className="confirm-delete-note">
+              Clients keep their saved values for this field.
+            </p>
+          }
+          confirmLabel="Remove"
+          busy={busy}
+          onCancel={() => setConfirmRemoveField(null)}
+          onConfirm={() => removeField(confirmRemoveField)}
+        />
+      )}
+      {confirmRemoveGroup !== null && (
+        <ConfirmDeleteModal
+          title="Remove custom intake group?"
+          entity={intakeGroups[confirmRemoveGroup]?.name || "this group"}
+          note={
+            <p className="confirm-delete-note">
+              Existing client values are kept.
+            </p>
+          }
+          confirmLabel="Remove"
+          busy={busy}
+          onCancel={() => setConfirmRemoveGroup(null)}
+          onConfirm={() => removeGroup(confirmRemoveGroup)}
+        />
+      )}
     </div>
   );
 }

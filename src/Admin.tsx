@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { fmtDate, type Org } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
-import ConfirmDialog from "./ConfirmDialog";
+import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
 
 interface Props {
@@ -382,16 +382,15 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
       </div>
 
       {deleting && (
-        <ConfirmDialog
+        <ConfirmDeleteModal
           title="Delete this workspace?"
-          body={
-            <>
-              <strong>{deleting.name}</strong> and everything in it — the client's login,
-              clients, tasks and invoices — will be permanently removed. This cannot be undone.
-            </>
+          entity={deleting.name}
+          note={
+            <p className="confirm-delete-note">
+              The client's login, clients, tasks and invoices will all be removed with it.
+            </p>
           }
           confirmLabel="Delete workspace"
-          danger
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

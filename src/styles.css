@@ -1689,7 +1689,7 @@ legend.field-label {
   border-radius: 0 0 18px 18px;
 }
 
-/* Actions as a direct modal child (ConfirmDialog): the modal has no
+/* Actions as a direct modal child (ConfirmDeleteModal): the modal has no
    padding, so the bar already spans full width — just round the bottom
    corners to match the modal. */
 .modal > .modal-actions {
@@ -1704,6 +1704,22 @@ legend.field-label {
 
 .confirm-body strong {
   color: var(--ink);
+}
+
+/* Typed-delete confirmation (ConfirmDeleteModal) */
+.confirm-delete-msg {
+  margin: 0 0 14px;
+}
+.confirm-delete-note {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.confirm-delete-field {
+  margin-top: 14px;
+}
+.confirm-delete-field .field-label {
+  margin-bottom: 2px;
 }
 
 /* ── Empty & skeleton ──────────────────────────────────────── */

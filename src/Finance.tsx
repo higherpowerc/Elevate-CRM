@@ -11,7 +11,7 @@ import {
   type InvoiceStatus,
 } from "./types";
 import InvoiceModal from "./InvoiceModal";
-import ConfirmDialog from "./ConfirmDialog";
+import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SearchableSelect from "./SearchableSelect";
 
 type Filter = "all" | InvoiceStatus;
@@ -411,17 +411,15 @@ export default function Finance() {
         />
       )}
       {deleting && (
-        <ConfirmDialog
+        <ConfirmDeleteModal
           title="Delete invoice?"
-          body={
+          entity={
             <>
-              The <strong>{money(deleting.amount)}</strong> invoice
-              {deleting.clientName ? ` for ${deleting.clientName}` : ""} will be permanently removed. This
-              cannot be undone.
+              {money(deleting.amount)} invoice
+              {deleting.clientName ? ` for ${deleting.clientName}` : ""}
             </>
           }
           confirmLabel="Delete permanently"
-          danger
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

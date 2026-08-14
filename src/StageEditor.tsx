@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "./api";
+import ConfirmDeleteModal from "./ConfirmDeleteModal";
 
 const MAX_STAGES = 12;
 
@@ -11,7 +12,8 @@ const MAX_STAGES = 12;
  *
  * The remove guard is enforced two ways: the UI disables the Remove button
  * while a stage still has clients (counts come from the org's own data), and
- * the server rejects the save if any occupied stage is dropped.
+ * the server rejects the save if any occupied stage is dropped. When removal
+ * is allowed it still needs a typed "delete" confirmation (owner direction).
  */
 export default function StageEditor({
   initialStages,
@@ -26,6 +28,8 @@ export default function StageEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  /** Index of the stage awaiting a typed confirmation before removal. */
+  const [confirming, setConfirming] = useState<number | null>(null);
 
   const stageCount = (s: string): number => stageCounts[s] ?? 0;
 
@@ -118,7 +122,7 @@ export default function StageEditor({
                     : "Remove stage"
                 }
                 aria-label={`Remove stage ${s.trim() || i + 1}`}
-                onClick={() => removeStage(i)}
+                onClick={() => setConfirming(i)}
               >
                 Remove
               </button>
@@ -134,6 +138,25 @@ export default function StageEditor({
           {busy ? "Saving…" : "Save stages"}
         </button>
       </div>
+      {confirming !== null && (
+        <ConfirmDeleteModal
+          title="Remove stage?"
+          entity={`"${stages[confirming]?.trim() || `Stage ${confirming + 1}`}"`}
+          note={
+            <p className="confirm-delete-note">
+              Clients currently in this stage must be moved or archived before it can be
+              removed.
+            </p>
+          }
+          confirmLabel="Remove stage"
+          busy={busy}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            removeStage(confirming);
+            setConfirming(null);
+          }}
+        />
+      )}
     </form>
   );
 }
