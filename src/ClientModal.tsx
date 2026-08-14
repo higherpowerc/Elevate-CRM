@@ -56,7 +56,7 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
 };
 
 export default function ClientModal({ client, stages, customFieldDefs, intake, busy, onClose, onSave }: Props) {
-  const defaultStage = stages[0] ?? "Prospect";
+  const defaultStage = stages[0] ?? "Leads";
   const empty = (): FormState => ({
     companyName: "",
     contactName: "",

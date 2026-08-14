@@ -4,7 +4,11 @@ A standalone client-pipeline management application — **its own codebase, sepa
 agency website** (`/home/team/shared/site`). Built as a product track: universal data model
 that works for any company type, real database, its own deployment path.
 
-**Pipeline:** `Prospect → Intake → Kickoff → Build → Launch → Retainer`
+**Owner pipeline:** `Leads → Intakes → Sold` (owner direction 2026-08-14, shipped in 3g-2: the
+owner org is migrated at boot — its stored stage list is replaced and every client is
+remapped positionally, old bands [1-2] → Leads, [3-4] → Intakes, [5-6] → Sold). Tenants
+get their own pipeline from the vertical template chosen at signup (or the legacy
+default list for General), untouched by the owner migration.
 
 ---
 
@@ -29,7 +33,10 @@ same port. Nothing else to run.
 - **Auth** — email + password login. Admin account seeded from env (`ADMIN_EMAIL` /
   `ADMIN_PASSWORD`); **no hardcoded defaults** — if the env vars are unset the server logs a
   clear setup message and login returns `503 setup_required` with instructions.
-- **Pipeline** — the six stages above, enforced server-side.
+- **Pipeline** — per-org stages, enforced server-side: the owner org runs `Leads →
+  Intakes → Sold` (3g-2); tenant orgs run their vertical-seeded stages; every stage
+  list is renamable/reorderable in Settings (a rename migrates its clients
+  positionally).
 - **Dashboard** — counts per stage, **projected pipeline** (sum of deal values of active,
   non-archived clients — explicitly labeled *projected*, not revenue), recent clients.
 - **Clients CRUD** — create, list (search + active/archived/all filter), edit, move between
@@ -267,7 +274,7 @@ CREATE TABLE clients (
   services     JSONB NOT NULL DEFAULT '[]',
   custom_fields JSONB NOT NULL DEFAULT '[]',
   deal_value   NUMERIC(12,2) NOT NULL DEFAULT 0,
-  stage        TEXT NOT NULL DEFAULT 'Prospect',
+  stage        TEXT NOT NULL DEFAULT 'Leads',
   next_action  TEXT NOT NULL DEFAULT '',
   notes        TEXT NOT NULL DEFAULT '',
   archived     BOOLEAN NOT NULL DEFAULT false,

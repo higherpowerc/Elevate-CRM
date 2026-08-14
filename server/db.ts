@@ -556,6 +556,99 @@ db.exec(`
   }
 }
 
+// 3g-2: migrate the owner org's pipeline (Leads → Intakes → Sold) at boot.
+// Runs after every schema migration above so the stages column + users table
+// exist. On an existing database the admin user is already present, so this
+// import-time pass performs the migration immediately; on a fresh database the
+// admin is created a moment later in ensureAdmin(), which re-invokes the same
+// idempotent migration (see auth.ts).
+migrateOwnerPipeline();
+
+/**
+ * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
+ * safe on every boot.
+ *
+ * The owner's workspace tracks leads through exactly three stages:
+ *   Leads → Intakes → Sold
+ * The owner org (the org of the `admin` user — the same flag that gates the
+ * Admin tab) is migrated from the legacy 6-stage default pipeline
+ * (Prospect → Intake → Kickoff → Build → Launch|Sold → Retainer): its stored
+ * stage list is REPLACED with the three-stage list and every one of its
+ * client records is migrated positionally. The mapping is computed from the
+ * counts, never from stage names: divide the old list into N contiguous bands
+ * (N = new stage count) and map each old stage to the new stage at the same
+ * relative position — with 6 → 3, old bands [1-2] → Leads, [3-4] → Intakes,
+ * [5-6] → Sold. Tenant orgs are untouched: the migration only ever considers
+ * admin-role orgs whose stored stages match the legacy default list exactly,
+ * so a customized owner pipeline would also be left alone. Nothing else
+ * happens on "Sold" — auto-provisioning a paying client is a later step
+ * (3g-3), not part of this data migration.
+ */
+export const OWNER_PIPELINE = ["Leads", "Intakes", "Sold"] as const;
+
+/** True when the org's stages are the legacy 6-stage default pipeline
+ *  (case-insensitive; position 5 may be "Launch" or "Sold" — prod renamed it
+ *  via Settings). Anything customized does NOT match → left untouched. */
+function isLegacyOwnerPipeline(stages: string[]): boolean {
+  if (stages.length !== DEFAULT_STAGES.length) return false;
+  const fifth = stages[4].toLowerCase();
+  if (fifth !== "launch" && fifth !== "sold") return false;
+  for (let i = 0; i < stages.length; i++) {
+    if (i === 4) continue; // Launch|Sold — checked above
+    if (stages[i].toLowerCase() !== DEFAULT_STAGES[i].toLowerCase()) return false;
+  }
+  return true;
+}
+
+/** Positional band mapping: old stage at `oldIndex` → the new stage at the
+ *  same relative position (proportional bands; generic over any counts). */
+function positionalStage(oldIndex: number, oldCount: number, newStages: readonly string[]): string {
+  const newIndex = Math.min(
+    newStages.length - 1,
+    Math.floor((oldIndex * newStages.length) / oldCount),
+  );
+  return newStages[newIndex];
+}
+
+/**
+ * Migrate the owner org's pipeline to Leads → Intakes → Sold and remap its
+ * clients positionally. No-op for every other org (tenants, and any owner org
+ * whose stages were already customized away from the legacy list). Called at
+ * boot (db.ts import) AND right after the admin is ensured (auth.ts), so both
+ * an existing database (admin already present) and a fresh one (admin created
+ * after the import-time pass) converge on the 3-stage owner pipeline.
+ */
+export function migrateOwnerPipeline(): void {
+  const adminOrgs = db
+    .query("SELECT DISTINCT org_id FROM users WHERE role = 'admin'")
+    .all() as { org_id: number }[];
+  for (const { org_id } of adminOrgs) {
+    const org = getOrg(org_id);
+    if (!org) continue;
+    const prev = parseStages(org.stages);
+    if (!isLegacyOwnerPipeline(prev)) continue;
+    const next = [...OWNER_PIPELINE];
+    const rows = db
+      .query("SELECT id, stage FROM clients WHERE org_id = ?")
+      .all(org_id) as { id: number; stage: string }[];
+    const oldIndexByStage = new Map<string, number>();
+    prev.forEach((s, i) => oldIndexByStage.set(s.toLowerCase(), i));
+    const update = db.prepare("UPDATE clients SET stage = ? WHERE id = ?");
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        const oldIndex = oldIndexByStage.get(r.stage.toLowerCase());
+        if (oldIndex === undefined) continue; // defensive: unknown stage kept
+        update.run(positionalStage(oldIndex, prev.length, next), r.id);
+      }
+      db.query("UPDATE orgs SET stages = ? WHERE id = ?").run(JSON.stringify(next), org_id);
+    });
+    tx();
+    console.log(
+      `[db] owner pipeline migrated (org ${org_id}): ${prev.join(" → ")} → ${next.join(" → ")} (${rows.length} client records remapped positionally)`,
+    );
+  }
+}
+
 /**
  * The default org ("Elevate Studio") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
