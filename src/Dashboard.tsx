@@ -7,9 +7,15 @@ interface Props {
   onGoToClients: () => void;
   /** The tenant's ordered pipeline stages (drives the breakdown grid + KPI). */
   stages: Stage[];
+  /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
+   *  owner calls its pipeline records "leads", so this page's count, KPI
+   *  labels, stage captions and empty state read "lead(s)" instead of
+   *  "client(s)". Tenant orgs (role=member) keep "clients" everywhere.
+   *  Purely presentational; data and stages are untouched. */
+  ownerOrg?: boolean;
 }
 
-export default function Dashboard({ onGoToClients, stages }: Props) {
+export default function Dashboard({ onGoToClients, stages, ownerOrg = false }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,6 +32,23 @@ export default function Dashboard({ onGoToClients, stages }: Props) {
   const hasClients = data.totalClients > 0;
   const lastStage = stages.length > 0 ? stages[stages.length - 1] : "";
 
+  /* Owner workspace labels its pipeline records "leads" (owner direction
+     2026-08-14); tenant orgs keep "clients". Same page, same data — only
+     the visible wording differs. */
+  const bookWord = ownerOrg ? "lead" : "client";
+  const activeKpi = ownerOrg ? "Active leads" : "Active clients";
+  const pipelineNote = ownerOrg
+    ? "Sum of deal values · active leads only — not revenue"
+    : "Sum of deal values · active clients only — not revenue";
+  const lastStageNote = lastStage
+    ? ownerOrg
+      ? `Leads in "${lastStage}" — your last pipeline stage`
+      : `Clients in "${lastStage}" — your last pipeline stage`
+    : "No stages configured";
+  const stageCaption = ownerOrg ? "leads" : "clients";
+  const emptyTitle = ownerOrg ? "No leads yet" : "No clients yet";
+  const emptyCta = ownerOrg ? "Add a lead" : "Add a client";
+
   return (
     <div className="page">
       <div className="page-head">
@@ -34,7 +57,7 @@ export default function Dashboard({ onGoToClients, stages }: Props) {
             Pipeline <em className="serif">overview</em>
           </h1>
           <p className="page-sub">
-            {data.totalClients} client{data.totalClients === 1 ? "" : "s"} in the book
+            {data.totalClients} {bookWord}{data.totalClients === 1 ? "" : "s"} in the book
             {data.archivedClients > 0 && ` · ${data.archivedClients} archived`}
           </p>
         </div>
@@ -44,19 +67,17 @@ export default function Dashboard({ onGoToClients, stages }: Props) {
         <div className="card kpi">
           <span className="kpi-label">Projected pipeline</span>
           <span className="kpi-value lime">{money(data.projectedPipeline)}</span>
-          <span className="kpi-note">Sum of deal values · active clients only — not revenue</span>
+          <span className="kpi-note">{pipelineNote}</span>
         </div>
         <div className="card kpi">
-          <span className="kpi-label">Active clients</span>
+          <span className="kpi-label">{activeKpi}</span>
           <span className="kpi-value">{data.totalClients - data.archivedClients}</span>
           <span className="kpi-note">Non-archived entries across all stages</span>
         </div>
         <div className="card kpi">
           <span className="kpi-label">In final stage</span>
           <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
-          <span className="kpi-note">
-            {lastStage ? `Clients in "${lastStage}" — your last pipeline stage` : "No stages configured"}
-          </span>
+          <span className="kpi-note">{lastStageNote}</span>
         </div>
       </div>
 
@@ -71,7 +92,7 @@ export default function Dashboard({ onGoToClients, stages }: Props) {
             <div className={`stage-count tone-${stageTone(i)}`}>{data.stageCounts[stage] ?? 0}</div>
             <div className="stage-rule" />
             <div className="stage-bottom">
-              <span className="stage-caption">clients</span>
+              <span className="stage-caption">{stageCaption}</span>
               <button className="link-btn" onClick={onGoToClients}>
                 View →
               </button>
@@ -114,10 +135,10 @@ export default function Dashboard({ onGoToClients, stages }: Props) {
         </div>
       ) : (
         <div className="card empty">
-          <p className="empty-title">No clients yet</p>
+          <p className="empty-title">{emptyTitle}</p>
           <p className="empty-sub">Add your first prospect and the pipeline starts filling in.</p>
           <button className="btn btn-primary" onClick={onGoToClients}>
-            Add a client
+            {emptyCta}
           </button>
         </div>
       )}

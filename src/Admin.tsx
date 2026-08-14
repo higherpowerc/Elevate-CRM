@@ -279,7 +279,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                 <tr>
                   <th>Clients</th>
                   <th className="num">Members</th>
-                  <th className="num">Clients</th>
+                  <th className="num">Client records</th>
                   <th>Created</th>
                   <th className="actions-th">Actions</th>
                 </tr>
@@ -298,7 +298,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                       <td className="num" data-label="Members">
                         {o.userCount}
                       </td>
-                      <td className="num" data-label="Clients">
+                      <td className="num" data-label="Client records">
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
