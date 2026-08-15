@@ -355,7 +355,12 @@ export default function App() {
       </header>
       <main className="main">
         {view === "dashboard" ? (
-          <Dashboard onGoToStage={goToStage} stages={stages} ownerOrg={isOwnerOrg} />
+          <Dashboard
+            onGoToStage={goToStage}
+            stages={stages}
+            ownerOrg={isOwnerOrg}
+            onNewClient={() => setView("admin")}
+          />
         ) : view === "leads" ? (
           /* Owner request 2026-08-15 — the owner's Leads tab scopes to the
              FIRST stage only; client accounts (role=member) keep the full

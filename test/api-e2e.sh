@@ -3102,6 +3102,172 @@ done
 rm -f "$JARA32" "$JARB32"
 echo "  ✓ 32h: test clients, isolation tenants and provisioned workspaces removed"
 echo ""
+
+echo "== 33. MRR + vertical revenue dashboards (owner request 2026-08-14) =="
+THIS_MONTH=$(python3 -c "import datetime;print(datetime.date.today().strftime('%Y-%m-01'))")
+LAST_MONTH=$(python3 -c "import datetime;d=datetime.date.today();print((d.replace(day=1)-datetime.timedelta(days=1)).strftime('%Y-%m-15'))")
+JAR33=$(mktemp)
+S=$(code -c "$JAR33" -b "$JAR33" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "33a: owner login" 200 "$S"
+S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Glow Med Spa","email":"glow33@example.com","password":"glow33pass","vertical":"med_spa"}' "$BASE/api/admin/orgs")
+check "33b: create Med Spa org (vertical med_spa)" 201 "$S"
+MED33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Sales Co","email":"sales33@example.com","password":"sales33pass","vertical":"landscaping"}' "$BASE/api/admin/orgs")
+check "33c: create Landscaping org" 201 "$S"
+SAL33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Plain Co","email":"plain33@example.com","password":"plain33pass"}' "$BASE/api/admin/orgs")
+check "33c2: create bare org (no vertical) — pre-existing-org migration path" 201 "$S"
+GEN33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR33" "$BASE/api/admin/orgs")
+python3 - "$MED33" "$SAL33" "$GEN33" <<'PY'
+import json, sys
+d = json.load(open('/tmp/body.json'))
+orgs = {o['id']: o for o in d['orgs']}
+med, sal, gen = (int(x) for x in sys.argv[1:4])
+assert orgs[med]['revenueModel'] == 'subscription', orgs[med]   # 33d
+assert orgs[sal]['revenueModel'] == 'sales', orgs[sal]          # 33e
+assert orgs[gen]['revenueModel'] == 'sales', orgs[gen]          # 33e2
+print("  ✓ 33d/33e/33e2: revenueModel seeded by vertical — med_spa=subscription, landscaping=sales, bare/general=sales (migration default for pre-existing orgs like Acme)")
+PY
+S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":99.50}' "$BASE/api/admin/orgs/$MED33")
+check "33f: owner PATCH med spa monthly amount 99.50" 200 "$S"
+S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":40}' "$BASE/api/admin/orgs/$SAL33")
+check "33g: owner PATCH sales co monthly amount 40" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - 139.5) < 0.001, d.get('clientMrr')
+assert d['orgCount'] >= 4, d.get('orgCount')  # owner + med spa + sales + plain (plus any earlier leftovers)
+assert 'salesThisMonth' in d and 'subscriptionsTotal' in d and 'revenueModel' in d
+open('/tmp/owner_before33.json', 'w').write(json.dumps({'salesThisMonth': d['salesThisMonth'], 'subscriptionsTotal': d['subscriptionsTotal']}))
+print("  ✓ 33h: owner dashboard clientMrr=139.50 (99.50+40+0), orgCount present, own money keys too")
+PY
+S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":59.50}' "$BASE/api/admin/orgs/$MED33")
+check "33h1: owner PATCH med spa amount → 59.50" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+grep -q '"clientMrr":99.5' /tmp/body.json && echo "  ✓ 33h2: clientMrr updated to 99.50 (59.50+40 — one change reflects)" || echo "  ✗ 33h2: $(cat /tmp/body.json)"
+S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":99.50}' "$BASE/api/admin/orgs/$MED33")
+check "33h3: owner restores med spa amount → 99.50" 200 "$S"
+S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":-5}' "$BASE/api/admin/orgs/$MED33")
+check "33i: negative monthly amount rejected" 400 "$S"
+JARMED=$(mktemp)
+S=$(code -c "$JARMED" -b "$JARMED" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"glow33@example.com","password":"glow33pass"}' "$BASE/api/auth/login")
+check "33j: med spa member login" 200 "$S"
+S=$(code -b "$JARMED" "$BASE/api/dashboard")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert 'clientMrr' not in d, "tenant must never see owner MRR"
+assert 'orgCount' not in d, "tenant must never see org count"
+assert d['revenueModel'] == 'subscription', d.get('revenueModel')
+assert d['subscriptionsTotal'] == 0, d.get('subscriptionsTotal')
+print("  ✓ 33k: tenant dashboard has NO clientMrr/orgCount (isolation); revenueModel=subscription")
+PY
+S=$(code -b "$JARMED" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Regular Client","clientType":"commercial","contactName":"R","email":"r@x.com","monthlyAmount":29}' "$BASE/api/clients")
+check "33l: member creates client with monthlyAmount 29" 201 "$S"
+S=$(code -b "$JARMED" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad","clientType":"commercial","monthlyAmount":-3}' "$BASE/api/clients")
+check "33m: negative client monthlyAmount rejected" 400 "$S"
+S=$(code -b "$JARMED" "$BASE/api/dashboard")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert d['subscriptionsTotal'] == 29, d.get('subscriptionsTotal')
+print("  ✓ 33n: tenant subscriptionsTotal=29 (SUM of client monthly_amount, org-scoped)")
+PY
+JARSAL=$(mktemp)
+S=$(code -c "$JARSAL" -b "$JARSAL" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"sales33@example.com","password":"sales33pass"}' "$BASE/api/auth/login")
+check "33p: sales org member login" 200 "$S"
+S=$(code -b "$JARSAL" "$BASE/api/dashboard")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert d['subscriptionsTotal'] == 0, d.get('subscriptionsTotal')  # med spa's 29 must not appear
+assert d['revenueModel'] == 'sales', d.get('revenueModel')
+print("  ✓ 33n2: sales org subscriptionsTotal=0 (cross-tenant isolation — tenant A's book invisible)")
+PY
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - 139.5) < 0.001, d.get('clientMrr')
+before = json.load(open('/tmp/owner_before33.json'))
+assert d['salesThisMonth'] == before['salesThisMonth'], (d['salesThisMonth'], before['salesThisMonth'])
+assert d['subscriptionsTotal'] == before['subscriptionsTotal'], (d['subscriptionsTotal'], before['subscriptionsTotal'])
+print("  ✓ 33n3: owner MRR + own totals untouched by tenant activity (isolation)")
+PY
+S=$(code -b "$JARMED" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":1}' "$BASE/api/admin/orgs/$MED33")
+check "33o: tenant PATCH admin org → 403" 403 "$S"
+S=$(code -b "$JARSAL" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Garden Job","clientType":"commercial","contactName":"G","email":"g@x.com"}' "$BASE/api/clients")
+check "33q: sales org creates client" 201 "$S"
+CLI33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JARSAL" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$CLI33,\"amount\":1234.50,\"dueDate\":\"$THIS_MONTH\",\"status\":\"draft\"}" "$BASE/api/invoices")
+check "33r: invoice dated this month" 201 "$S"
+S=$(code -b "$JARSAL" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$CLI33,\"amount\":999,\"dueDate\":\"$LAST_MONTH\",\"status\":\"draft\"}" "$BASE/api/invoices")
+check "33s: invoice dated last month" 201 "$S"
+S=$(code -b "$JARSAL" "$BASE/api/dashboard")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert abs(d['salesThisMonth'] - 1234.5) < 0.001, d.get('salesThisMonth')
+assert d['revenueModel'] == 'sales', d.get('revenueModel')
+assert 'clientMrr' not in d
+print("  ✓ 33t: salesThisMonth=1234.50 (this month only, last-month invoice excluded, org-scoped)")
+PY
+S=$(code -b "$JARSAL" -X PUT -H 'Content-Type: application/json' \
+  -d '{"revenueModel":"subscription"}' "$BASE/api/settings")
+check "33u: tenant switches revenueModel via settings" 200 "$S"
+S=$(code -b "$JARSAL" "$BASE/api/dashboard")
+grep -q '"revenueModel":"subscription"' /tmp/body.json && echo "  ✓ 33v: dashboard revenueModel follows settings switch" || echo "  ✗ 33v: $(cat /tmp/body.json)"
+S=$(code -b "$JARSAL" -X PUT -H 'Content-Type: application/json' \
+  -d '{"revenueModel":"bogus"}' "$BASE/api/settings")
+check "33w: invalid revenueModel rejected" 400 "$S"
+S=$(code -b "$JARSAL" "$BASE/api/settings")
+grep -q '"monthlySubscriptionAmount":40' /tmp/body.json && echo "  ✓ 33x: tenant sees owner-set monthlySubscriptionAmount (40)" || echo "  ✗ 33x: $(cat /tmp/body.json)"
+S=$(code -b "$JARSAL" -X PUT -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":1}' "$BASE/api/settings")
+check "33y: tenant PUT only the owner-set amount key → 400 (owner-only field, nothing to update)" 400 "$S"
+S=$(code -b "$JARSAL" "$BASE/api/settings")
+grep -q '"monthlySubscriptionAmount":40' /tmp/body.json && grep -q '"revenueModel":"subscription"' /tmp/body.json && echo "  ✓ 33z: amount still 40 + model still subscription after tenant PUT" || echo "  ✗ 33z: $(cat /tmp/body.json)"
+S=$(code -b "$JARSAL" -X PUT -H 'Content-Type: application/json' \
+  -d '{"revenueModel":"sales"}' "$BASE/api/settings")
+check "33za: tenant restores sales model" 200 "$S"
+
+echo "-- 33 bundle surface: MRR/revenue strings in the shipped bundle --"
+bun run build >/dev/null 2>&1
+NEWEST_JS33=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS33" ]; then
+  for STR33 in "Client MRR" "Sales this month" "Subscriptions" "Revenue model" "Monthly amount" "Save revenue model"; do
+    if grep -Fq "$STR33" "$NEWEST_JS33"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR33\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR33\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 33 bundle surface check"
+fi
+echo "-- 33zb. Cleanup == "
+code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$MED33" > /dev/null
+code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$SAL33" > /dev/null
+code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$GEN33" > /dev/null
+rm -f "$JAR33" "$JARMED" "$JARSAL" /tmp/owner_before33.json
+echo "  ✓ 33zb: MRR test orgs removed"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 rm -f "$JAR" /tmp/body.json "$PASS_TMP"

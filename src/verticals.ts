@@ -22,6 +22,10 @@
 export type VerticalIndustry = "home_services" | "mobile_personal" | "professional" | "other" | "";
 export type VerticalServiceModel = "residential_only" | "commercial_only" | "both";
 export type VerticalDeliveryType = "client_comes" | "we_go" | "both";
+/** Owner request 2026-08-14 — how the new org's OWN business makes money:
+ *  "sales" (one-off jobs/invoices) | "subscription" (recurring book). Seeded
+ *  at account creation; the tenant can change it later in Settings. */
+export type VerticalRevenueModel = "sales" | "subscription";
 
 /** A vertical-specific custom-field definition at the template level: the
  *  vocabulary is text / yesno / select (select fields carry their options).
@@ -41,6 +45,9 @@ export interface VerticalTemplate {
   industry: VerticalIndustry;
   serviceModel: VerticalServiceModel;
   deliveryType: VerticalDeliveryType;
+  /** Owner request 2026-08-14 — the revenue model seeded for a NEW org of
+   *  this type (Med Spa → subscription; every other vertical → sales). */
+  revenueModel: VerticalRevenueModel;
   /** Ordered pipeline stage names to seed for a new org. */
   defaultStages: string[];
   /** Vertical-specific custom fields to seed for a new org. */
@@ -56,6 +63,7 @@ export const GENERAL_VERTICAL: VerticalTemplate = {
   industry: "",
   serviceModel: "both",
   deliveryType: "both",
+  revenueModel: "sales",
   defaultStages: [],
   defaultFields: [],
 };
@@ -70,6 +78,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Quotes", "Recurring bookings", "Cleaners"],
     defaultFields: [
       { label: "Service frequency", type: "select", options: ["Weekly", "Biweekly", "Monthly"] },
@@ -84,6 +93,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Dispatch", "Jobs", "Estimates", "Recurring service"],
     defaultFields: [
       { label: "Emergency service", type: "yesno" },
@@ -98,6 +108,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Quotes", "Recurring clients", "Crews", "Jobs"],
     defaultFields: [
       { label: "Property size", type: "text" },
@@ -112,6 +123,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Inspections", "Recurring treatments", "Renewals"],
     defaultFields: [
       { label: "Pest type", type: "select", options: ["Ants", "Rodents", "Termites", "Bed bugs", "Cockroaches", "Mosquitoes", "Other"] },
@@ -126,6 +138,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Customers", "Routes", "Recurring service", "Repairs"],
     defaultFields: [
       { label: "Pool type", type: "select", options: ["In-ground", "Above-ground"] },
@@ -140,6 +153,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Estimates", "Projects", "Crews", "Payments"],
     defaultFields: [
       { label: "Interior / exterior", type: "select", options: ["Interior", "Exterior", "Both"] },
@@ -154,6 +168,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "home_services",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Measurements", "Estimates", "Installations"],
     defaultFields: [
       { label: "Material", type: "select", options: ["Hardwood", "Laminate", "Tile", "Carpet", "Vinyl", "Concrete", "Other"] },
@@ -168,6 +183,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "mobile_personal",
     serviceModel: "both",
     deliveryType: "client_comes",
+    revenueModel: "subscription",
     defaultStages: ["Leads", "Consultations", "Booked", "Treatments", "Retention"],
     defaultFields: [
       { label: "License number", type: "text" },
@@ -182,6 +198,7 @@ export const VERTICALS: VerticalTemplate[] = [
     industry: "professional",
     serviceModel: "both",
     deliveryType: "we_go",
+    revenueModel: "sales",
     defaultStages: ["Leads", "Tours", "Offers", "Under Contract", "Closed"],
     defaultFields: [
       { label: "Property type", type: "select", options: ["Single-family", "Condo", "Townhouse", "Multi-family", "Commercial", "Land"] },

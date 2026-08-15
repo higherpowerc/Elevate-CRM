@@ -655,6 +655,47 @@ db.exec(`
 }
 
 /**
+ * MRR + vertical revenue-model migration (owner request 2026-08-14, shipped
+ * 2026-08-15). Idempotent — safe on every boot.
+ *
+ * orgs gains the money the OWNER charges each client account:
+ *   monthly_subscription_amount  REAL  — what this client pays per month (USD,
+ *                                        default 0 until Phase 5 pricing)
+ *   revenue_model                TEXT  — how the CLIENT'S OWN business makes
+ *                                        money: "sales" (one-off jobs/invoices)
+ *                                        | "subscription" (recurring book)
+ * clients gains:
+ *   monthly_amount               REAL  — the client's OWN subscription book:
+ *                                        this record's recurring monthly
+ *                                        amount (used when the org's
+ *                                        revenue_model = "subscription")
+ *
+ * Existing orgs backfill: revenue_model derives from the org's business type
+ * (vertical_key) where known — med_spa → subscription, everything else (and
+ * no preset) → sales. Both columns are plain REAL/TEXT with DEFAULTs, so no FK
+ * games are needed (the same pattern the 3e/3f migrations use).
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  const addOrgCol = (name: string, ddl: string) => {
+    if (!orgCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE orgs ADD COLUMN ${ddl}`);
+    }
+  };
+  addOrgCol("monthly_subscription_amount", "monthly_subscription_amount REAL NOT NULL DEFAULT 0");
+  addOrgCol("revenue_model", "revenue_model TEXT NOT NULL DEFAULT 'sales'");
+  // Backfill the subscription model for existing Med Spa orgs (the only
+  // vertical the catalog seeds as subscription). Idempotent — a re-run only
+  // touches orgs still at the 'sales' default.
+  db.query("UPDATE orgs SET revenue_model = 'subscription' WHERE vertical_key = 'med_spa' AND revenue_model = 'sales'").run();
+
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "monthly_amount")) {
+    db.exec("ALTER TABLE clients ADD COLUMN monthly_amount REAL NOT NULL DEFAULT 0");
+  }
+}
+
+/**
  * Lost-leads + DNC migration (owner request 2026-08-14, shipped 2026-08-15).
  * Idempotent — safe on every boot.
  *
@@ -814,13 +855,22 @@ export interface OrgRow {
   /** Adaptive intake 3f-1: the org's business type (vertical template key;
    *  '' = no preset / General). */
   vertical_key: string;
+  /** Owner request 2026-08-14 — what this client pays per month (USD, 0 until
+   *  Phase 5 pricing). Owner-set (Admin tab); visible to the tenant in
+   *  Settings. */
+  monthly_subscription_amount: number;
+  /** Owner request 2026-08-14 — how THIS org's own business makes money:
+   *  "sales" (invoices) | "subscription" (per-client monthly book). Seeded by
+   *  vertical at account creation; editable by the tenant in Settings (and by
+   *  the owner in Admin). */
+  revenue_model: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }
@@ -888,6 +938,10 @@ export interface ClientRow {
    *  client (0 = not provisioned yet). Idempotency link — one provision per
    *  client record, forever. */
   provisioned_org_id: number;
+  /** Owner request 2026-08-14 — this record's recurring monthly amount (USD)
+   *  in the org's OWN subscription book (used when the org's revenue_model =
+   *  "subscription"). Default 0. */
+  monthly_amount: number;
 }
 
 export interface TaskRow {

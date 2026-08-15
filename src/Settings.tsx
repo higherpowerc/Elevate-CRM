@@ -9,6 +9,7 @@ import {
   type IntakeGroupAppliesTo,
   type IntakeGroupFieldKind,
   type OrgSettings,
+  money,
 } from "./types";
 import StageEditor from "./StageEditor";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
@@ -74,6 +75,12 @@ export default function Settings() {
   const [intakeGroups, setIntakeGroups] = useState<CustomIntakeGroup[]>([]);
   const [confirmRemoveGroup, setConfirmRemoveGroup] = useState<number | null>(null);
 
+  /* Owner request 2026-08-14 — revenue model (tenant-editable) + the monthly
+     subscription amount this org pays the owner (owner-set in Admin; the
+     tenant can see it here but not change it). */
+  const [revenueModel, setRevenueModel] = useState<OrgSettings["revenueModel"]>("sales");
+  const [monthlySubscriptionAmount, setMonthlySubscriptionAmount] = useState(0);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -130,6 +137,8 @@ export default function Settings() {
       setIntakeOpts(settings.intakeOpts);
       setIntakeGroups(settings.customIntakeGroups);
       setApplyVertical(settings.verticalKey || "general");
+      setRevenueModel(settings.revenueModel);
+      setMonthlySubscriptionAmount(settings.monthlySubscriptionAmount);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -213,6 +222,26 @@ export default function Settings() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Apply failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Owner request 2026-08-14: revenue model ─────────────────────
+     The tenant chooses how THEIR business makes money: sales (invoices) or
+     subscriptions (a recurring monthly book). The dashboard's money figure
+     follows this choice. The amount they pay the owner is NOT editable here
+     (owner-set in Admin). */
+  async function saveRevenueModel() {
+    setError(null);
+    setSaved(null);
+    setBusy(true);
+    try {
+      await api.updateSettings({ revenueModel });
+      setSaved("Revenue model saved — your dashboard money figure updates to match.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
     } finally {
       setBusy(false);
     }
@@ -681,6 +710,59 @@ export default function Settings() {
             <div className="stage-save">
               <button className="btn btn-primary" disabled={busy} onClick={applyVerticalTemplate}>
                 {busy ? "Applying…" : "Apply template"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Revenue model</h2>
+            <p className="admin-card-sub">
+              How your business gets paid — your dashboard's money figure follows this.
+            </p>
+          </div>
+          <div className="form">
+            <div className="field">
+              <span className="field-label">Revenue model</span>
+              <div className="seg intake-seg" role="radiogroup" aria-label="Revenue model">
+                {(
+                  [
+                    ["sales", "Sales"],
+                    ["subscription", "Subscriptions"],
+                  ] as const
+                ).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    role="radio"
+                    aria-checked={revenueModel === val}
+                    className={revenueModel === val ? "seg-btn active" : "seg-btn"}
+                    onClick={() => {
+                      setError(null);
+                      setSaved(null);
+                      setRevenueModel(val);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="field-hint">
+                <strong>Sales</strong> shows "Sales this month" — your invoices dated this month.
+                <strong> Subscriptions</strong> shows your clients' recurring monthly amounts.
+              </span>
+            </div>
+            <div className="field">
+              <span className="field-label">Your monthly subscription to Elevate Studio</span>
+              <div className="revenue-amount-line">
+                <strong className="revenue-amount">{money(monthlySubscriptionAmount)}</strong>
+                <span className="field-hint">per month — set by your account manager.</span>
+              </div>
+            </div>
+            <div className="stage-save">
+              <button className="btn btn-primary" disabled={busy} onClick={saveRevenueModel}>
+                {busy ? "Saving…" : "Save revenue model"}
               </button>
             </div>
           </div>
