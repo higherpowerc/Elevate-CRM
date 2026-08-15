@@ -8,6 +8,10 @@ import {
   getOrg,
   INVOICE_STATUSES,
   isInvoiceStatus,
+  TICKET_STATUSES,
+  TICKET_PRIORITIES,
+  isTicketStatus,
+  isTicketPriority,
   isCustomFieldType,
   isServiceModel,
   isDeliveryType,
@@ -30,6 +34,9 @@ import {
   type TaskRow,
   type InvoiceRow,
   type InvoiceStatus,
+  type TicketRow,
+  type TicketStatus,
+  type TicketPriority,
 } from "./db";
 import {
   GENERAL_VERTICAL,
@@ -993,6 +1000,89 @@ function parseInvoiceFields(
     const n = typeof body.notes === "string" ? body.notes : "";
     if (n.length > 2000) return { ok: false, error: "Notes must be under 2000 characters." };
     out.notes = n;
+  }
+
+  return { ok: true, value: out };
+}
+
+/* ── Ticket row → API shape (owner direction 2026-08-15) ────── */
+
+/** Row shape for ticket queries: tickets row joined with the submitting
+ *  org's name (OWNER-only field — tenants get their own rows without it,
+ *  exactly like agreementStatus on clients). */
+type TicketRowJoined = TicketRow & { org_name: string | null };
+
+function toTicket(row: TicketRowJoined, ownerOrg = false) {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    ...(ownerOrg ? { orgName: row.org_name ?? "" } : {}),
+    subject: row.subject,
+    message: row.message,
+    status: row.status,
+    priority: row.priority,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const TICKET_SELECT = `
+  SELECT t.*, o.name AS org_name
+  FROM tickets t
+  LEFT JOIN orgs o ON o.id = t.org_id
+`;
+
+function fetchTicket(id: number, orgId: number) {
+  const row = db
+    .query(`${TICKET_SELECT} WHERE t.id = ? AND t.org_id = ?`)
+    .get(id, orgId) as TicketRowJoined | null;
+  return row ? toTicket(row) : null;
+}
+
+interface TicketInput {
+  subject: string;
+  message: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+}
+
+/**
+ * Validates the writable ticket fields. Every field is optional (partial
+ * updates); the create routes additionally require subject + message.
+ * Status and priority are validated against their closed unions — the same
+ * defensive pattern the invoice status uses.
+ */
+function parseTicketFields(
+  body: Record<string, unknown>,
+): { ok: true; value: Partial<TicketInput> } | { ok: false; error: string } {
+  const out: Partial<TicketInput> = {};
+
+  if (body.subject !== undefined) {
+    const t = typeof body.subject === "string" ? body.subject.trim() : "";
+    if (!t) return { ok: false, error: "Subject is required." };
+    if (t.length > 200) return { ok: false, error: "Subject must be under 200 characters." };
+    out.subject = t;
+  }
+
+  if (body.message !== undefined) {
+    const m = typeof body.message === "string" ? body.message.trim() : "";
+    if (!m) return { ok: false, error: "Message is required." };
+    if (m.length > 10000) return { ok: false, error: "Message must be under 10000 characters." };
+    out.message = m;
+  }
+
+  if (body.status !== undefined && body.status !== null && body.status !== "") {
+    if (!isTicketStatus(body.status)) {
+      return { ok: false, error: `Status must be one of: ${TICKET_STATUSES.join(", ")}.` };
+    }
+    out.status = body.status;
+  }
+
+  if (body.priority !== undefined && body.priority !== null && body.priority !== "") {
+    if (!isTicketPriority(body.priority)) {
+      return { ok: false, error: `Priority must be one of: ${TICKET_PRIORITIES.join(", ")}.` };
+    }
+    out.priority = body.priority;
   }
 
   return { ok: true, value: out };
@@ -2871,6 +2961,94 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
 
     return err("Method not allowed.", 405);
+  }
+
+  /* Support tickets (owner direction 2026-08-15) — POST + GET are open to
+     owner AND tenant (each creates/reads their OWN org's tickets; the owner
+     additionally sees every org's with the submitting org name joined in).
+     PATCH is OWNER-only: tenants are rejected server-side (403), so a client
+     can never change their own ticket's status/priority or anyone else's. */
+  if (pathname === "/api/tickets" && method === "GET") {
+    if (auth.role === "admin") {
+      /* Owner: every org's tickets, newest first, with the org name joined. */
+      const rows = db
+        .query(
+          `${TICKET_SELECT}
+           ORDER BY CASE t.status
+                      WHEN 'OPEN' THEN 0
+                      WHEN 'IN_PROGRESS' THEN 1
+                      WHEN 'RESOLVED' THEN 2
+                      ELSE 3 END ASC,
+                    t.created_at DESC, t.id DESC`,
+        )
+        .all() as TicketRowJoined[];
+      return json({ tickets: rows.map((r) => toTicket(r, true)) });
+    }
+    const rows = db
+      .query(
+        `${TICKET_SELECT}
+         WHERE t.org_id = ?
+         ORDER BY CASE t.status
+                    WHEN 'OPEN' THEN 0
+                    WHEN 'IN_PROGRESS' THEN 1
+                    WHEN 'RESOLVED' THEN 2
+                    ELSE 3 END ASC,
+                  t.created_at DESC, t.id DESC`,
+      )
+      .all(orgId) as TicketRowJoined[];
+    return json({ tickets: rows.map((r) => toTicket(r, false)) });
+  }
+
+  if (pathname === "/api/tickets" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const v = parseTicketFields(body);
+    if (!v.ok) return err(v.error, 400);
+    if (!v.value.subject) return err("Subject is required.", 400);
+    if (!v.value.message) return err("Message is required.", 400);
+    const info = db
+      .query(
+        `INSERT INTO tickets (org_id, subject, message, status, priority)
+         VALUES (?, ?, ?, 'OPEN', ?)`,
+      )
+      .run(
+        orgId, // always the caller's session org — a tenant cannot spoof another org
+        v.value.subject,
+        v.value.message,
+        v.value.priority ?? "NORMAL",
+      );
+    const row = db
+      .query(`${TICKET_SELECT} WHERE t.id = ? AND t.org_id = ?`)
+      .get(Number(info.lastInsertRowid), orgId) as TicketRowJoined;
+    return json({ ticket: toTicket(row, auth.role === "admin") }, 201);
+  }
+
+  const ticketMatch = pathname.match(/^\/api\/tickets\/(\d+)$/);
+  if (ticketMatch && method === "PATCH") {
+    const admin = requireAdmin(req); // OWNER only — tenants get 403
+    if (admin instanceof Response) return admin;
+    const id = Number(ticketMatch[1]);
+    const row = db.query("SELECT * FROM tickets WHERE id = ?").get(id) as TicketRow | null;
+    if (!row) return err("Ticket not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const v = parseTicketFields(body);
+    if (!v.ok) return err(v.error, 400);
+    const f = v.value;
+    if (f.status === undefined && f.priority === undefined) {
+      return err("Nothing to update — send status and/or priority.", 400);
+    }
+    db.query(
+      `UPDATE tickets SET
+         status = ?, priority = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(
+      f.status ?? row.status,
+      f.priority ?? row.priority,
+      id,
+    );
+    const updated = db.query(`${TICKET_SELECT} WHERE t.id = ?`).get(id) as TicketRowJoined | null;
+    return json({ ticket: toTicket(updated as TicketRowJoined, true) });
   }
 
   return err("Not found.", 404);

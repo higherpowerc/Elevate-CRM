@@ -27,6 +27,11 @@ check "me without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/auth/me")
 check "clients without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/clients")
 check "tasks without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/tasks")
 check "invoices without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/invoices")
+check "tickets without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/tickets")
+check "POST tickets without cookie → 401" 401 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"x","message":"y"}' "$BASE/api/tickets")
+check "PATCH tickets without cookie → 401" 401 $(code -b "$JAR" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"OPEN"}' "$BASE/api/tickets/1")
 check "admin orgs without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/admin/orgs")
 # Typed-delete confirmation is client-side; the DELETE endpoints must still
 # enforce auth/isolation server-side regardless of what the UI does.
@@ -4205,6 +4210,173 @@ else
 fi
 echo "-- 41d. Done =="
 echo "  ✓ 41: DocuSign lifecycle tracker + Onboarding Stage badge-only verified (owner-workspace only, tenant views untouched)"
+echo "== 42. Support tickets (owner direction 2026-08-15): owner Tickets tab + tenant Support tab =="
+echo "-- 42a. Provision two ticket tenants + fresh sessions =="
+JAR42=$(mktemp)    # fresh admin session for this section
+JAR42A=$(mktemp)   # tenant A — files a ticket
+JAR42B=$(mktemp)   # tenant B — files a ticket (cross-tenant isolation target)
+S=$(code -c "$JAR42" -b "$JAR42" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "42a: owner login" 200 "$S"
+S=$(code -b "$JAR42" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Ticket Co A","email":"ticketa42@example.com","password":"ticketa42pass"}' "$BASE/api/admin/orgs")
+check "42a: provision tenant A" 201 "$S"
+TICKET_A_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR42" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Ticket Co B","email":"ticketb42@example.com","password":"ticketb42pass"}' "$BASE/api/admin/orgs")
+check "42a: provision tenant B" 201 "$S"
+TICKET_B_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+echo "    (tenant A org=$TICKET_A_ORG, tenant B org=$TICKET_B_ORG)"
+S=$(code -c "$JAR42A" -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"ticketa42@example.com","password":"ticketa42pass"}' "$BASE/api/auth/login")
+check "42a: tenant A login" 200 "$S"
+S=$(code -c "$JAR42B" -b "$JAR42B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"ticketb42@example.com","password":"ticketb42pass"}' "$BASE/api/auth/login")
+check "42a: tenant B login" 200 "$S"
+
+echo "-- 42b. Create tickets: tenant A, tenant B, owner =="
+S=$(code -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"Cannot save client","message":"The Save button does nothing when I edit a client.","priority":"HIGH"}' "$BASE/api/tickets")
+check "42b: tenant A creates ticket → 201" 201 "$S"
+TICKET_A=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['ticket']['id'])")
+grep -q '"status":"OPEN"' /tmp/body.json && grep -q '"priority":"HIGH"' /tmp/body.json && echo "  ✓ default status OPEN + submitted priority HIGH" || echo "  ✗ ticket create shape: $(cat /tmp/body.json)"
+grep -q '"orgName"' /tmp/body.json && echo "  ✗ TENANT create response leaked orgName" || echo "  ✓ tenant create response carries no orgName"
+S=$(code -b "$JAR42B" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"Invoice PDF broken","message":"The invoice download link 404s.","priority":"NORMAL"}' "$BASE/api/tickets")
+check "42b: tenant B creates ticket → 201" 201 "$S"
+TICKET_B=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['ticket']['id'])")
+S=$(code -b "$JAR42" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"Owner test ticket","message":"Filed by Elevate Studio itself.","priority":"LOW"}' "$BASE/api/tickets")
+check "42b: owner creates ticket → 201" 201 "$S"
+TICKET_O=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['ticket']['id'])")
+grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ owner create response carries its org name" || echo "  ✗ owner create orgName: $(cat /tmp/body.json)"
+
+echo "-- 42c. Create validation =="
+check "42c: no subject → 400" 400 $(code -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
+  -d '{"message":"only a message"}' "$BASE/api/tickets")
+check "42c: no message → 400" 400 $(code -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"only a subject"}' "$BASE/api/tickets")
+check "42c: bad priority → 400" 400 $(code -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"s","message":"m","priority":"URGENT"}' "$BASE/api/tickets")
+check "42c: bad status on create → 400" 400 $(code -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"s","message":"m","status":"HACKED"}' "$BASE/api/tickets")
+
+echo "-- 42d. Owner GET sees ALL orgs' tickets + org names; tenant GET sees only own =="
+S=$(code -b "$JAR42" "$BASE/api/tickets")
+check "42d: owner GET → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+t = d['tickets']
+assert len(t) == 3, t
+names = {x.get('orgName') for x in t}
+assert 'Ticket Co A' in names and 'Ticket Co B' in names and 'Elevate Studio' in names, names
+assert all('orgName' in x for x in t), 'every owner row must carry orgName'
+print("  ✓ owner sees all 3 orgs' tickets with org names joined")
+PY
+S=$(code -b "$JAR42A" "$BASE/api/tickets")
+check "42d: tenant A GET → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+t = d['tickets']
+assert len(t) == 1 and t[0]['subject'] == 'Cannot save client', t
+assert 'orgName' not in t[0], t[0]
+print("  ✓ tenant A sees ONLY its own ticket (no orgName key — nothing to leak)")
+PY
+S=$(code -b "$JAR42B" "$BASE/api/tickets")
+check "42d: tenant B GET → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+t = d['tickets']
+assert len(t) == 1 and t[0]['subject'] == 'Invoice PDF broken', t
+print("  ✓ tenant B sees ONLY its own ticket (tenant A's never leaks across orgs)")
+PY
+
+echo "-- 42e. Isolation: tenant A cannot read or change tenant B's ticket =="
+S=$(code -b "$JAR42A" "$BASE/api/tickets")
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert all(x['subject'] != 'Invoice PDF broken' for x in d['tickets']), d
+print("  ✓ tenant A's list contains none of tenant B's tickets")
+PY
+check "42e: tenant A PATCH tenant B's ticket → 403" 403 $(code -b "$JAR42A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"RESOLVED"}' "$BASE/api/tickets/$TICKET_B")
+check "42e: tenant A PATCH own ticket → 403" 403 $(code -b "$JAR42A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"RESOLVED"}' "$BASE/api/tickets/$TICKET_A")
+check "42e: tenant B PATCH owner's ticket → 403" 403 $(code -b "$JAR42B" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"RESOLVED"}' "$BASE/api/tickets/$TICKET_O")
+S=$(code -b "$JAR42" "$BASE/api/tickets")
+check "42e: owner GET after rejected writes → 200" 200 "$S"
+grep -q '"status":"OPEN"' /tmp/body.json && echo "  ✓ tenant writes were rejected — tickets still OPEN" || echo "  ✗ tenant writes mutated tickets: $(cat /tmp/body.json)"
+
+echo "-- 42f. Owner PATCH status + priority persists; tenant sees the change =="
+S=$(code -b "$JAR42" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"IN_PROGRESS","priority":"LOW"}' "$BASE/api/tickets/$TICKET_A")
+check "42f: owner PATCH tenant A ticket → 200" 200 "$S"
+grep -q '"status":"IN_PROGRESS"' /tmp/body.json && grep -q '"priority":"LOW"' /tmp/body.json && echo "  ✓ owner PATCH persists status + priority" || echo "  ✗ owner PATCH result: $(cat /tmp/body.json)"
+grep -q '"orgName":"Ticket Co A"' /tmp/body.json && echo "  ✓ owner PATCH response carries the submitting org name" || echo "  ✗ PATCH orgName: $(cat /tmp/body.json)"
+S=$(code -b "$JAR42A" "$BASE/api/tickets")
+check "42f: tenant A list → 200" 200 "$S"
+grep -q '"status":"IN_PROGRESS"' /tmp/body.json && echo "  ✓ tenant sees the owner's status change (live badge)" || echo "  ✗ tenant status: $(cat /tmp/body.json)"
+check "42f: owner PATCH empty body → 400" 400 $(code -b "$JAR42" -X PATCH -H 'Content-Type: application/json' \
+  -d '{}' "$BASE/api/tickets/$TICKET_A")
+check "42f: owner PATCH bad status → 400" 400 $(code -b "$JAR42" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"WON"}' "$BASE/api/tickets/$TICKET_A")
+check "42f: owner PATCH missing ticket → 404" 404 $(code -b "$JAR42" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"CLOSED"}' "$BASE/api/tickets/999999")
+
+echo "-- 42g. Full lifecycle: OPEN → RESOLVED → CLOSED =="
+S=$(code -b "$JAR42" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"RESOLVED"}' "$BASE/api/tickets/$TICKET_B")
+check "42g: owner resolves tenant B ticket → 200" 200 "$S"
+S=$(code -b "$JAR42" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"status":"CLOSED"}' "$BASE/api/tickets/$TICKET_B")
+check "42g: owner closes tenant B ticket → 200" 200 "$S"
+grep -q '"status":"CLOSED"' /tmp/body.json && echo "  ✓ CLOSED persists" || echo "  ✗ close: $(cat /tmp/body.json)"
+
+echo "-- 42h. Bundle + source markers: owner Tickets tab + tenant Support tab + submit modal =="
+bun run build >/dev/null 2>&1
+NEWEST_JS42=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS42=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS42" ]; then
+  if grep -Fq 'Submit a ticket' "$NEWEST_JS42" && grep -Fq 'Every client account' "$NEWEST_JS42"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: ticket page strings present (submit modal + owner heading)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ ticket page strings missing from $NEWEST_JS42"
+  fi
+  if grep -Fq 'Status control' "$NEWEST_JS42"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner status-control column shipped"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ status-control column missing from $NEWEST_JS42"
+  fi
+  if grep -Fq 'ticket-message' "$NEWEST_CSS42" && grep -Fq 'status-select' "$NEWEST_CSS42"; then
+    PASS=$((PASS+1)); echo "  ✓ css: ticket message block + status select styles shipped"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ ticket css missing"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 42 bundle check"
+fi
+if grep -Fq 'TICKET_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]' src/types.ts && grep -Fq 'TICKET_PRIORITIES = ["LOW", "NORMAL", "HIGH"]' src/types.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: ticket status/priority unions defined in src/types.ts"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: ticket unions missing from src/types.ts"
+fi
+if grep -Fq 'ticketMatch && method === "PATCH"' server/api.ts && grep -Fq 'requireAdmin(req)' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner-only PATCH route present (requireAdmin gate)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-only PATCH route missing from server/api.ts"
+fi
+
+echo "-- 42i. Cleanup: delete ticket tenants =="
+code -b "$JAR42" -X DELETE "$BASE/api/admin/orgs/$TICKET_A_ORG" > /dev/null
+code -b "$JAR42" -X DELETE "$BASE/api/admin/orgs/$TICKET_B_ORG" > /dev/null
+rm -f "$JAR42" "$JAR42A" "$JAR42B"
+echo "  ✓ 42: support tickets verified (owner Tickets tab + tenant Support tab, row isolation, owner-only status changes)"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

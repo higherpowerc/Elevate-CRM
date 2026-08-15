@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, ProvisionEvent, RevenueModel, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, ProvisionEvent, RevenueModel, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -97,6 +97,22 @@ export const api = {
     }),
   deleteInvoice: (id: number) =>
     request<{ ok: true }>(`/api/invoices/${id}`, { method: "DELETE" }),
+
+  /* Support tickets (owner direction 2026-08-15) — owner + tenant both create
+     and list (each scoped to their own org; the owner's GET additionally
+     carries every row's org name). PATCH is owner-only: the server rejects
+     tenant writes with 403. */
+  tickets: () => request<{ tickets: Ticket[] }>("/api/tickets"),
+  createTicket: (data: { subject: string; message: string; priority?: TicketPriority }) =>
+    request<{ ticket: Ticket }>("/api/tickets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateTicket: (id: number, data: { status?: TicketStatus; priority?: TicketPriority }) =>
+    request<{ ticket: Ticket }>(`/api/tickets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 
   /* Owner-only admin endpoints (Phase 2 — tenant provisioning). A member
      calling these gets a 403 from the server. */
