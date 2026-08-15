@@ -2053,6 +2053,29 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const value = db
       .query("SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients WHERE org_id = ? AND archived = 0 AND lost = 0")
       .get(orgId) as { v: number };
+    /* Owner direction 2026-08-15 (clarified twice) — the OWNER's Dashboard
+       "Projected pipeline" KPI must show ONLY the FIRST pipeline stage: the
+       owner's prospects bucket (their Leads stage). The old all-stage sum
+       counted Intakes/Onboarding + Sold client deals on top of the Leads
+       deals, double-reporting money that "Sold MRR" already shows. This is
+       positional + rename-safe: first stage = orgStages[0], never a
+       hardcoded "Leads" string (the owner can rename stages). The existing
+       lost + archived exclusions are kept exactly. Client accounts
+       (role=member) keep their own all-stage sum — for them projectedPipeline
+       is their whole book's money, unchanged. */
+    let projected = value.v;
+    if (auth.role === "admin") {
+      const firstStage = orgStages.length > 0 ? orgStages[0] : "";
+      projected = firstStage
+        ? (db
+            .query(
+              `SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients
+               WHERE org_id = ? AND lost = 0 AND archived = 0
+                 AND LOWER(TRIM(stage)) = LOWER(TRIM(?))`,
+            )
+            .get(orgId, firstStage) as { v: number }).v
+        : 0;
+    }
     const recent = (
       db
         .query("SELECT * FROM clients WHERE org_id = ? AND archived = 0 ORDER BY updated_at DESC, id DESC LIMIT 5")
@@ -2136,7 +2159,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
     const resp: Record<string, unknown> = {
       stageCounts,
-      projectedPipeline: value.v,
+      projectedPipeline: projected,
       totalClients: total.c,
       archivedClients: archived.c,
       recentClients: recent,
