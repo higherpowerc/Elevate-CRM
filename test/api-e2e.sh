@@ -2929,7 +2929,172 @@ for PID31 in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); pri
 done
 rm -f "$JART31" /tmp/s31-settings.json /tmp/s31d-settings.json /tmp/s31f-settings.json
 echo "  ✓ 31g: provisioned org, tenant org and test clients removed; owner stages restored"
-
+echo "== 32. Lost leads + DNC list (owner request 2026-08-14) =="
+echo "-- 32a. Owner: create a lost lead — flag + reason round-trip, dashboard exclusion =="
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+D32_LEADS0=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Leads',0))")
+D32_PIPE0=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['projectedPipeline'])")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Lead Co","clientType":"commercial","dealValue":9999,"stage":"Leads","lost":true,"lostReason":"Chose a competitor","industry":"HVAC"}' "$BASE/api/clients")
+check "32a: create client with lost=true → 201" 201 "$S"
+LOST32_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (lost client id=$LOST32_ID)"
+grep -q '"lost":true' /tmp/body.json && grep -q '"lostReason":"Chose a competitor"' /tmp/body.json && echo "  ✓ lost + reason round-trip on create" || echo "  ✗ lost flags missing: $(cat /tmp/body.json)"
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+grep -q '"companyName":"Lost Lead Co"' /tmp/body.json && grep -q '"lost":true' /tmp/body.json && echo "  ✓ client list returns the lost lead (the Lost section's source)" || echo "  ✗ lost lead missing from list: $(cat /tmp/body.json)"
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+if D32_LEADS0="$D32_LEADS0" D32_PIPE0="$D32_PIPE0" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert d['stageCounts'].get('Leads',0) == int(os.environ['D32_LEADS0']), d['stageCounts']
+assert d['projectedPipeline'] == float(os.environ['D32_PIPE0']), d['projectedPipeline']
+print("  ✓ stageCounts.Leads + projectedPipeline unchanged (9999 excluded)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 32a: dashboard excludes the lost lead from stageCounts + projectedPipeline"
+else FAIL=$((FAIL+1)); echo "  ✗ 32a: lost lead still counted"; cat "$PASS_TMP"; fi
+echo "-- 32b. DNC round-trip: set (reason + date), update, partial update, clear =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Leads","dnc":true,"dncReason":"Asked not to be contacted","dncDate":"2026-08-15"}' "$BASE/api/clients")
+check "32b: create client with dnc=true + reason + date → 201" 201 "$S"
+DNC32_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (dnc client id=$DNC32_ID)"
+grep -q '"dnc":true' /tmp/body.json && grep -q '"dncReason":"Asked not to be contacted"' /tmp/body.json && grep -q '"dncDate":"2026-08-15"' /tmp/body.json && echo "  ✓ dnc + reason + date round-trip on create" || echo "  ✗ dnc flags missing: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Leads","dnc":true,"dncReason":"Written request received","dncDate":"2026-08-15"}' "$BASE/api/clients/$DNC32_ID")
+check "32b: update DNC reason → 200" 200 "$S"
+grep -q '"dncReason":"Written request received"' /tmp/body.json && echo "  ✓ DNC reason updates" || echo "  ✗ DNC reason not updated: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Intakes"}' "$BASE/api/clients/$DNC32_ID")
+check "32b: partial update without dnc keys → 200" 200 "$S"
+grep -q '"dnc":true' /tmp/body.json && grep -q '"dncReason":"Written request received"' /tmp/body.json && echo "  ✓ absent dnc keys leave the flag untouched (partial update)" || echo "  ✗ dnc clobbered: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Intakes","dnc":false}' "$BASE/api/clients/$DNC32_ID")
+check "32b: clear DNC → 200" 200 "$S"
+grep -q '"dnc":false' /tmp/body.json && grep -qv '"dncReason":"Written' /tmp/body.json && grep -qv '"dncDate":"2026-08-15"' /tmp/body.json && echo "  ✓ clearing DNC clears reason + date" || echo "  ✗ DNC clear: $(cat /tmp/body.json)"
+echo "-- 32c. Validation =="
+check "32c: lost must be boolean → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad Lost Co","clientType":"residential","lost":"yes"}' "$BASE/api/clients")
+check "32c: dnc must be boolean → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad DNC Co","clientType":"residential","dnc":1}' "$BASE/api/clients")
+check "32c: bad dncDate → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bad Date Co","clientType":"residential","dnc":true,"dncDate":"tomorrow"}' "$BASE/api/clients")
+check "32c: over-long lostReason → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Long Reason Co\",\"clientType\":\"residential\",\"lost\":true,\"lostReason\":\"$(python3 -c "print('x'*301)")\"}" "$BASE/api/clients")
+echo "-- 32d. Restore to pipeline (lost=false) brings the lead back =="
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Lead Co","clientType":"commercial","dealValue":9999,"stage":"Leads","lost":false}' "$BASE/api/clients/$LOST32_ID")
+check "32d: restore lost (lost=false) → 200" 200 "$S"
+grep -q '"lost":false' /tmp/body.json && grep -qv '"lostReason":"Chose' /tmp/body.json && echo "  ✓ restore clears the flag + reason" || echo "  ✗ restore: $(cat /tmp/body.json)"
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+if D32_LEADS0="$D32_LEADS0" D32_PIPE0="$D32_PIPE0" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert d['stageCounts'].get('Leads',0) == int(os.environ['D32_LEADS0']) + 1, d['stageCounts']
+assert d['projectedPipeline'] == float(os.environ['D32_PIPE0']) + 9999, d['projectedPipeline']
+print("  ✓ stageCounts.Leads + projectedPipeline include the restored lead again")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 32d: restore brings the lead back into the pipeline counts"
+else FAIL=$((FAIL+1)); echo "  ✗ 32d: restore did not restore counts"; cat "$PASS_TMP"; fi
+echo "-- 32e. Cross-org isolation: tenant A's lost/DNC leads are invisible to tenant B and the owner =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Isolation Tenant A","email":"iso-a@example.com","password":"isoa123456"}' "$BASE/api/admin/orgs")
+check "32e: provision tenant A → 201" 201 "$S"
+ISO_A_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Isolation Tenant B","email":"iso-b@example.com","password":"isob123456"}' "$BASE/api/admin/orgs")
+check "32e: provision tenant B → 201" 201 "$S"
+ISO_B_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARA32=$(mktemp); JARB32=$(mktemp)
+S=$(code -c "$JARA32" -b "$JARA32" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"iso-a@example.com","password":"isoa123456"}' "$BASE/api/auth/login")
+check "32e: tenant A login → 200" 200 "$S"
+S=$(code -c "$JARB32" -b "$JARB32" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"iso-b@example.com","password":"isob123456"}' "$BASE/api/auth/login")
+check "32e: tenant B login → 200" 200 "$S"
+code -b "$JARA32" "$BASE/api/settings" > /dev/null
+STAGE_A=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
+S=$(code -b "$JARA32" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Tenant A Lost Co\",\"clientType\":\"commercial\",\"dealValue\":777,\"stage\":\"$STAGE_A\",\"lost\":true,\"lostReason\":\"A lost it\",\"dnc\":true,\"dncReason\":\"A says stop\",\"dncDate\":\"2026-08-15\"}" "$BASE/api/clients")
+check "32e: tenant A creates lost+DNC lead → 201" 201 "$S"
+grep -q '"lost":true' /tmp/body.json && grep -q '"dnc":true' /tmp/body.json && echo "  ✓ tenant A lost+dnc round-trips in their own org" || echo "  ✗ tenant A flags: $(cat /tmp/body.json)"
+code -b "$JARA32" "$BASE/api/dashboard" > /dev/null
+if STAGE_A="$STAGE_A" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert d['stageCounts'].get(os.environ['STAGE_A'],0) == 0, d['stageCounts']
+assert d['projectedPipeline'] == 0, d['projectedPipeline']
+assert d['totalClients'] == 1, d['totalClients']  # record exists but is lost — count stays, pipeline excludes
+print("  ✓ tenant A dashboard: lost lead excluded from stageCounts/pipeline; totalClients still counts the record")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 32e: tenant A dashboard excludes its own lost lead"
+else FAIL=$((FAIL+1)); echo "  ✗ 32e: tenant A dashboard wrong"; cat "$PASS_TMP"; fi
+code -b "$JARB32" "$BASE/api/clients?archived=1" > /dev/null
+grep -qv 'Tenant A Lost Co' /tmp/body.json && echo "  ✓ tenant B clients list has NO tenant A records" || echo "  ✗ tenant B cross-org leak: $(cat /tmp/body.json)"
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+grep -qv 'Tenant A Lost Co' /tmp/body.json && echo "  ✓ owner clients list has NO tenant A records (owner sees only owner's)" || echo "  ✗ owner cross-org leak: $(cat /tmp/body.json)"
+code -b "$JARB32" "$BASE/api/dashboard" > /dev/null
+grep -q '"totalClients":0' /tmp/body.json && echo "  ✓ tenant B dashboard stays empty (no cross-org stats)" || echo "  ✗ tenant B dashboard: $(cat /tmp/body.json)"
+echo "-- 32f. 3g-3 auto-provisioning still fires with lost leads present =="
+BEFORE32F=$(ORG_COUNT)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Provision Test Co","clientType":"commercial","dealValue":1000,"stage":"Leads"}' "$BASE/api/clients")
+check "32f: create non-lost lead → 201" 201 "$S"
+PT32_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Provision Test Co","clientType":"commercial","dealValue":1000,"stage":"Sold"}' "$BASE/api/clients/$PT32_ID")
+check "32f: move non-lost lead to Sold → 200" 200 "$S"
+code -b "$JAR" "$BASE/api/admin/orgs" > /dev/null
+AFTER32F=$(ORG_COUNT)
+[ "$AFTER32F" -eq $((BEFORE32F + 1)) ] && echo "  ✓ 32f: one new workspace auto-provisioned (${BEFORE32F} → ${AFTER32F})" || echo "  ✗ 32f: org count ${BEFORE32F} → ${AFTER32F} (expected +1)"
+if PT32_ID="$PT32_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == int(os.environ['PT32_ID'])]
+assert len(prov) == 1, [o['name'] for o in d['orgs']]
+print("  ✓ provisionedFromClient = the moved lead")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 32f: 3g-3 fires for a NON-lost lead moved to the terminal stage"
+else FAIL=$((FAIL+1)); echo "  ✗ 32f: provision missing"; cat "$PASS_TMP"; fi
+PROV32_ORG=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $PT32_ID][0])")
+# Documented edge case (my call): a LOST lead moved to the terminal stage still
+# provisions mechanically — lost is a lead-status flag, not a pipeline rule,
+# and the 3g-3 hook is unchanged. Assert it keeps firing so nothing regressed.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Provision Co","clientType":"commercial","dealValue":2500,"stage":"Leads","lost":true,"lostReason":"Edge case"}' "$BASE/api/clients")
+check "32f: create LOST lead → 201" 201 "$S"
+LPC32_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+BEFORE32F2=$(ORG_COUNT)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Provision Co","clientType":"commercial","dealValue":2500,"stage":"Sold","lost":true,"lostReason":"Edge case"}' "$BASE/api/clients/$LPC32_ID")
+check "32f: move LOST lead to Sold → 200 (mechanical hook unchanged)" 200 "$S"
+code -b "$JAR" "$BASE/api/admin/orgs" > /dev/null
+AFTER32F2=$(ORG_COUNT)
+[ "$AFTER32F2" -eq $((BEFORE32F2 + 1)) ] && echo "  ✓ 32f: lost→Sold still auto-provisions (documented: lost is a status flag, not a stage rule)" || echo "  ✗ 32f: lost→Sold provisioning regressed"
+PROV32B_ORG=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $LPC32_ID][0])")
+echo "-- 32g. UI surface strings in the built bundle =="
+NEWEST_JS32=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS32" ]; then
+  for STR32 in "No lost leads" "No DNC entries" "Do not call/contact" "Mark as lost (not interested)" "Restore to pipeline" "Lead status"; do
+    if grep -Fq "$STR32" "$NEWEST_JS32"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR32\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR32\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 32g bundle surface check"
+fi
+echo "-- 32h. Cleanup =="
+code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$PROV32_ORG" > /dev/null
+code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$PROV32B_ORG" > /dev/null
+code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$ISO_A_ID" > /dev/null
+code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$ISO_B_ID" > /dev/null
+for CID32 in $LOST32_ID $DNC32_ID $PT32_ID $LPC32_ID; do
+  code -b "$JAR" -X DELETE "$BASE/api/clients/$CID32" > /dev/null
+done
+code -b "$JAR" "$BASE/api/admin/provisions" > /dev/null
+for PID32 in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(' '.join(str(p['id']) for p in d['provisions']))"); do
+  code -b "$JAR" -X POST "$BASE/api/admin/provisions/$PID32/dismiss" > /dev/null
+done
+rm -f "$JARA32" "$JARB32"
+echo "  ✓ 32h: test clients, isolation tenants and provisioned workspaces removed"
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
 
