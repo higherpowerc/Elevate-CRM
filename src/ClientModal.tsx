@@ -84,6 +84,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     services: [],
     customFields: [],
     dealValue: 0,
+    monthlyAmount: 0,
     stage: createStage,
     nextAction: "",
     notes: "",
@@ -138,6 +139,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
           services: [...client.services],
           customFields: client.customFields.map((f) => ({ ...f })),
           dealValue: client.dealValue,
+          monthlyAmount: client.monthlyAmount ?? 0,
           stage: client.stage,
           nextAction: client.nextAction,
           notes: client.notes,
@@ -319,6 +321,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
             }),
         customFields,
         dealValue: Number(form.dealValue) || 0,
+        monthlyAmount: Number(form.monthlyAmount) || 0,
         // Owner request 2026-08-14 — lost/DNC: cleared flags ship cleared
         // metadata (the server normalizes anyway — this keeps the payload
         // honest for the modal's own optimistic render).
@@ -499,16 +502,17 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
       );
     }
     // text
+    const isMoneyField = f.key === "dealValue" || f.key === "monthlyAmount";
     return (
       <label className="field" key={f.key}>
         <span className="field-label">{f.label}</span>
         <input
-          type={f.key === "dealValue" ? "number" : f.key === "website" ? "url" : f.key === "email" ? "email" : "text"}
-          min={f.key === "dealValue" ? 0 : undefined}
-          step={f.key === "dealValue" ? "any" : undefined}
+          type={isMoneyField ? "number" : f.key === "website" ? "url" : f.key === "email" ? "email" : "text"}
+          min={isMoneyField ? 0 : undefined}
+          step={isMoneyField ? "any" : undefined}
           value={value}
           onChange={(e) =>
-            f.key === "dealValue"
+            isMoneyField
               ? setField(key, e.target.value === "" ? 0 : Number(e.target.value))
               : setField(key, e.target.value)
           }

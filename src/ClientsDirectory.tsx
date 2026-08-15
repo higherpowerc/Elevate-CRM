@@ -43,6 +43,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
     serviceModel: "both",
     deliveryType: "both",
     intakeOpts: [],
+    revenueModel: "sales",
     customIntakeGroups: [],
   });
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +66,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
         serviceModel: settings.serviceModel,
         deliveryType: settings.deliveryType,
         intakeOpts: settings.intakeOpts,
+        revenueModel: settings.revenueModel,
         customIntakeGroups: settings.customIntakeGroups,
       });
     } catch (e) {

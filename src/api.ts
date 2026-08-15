@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, ProvisionEvent, Task, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, ProvisionEvent, RevenueModel, Task, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -108,6 +108,14 @@ export const api = {
     }),
   adminDeleteOrg: (id: number) =>
     request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
+  /* Owner request 2026-08-14 — owner edits a client account's billing:
+     the monthly subscription amount they pay (USD >= 0) and/or their revenue
+     model ("sales" | "subscription"). Owner-only; members get 403. */
+  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; revenueModel?: RevenueModel }) =>
+    request<{ ok: true; org: { id: number; name: string } }>(`/api/admin/orgs/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   /* 3g-3 — sold-lead auto-provisioning notifications (owner-only): the
      undismissed list + dismiss. */
   adminProvisions: () => request<{ provisions: ProvisionEvent[] }>("/api/admin/provisions"),
@@ -168,6 +176,10 @@ export const api = {
     customIntakeGroups?: CustomIntakeGroup[];
     /** 3f-1: apply a vertical template additively (business type change). */
     verticalKey?: string;
+    /** Owner request 2026-08-14 — the tenant edits their OWN revenue model
+     *  (how their business makes money: sales vs subscription). The monthly
+     *  subscription amount they pay is owner-set (Admin) — not writable here. */
+    revenueModel?: RevenueModel;
   }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",

@@ -66,6 +66,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     serviceModel: "both",
     deliveryType: "both",
     intakeOpts: [],
+    revenueModel: "sales",
     customIntakeGroups: [],
   });
   // Local copy of the tenant's stages + per-stage counts, refreshed from the
@@ -123,6 +124,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         serviceModel: settings.serviceModel,
         deliveryType: settings.deliveryType,
         intakeOpts: settings.intakeOpts,
+        revenueModel: settings.revenueModel,
         customIntakeGroups: settings.customIntakeGroups,
       });
     } catch (e) {

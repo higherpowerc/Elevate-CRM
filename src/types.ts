@@ -67,6 +67,13 @@ export interface CustomIntakeGroup {
  *  and edit; existing rows backfilled to residential). */
 export type ClientType = "commercial" | "residential";
 
+/** Owner request 2026-08-14 — how an org's own business makes money:
+ *  "sales" (one-off jobs/invoices) | "subscription" (recurring book). Seeded
+ *  by vertical at account creation; editable in Settings (and by the owner in
+ *  Admin). Drives which money figure the client dashboard shows. */
+export const REVENUE_MODELS = ["sales", "subscription"] as const;
+export type RevenueModel = (typeof REVENUE_MODELS)[number];
+
 export interface Client {
   id: number;
   companyName: string;
@@ -125,6 +132,10 @@ export interface Client {
   dnc: boolean;
   dncReason: string;
   dncDate: string;
+  /** Owner request 2026-08-14 — this record's monthly amount (USD) in the
+   *  org's OWN subscription book (used when the org's revenue_model =
+   *  "subscription"). */
+  monthlyAmount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -183,6 +194,16 @@ export interface DashboardData {
   recentClients: Client[];
   /** Task overview (2026-08-14 owner request) — same org scoping as the rest. */
   tasks: DashboardTaskAgg;
+  /** Owner request 2026-08-14 — MRR + vertical revenue dashboards.
+   *  salesThisMonth / subscriptionsTotal / revenueModel are the session ORG's
+   *  own money (present for every workspace); clientMrr + orgCount are the
+   *  OWNER's cross-org figures and exist ONLY in the admin response — a
+   *  member never receives them (isolation). */
+  salesThisMonth: number;
+  subscriptionsTotal: number;
+  revenueModel: RevenueModel;
+  clientMrr?: number;
+  orgCount?: number;
 }
 
 export interface User {
@@ -223,6 +244,13 @@ export interface Org {
   provisionedFromClient?: number;
   /** 3g-3: the sold lead's name this workspace was auto-provisioned from. */
   provisionedFromClientName?: string;
+  /** Owner request 2026-08-14 — what this client pays per month (USD, 0 until
+   *  Phase 5 pricing). Owner-set in Admin; visible to the tenant in Settings. */
+  monthlySubscriptionAmount?: number;
+  /** Owner request 2026-08-14 — how this client's OWN business makes money
+   *  ("sales" | "subscription"). Seeded by vertical; tenant-editable in
+   *  Settings, owner-overridable in Admin. */
+  revenueModel?: RevenueModel;
 }
 /** 3g-3: an owner notification that a sold lead got auto-provisioned. */
 export interface ProvisionEvent {
@@ -284,6 +312,13 @@ export interface OrgSettings {
   /** Adaptive intake 3f-1: the org's business type (vertical template key;
    *  '' = no preset / General). */
   verticalKey: string;
+  /** Owner request 2026-08-14 — how this org's OWN business makes money:
+   *  "sales" | "subscription". Tenant-editable in Settings (owner override in
+   *  Admin). */
+  revenueModel: RevenueModel;
+  /** Owner request 2026-08-14 — what this org pays the owner per month (USD,
+   *  owner-set in Admin; the tenant can see it here but not change it). */
+  monthlySubscriptionAmount: number;
 }
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is

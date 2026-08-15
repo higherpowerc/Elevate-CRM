@@ -255,6 +255,9 @@ function toClient(row: ClientRow) {
     dnc: row.dnc === 1,
     dncReason: row.dnc_reason,
     dncDate: row.dnc_date,
+    // Owner request 2026-08-14 — the record's monthly amount in the org's own
+    // subscription book (used when the org's revenue_model = "subscription").
+    monthlyAmount: row.monthly_amount ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -267,6 +270,16 @@ export type ClientType = (typeof CLIENT_TYPES)[number];
 
 export function isClientType(v: unknown): v is ClientType {
   return typeof v === "string" && (CLIENT_TYPES as readonly string[]).includes(v);
+}
+
+/** Owner request 2026-08-14 — the org's revenue model: "sales" (invoices) or
+ *  "subscription" (per-client monthly book). Drives which money figure the
+ *  client dashboard shows. */
+export const REVENUE_MODELS = ["sales", "subscription"] as const;
+export type RevenueModel = (typeof REVENUE_MODELS)[number];
+
+export function isRevenueModel(v: unknown): v is RevenueModel {
+  return typeof v === "string" && (REVENUE_MODELS as readonly string[]).includes(v);
 }
 
 interface ClientInput {
@@ -327,6 +340,11 @@ interface ClientInput {
   dnc?: boolean;
   dncReason?: string;
   dncDate?: string;
+  /** Owner request 2026-08-14 — this record's monthly amount (USD) in the
+   *  org's OWN subscription book (used when the org's revenue_model =
+   *  "subscription"). Optional: on create absent keys default 0; on update
+   *  absent keys leave the stored value untouched. */
+  monthlyAmount?: number;
 }
 
 /** Adaptive intake Phase 1: optional TEXT columns — client JSON key → DB
@@ -604,6 +622,16 @@ function validateClient(
     dealValue = Number(body.dealValue);
     if (!Number.isFinite(dealValue) || dealValue < 0) return { ok: false, error: "Deal value must be a non-negative number." };
   }
+  // Owner request 2026-08-14 — the record's monthly amount in the org's own
+  // subscription book. OPTIONAL: on create, absent keys default 0; on update,
+  // only keys present in the body are persisted (same partial-update rule as
+  // the intake fields). Validated numeric and non-negative like dealValue.
+  let monthlyAmount: number | undefined;
+  if (body.monthlyAmount !== undefined && body.monthlyAmount !== null && body.monthlyAmount !== "") {
+    const m = Number(body.monthlyAmount);
+    if (!Number.isFinite(m) || m < 0) return { ok: false, error: "Monthly amount must be a non-negative number." };
+    monthlyAmount = m;
+  }
 
   let stage: Stage = stages[0] ?? "Prospect";
   if (body.stage !== undefined && body.stage !== null && body.stage !== "") {
@@ -696,6 +724,7 @@ function validateClient(
     notes: str(body.notes, 10000),
     archived: body.archived === true,
     clientType,
+    ...(monthlyAmount !== undefined ? { monthlyAmount } : {}),
     address: address.value,
     city: city.value,
     state: state.value,
@@ -940,6 +969,10 @@ interface OrgRow {
   admin_reset_password: string;
   /** 3g-3: source lead's company/contact name ('' when not auto-provisioned). */
   provisioned_client_name: string;
+  /** Owner request 2026-08-14 — what this client pays per month (owner-set
+   *  in Admin) + how their own business makes money ("sales" | "subscription"). */
+  monthly_subscription_amount: number;
+  revenue_model: string;
 }
 
 function toOrg(row: OrgRow) {
@@ -959,6 +992,11 @@ function toOrg(row: OrgRow) {
     resetPassword: row.admin_reset_password || undefined,
     provisionedFromClient: row.provisioned_from_client || undefined,
     provisionedFromClientName: row.provisioned_client_name || undefined,
+    // Owner request 2026-08-14 — what this client pays per month (owner-set
+    // in Admin; visible to the tenant in Settings) + how their own business
+    // makes money ("sales" | "subscription").
+    monthlySubscriptionAmount: row.monthly_subscription_amount ?? 0,
+    revenueModel: row.revenue_model ?? "sales",
   };
 }
 
@@ -1037,8 +1075,8 @@ function insertOrgWithMember(input: {
       orgIdNew = Number(
         db
           .query(
-            `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key, revenue_model)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             input.name,
@@ -1048,6 +1086,9 @@ function insertOrgWithMember(input: {
             tpl.deliveryType,
             tpl.industry,
             tpl.key,
+            // Owner request 2026-08-14 — revenue model seeded by vertical
+            // (Med Spa → subscription; every other vertical → sales).
+            tpl.revenueModel,
           ).lastInsertRowid,
       );
     } else {
@@ -1654,6 +1695,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const rows = db
       .query(
         `SELECT o.id, o.name, o.created_at,
+                o.monthly_subscription_amount,
+                o.revenue_model,
                 o.provisioned_from_client,
                 o.provisioned_temp_password,
                 o.admin_reset_password,
@@ -1769,6 +1812,50 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db.query("DELETE FROM orgs WHERE id = ?").run(id);
     })();
     return json({ ok: true });
+  }
+
+  /* Owner request 2026-08-14 — MRR + revenue model: PATCH a client account's
+     billing settings (owner-only, like every /api/admin route). Accepts
+     monthlySubscriptionAmount (USD, numeric >= 0 — the default 0 until Phase
+     5 pricing) and/or revenueModel ("sales" | "subscription" — the owner
+     override; the tenant can also change their own model in Settings).
+     Unknown keys are ignored; an empty body updates nothing (400). */
+  const adminOrgPatchMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)$/);
+  if (adminOrgPatchMatch && method === "PATCH") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminOrgPatchMatch[1]);
+    const org = db.query("SELECT id, name FROM orgs WHERE id = ?").get(id) as
+      | { id: number; name: string }
+      | null;
+    if (!org) return err("Org not found.", 404);
+    if (org.id === ensureDefaultOrg()) {
+      return err("The owner workspace's billing is not configurable.", 400);
+    }
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const sets: string[] = [];
+    const params: (string | number)[] = [];
+    if (body.monthlySubscriptionAmount !== undefined && body.monthlySubscriptionAmount !== null && body.monthlySubscriptionAmount !== "") {
+      const m = Number(body.monthlySubscriptionAmount);
+      if (!Number.isFinite(m) || m < 0) {
+        return err("Monthly subscription amount must be a non-negative number.", 400);
+      }
+      sets.push("monthly_subscription_amount = ?");
+      params.push(m);
+    }
+    if (body.revenueModel !== undefined && body.revenueModel !== null && body.revenueModel !== "") {
+      if (!isRevenueModel(body.revenueModel)) {
+        return err("Revenue model must be one of: sales, subscription.", 400);
+      }
+      sets.push("revenue_model = ?");
+      params.push(body.revenueModel);
+    }
+    if (sets.length === 0) return err("Nothing to update.", 400);
+    params.push(id);
+    db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    const updated = db.query("SELECT id, name FROM orgs WHERE id = ?").get(id) as { id: number; name: string };
+    return json({ ok: true, org: { id: updated.id, name: updated.name } });
   }
 
   /* 3k — owner-only per-tenant "Reset password" (the Admin tab action for a
@@ -1961,7 +2048,40 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       clientName: r.client_name ?? "",
     }));
 
-    return json({
+    /* Owner request 2026-08-14 — MRR + vertical revenue dashboards.
+       Two distinct workspaces, one endpoint:
+         OWNER (role=admin): clientMrr = SUM of every client account's
+           monthly_subscription_amount (what the owner charges them) +
+           orgCount (client-account count for the "+ New client" total).
+         ANY ORG: its OWN business money — salesThisMonth = SUM of this
+           org's invoices dated in the current calendar month (due_date,
+           the settable date; invoices without a date never count),
+           subscriptionsTotal = SUM of this org's clients' monthly_amount
+           (their own recurring book), and the org's revenueModel so the
+           UI picks which KPI to show.
+       The tenant response NEVER includes clientMrr/orgCount — a member
+       cannot see the owner's MRR (or any other org's) in either direction. */
+    const orgForMoney = org ?? null;
+    const revenueModel = orgForMoney && isRevenueModel(orgForMoney.revenue_model)
+      ? orgForMoney.revenue_model
+      : "sales";
+    const monthStart = `${todayKey().slice(0, 7)}-01`;
+    const salesThisMonth = (
+      db
+        .query(
+          `SELECT COALESCE(SUM(amount), 0) AS v
+           FROM invoices
+           WHERE org_id = ? AND due_date != '' AND due_date >= ? AND due_date <= ?`,
+        )
+        .get(orgId, monthStart, todayKey()) as { v: number }
+    ).v;
+    const subscriptionsTotal = (
+      db.query("SELECT COALESCE(SUM(monthly_amount), 0) AS v FROM clients WHERE org_id = ?").get(orgId) as {
+        v: number;
+      }
+    ).v;
+
+    const resp: Record<string, unknown> = {
       stageCounts,
       projectedPipeline: value.v,
       totalClients: total.c,
@@ -1974,7 +2094,20 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         done: doneAgg.c,
         upcoming,
       },
-    });
+      salesThisMonth,
+      subscriptionsTotal,
+      revenueModel,
+    };
+    // Owner-only MRR + account count (members never receive these keys).
+    if (auth.role === "admin") {
+      const mrr = db
+        .query("SELECT COALESCE(SUM(monthly_subscription_amount), 0) AS v FROM orgs")
+        .get() as { v: number };
+      const orgsAgg = db.query("SELECT COUNT(*) AS c FROM orgs").get() as { c: number };
+      resp.clientMrr = mrr.v;
+      resp.orgCount = orgsAgg.c;
+    }
+    return json(resp);
   }
 
   /* Org settings (Phase 3a): branding + per-tenant pipeline stages.
@@ -2000,6 +2133,11 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         customIntakeGroups: parseCustomIntakeGroups(org.custom_intake_groups),
         // 3f-1: the org's business type (vertical template key; '' = General).
         verticalKey: org.vertical_key ?? "",
+        // Owner request 2026-08-14 — revenue model + what this org pays the
+        // owner per month. The model is tenant-editable; the amount is
+        // owner-set (Admin) — the tenant sees it here but cannot change it.
+        revenueModel: isRevenueModel(org.revenue_model) ? org.revenue_model : "sales",
+        monthlySubscriptionAmount: org.monthly_subscription_amount ?? 0,
       },
     });
   }
@@ -2114,6 +2252,18 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       params.push(body.industry);
     }
 
+    /* Owner request 2026-08-14 — the tenant edits their OWN revenue model
+       here (how their business makes money: sales vs subscription). The
+       monthly subscription AMOUNT they pay the owner is owner-set in Admin
+       and deliberately NOT writable here. */
+    if (body.revenueModel !== undefined) {
+      if (!isRevenueModel(body.revenueModel)) {
+        return err("Revenue model must be one of: sales, subscription.", 400);
+      }
+      sets.push("revenue_model = ?");
+      params.push(body.revenueModel);
+    }
+
     if (body.intakeOpts !== undefined) {
       if (!Array.isArray(body.intakeOpts)) {
         return err("intakeOpts must be a list of optional intake groups.", 400);
@@ -2223,6 +2373,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         intakeOpts: parseIntakeOpts(updated.intake_opts),
         customIntakeGroups: parseCustomIntakeGroups(updated.custom_intake_groups),
         verticalKey: updated.vertical_key ?? "",
+        revenueModel: isRevenueModel(updated.revenue_model) ? updated.revenue_model : "sales",
+        monthlySubscriptionAmount: updated.monthly_subscription_amount ?? 0,
       },
     });
   }
@@ -2278,8 +2430,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")})
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")})`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")})`,
       )
       .run(
         orgId,
@@ -2287,6 +2439,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
         c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
+        c.monthlyAmount ?? 0,
         ...intake.values,
         ...statusValues(c),
       );
@@ -2331,6 +2484,13 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         c.archived ? 1 : 0,
         c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
       ];
+      // Owner request 2026-08-14 — the record's monthly amount: persisted only
+      // when present in the body (validateClient only sets it when the client
+      // sent it), so partial updates never clobber an absent value.
+      if (c.monthlyAmount !== undefined) {
+        sets.push("monthly_amount = ?");
+        params.push(c.monthlyAmount);
+      }
       // Adaptive intake Phase 1: only persist the new optional fields that are
       // actually present in the body — missing keys leave the stored value
       // untouched (nothing clobbered on partial updates).

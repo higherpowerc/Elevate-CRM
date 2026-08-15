@@ -35,6 +35,10 @@ export interface IntakeOrgSettings {
   serviceModel: string;
   deliveryType: string;
   intakeOpts: string[];
+  /** Owner request 2026-08-14 — the org's revenue model ("sales" |
+   *  "subscription"). "subscription" orgs get the per-client "Monthly amount"
+   *  field in the universal section. */
+  revenueModel?: "sales" | "subscription";
   /** Adaptive intake Phase 3: tenant-defined custom conditional field groups
    *  (rendered for every industry, not just "other"). */
   customIntakeGroups?: CustomIntakeGroup[];
@@ -147,6 +151,12 @@ export function getIntakeLayout(
       { key: "email", label: "Email", kind: "text", placeholder: "jordan@acme.com", maxLength: 200 },
       { key: "phone", label: "Phone", kind: "text", placeholder: "+1 555 000 1234", maxLength: 50 },
       { key: "dealValue", label: "Deal value ($)", kind: "text", placeholder: "9500.50" },
+      /* Owner request 2026-08-14 — the per-client monthly amount shows ONLY
+         for "subscription"-model orgs (their customers on recurring billing);
+         sales-model orgs keep the form exactly as before. */
+      ...(settings.revenueModel === "subscription"
+        ? [{ key: "monthlyAmount", label: "Monthly amount ($)", kind: "text", placeholder: "e.g. 49.00" } as IntakeField]
+        : []),
       { key: "stage", label: "Stage", kind: "select" },
       { key: "nextAction", label: "Next action", kind: "text", placeholder: "e.g. Send proposal by Friday", maxLength: 500 },
       { key: "address", label: "Address", kind: "address" },
