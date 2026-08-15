@@ -568,19 +568,25 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         /* Owner request 2026-08-14 — the Lost section / DNC list. Lost rows
            show the lost reason + a "Restore to pipeline" action (clears the
            flag); DNC rows carry the warning banner inline. Both share the
-           stage chip filter and the search box with the pipeline table. */
+           stage chip filter and the search box with the pipeline table.
+
+           Owner direction 2026-08-15 (#50) — the owner's Leads tab has NO
+           Stage column at all, and that includes the Lost/DNC rows: the
+           Stage header AND the StageBadge cell are hidden there too (the
+           colgroup drops the Stage col and rebalances to 100%). Tenants and
+           the owner's Onboarding tab keep their Stage column. */
         <div className="card table-wrap">
           <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
             <colgroup>
-              <col style={{ width: "26%" }} />
-              <col style={{ width: "14%" }} />
+              <col style={{ width: ownerLeadsTab ? "30%" : "26%" }} />
+              {!ownerLeadsTab && <col style={{ width: "14%" }} />}
               <col style={{ width: "38%" }} />
-              <col style={{ width: "22%" }} />
+              <col style={{ width: ownerLeadsTab ? "32%" : "22%" }} />
             </colgroup>
             <thead>
               <tr>
                 <th>{ownerOrg ? "Business name" : "Client"}</th>
-                <th>Stage</th>
+                {!ownerLeadsTab && <th>Stage</th>}
                 <th>{filter === "lost" ? "Lost reason" : "Do-not-contact"}</th>
                 <th className="actions-th">Actions</th>
               </tr>
@@ -599,9 +605,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </div>
                     {c.industry && <div className="cell-sub">{c.industry}</div>}
                   </td>
-                  <td data-label="Stage">
-                    <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
-                  </td>
+                  {!ownerLeadsTab && (
+                    <td data-label="Stage" className="lost-dnc-stage-cell">
+                      <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
+                    </td>
+                  )}
                   <td data-label={filter === "lost" ? "Lost reason" : "Do-not-contact"}>
                     {filter === "lost" ? (
                       <span className="cell-muted" title={c.lostReason}>

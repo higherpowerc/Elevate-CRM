@@ -3867,12 +3867,12 @@ else
 fi
 NEWEST_JS39=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS39" ]; then
-  if grep -Fq '!W0&&!F2&&I.jsxDEV("span",{className:"cell-muted cell-next"' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9$]+&&![A-Za-z0-9$]+&&I\.jsxDEV\("span",\{className:"cell-muted cell-next"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: cell-next span is gated on BOTH owner-tab flags (Leads + Onboarding)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: double-gated cell-next span missing from $NEWEST_JS39"
   fi
-  if grep -Fq 'children:L.nextAction||"—"' "$NEWEST_JS39"; then
+  if grep -Eq 'children:[A-Za-z0-9$_]+\.nextAction\|\|"—"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: tenant next-action text fallback still rendered (tenants keep the text)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant next-action text fallback missing from $NEWEST_JS39"
@@ -3896,6 +3896,15 @@ if grep -Fq '{!ownerLeadsTab && (' src/Clients.tsx && grep -Fq 'data-label="Stag
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: gated Stage td missing in src/Clients.tsx"
 fi
+# Owner direction 2026-08-15 (#50): the owner Leads tab has NO Stage column at
+# all — and that includes the Lost/DNC rows. Assert the Lost/DNC table's Stage
+# th AND td are owner-gated in source (two gated <th>Stage</th> th's + the
+# lost-dnc-stage-cell marker on the gated StageBadge td).
+if [ "$(grep -c '{!ownerLeadsTab && <th>Stage</th>}' src/Clients.tsx)" -ge 2 ] && grep -Fq 'lost-dnc-stage-cell' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Lost/DNC Stage th+td also owner-gated (no Stage column incl. Lost/DNC rows)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Lost/DNC Stage gating missing from src/Clients.tsx"
+fi
 if grep -Fq 'ownerLeadsTab ? (' src/Clients.tsx && grep -Fq 'width: "21%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx && grep -Fq 'width: "12%"' src/Clients.tsx && grep -Fq 'width: "9%"' src/Clients.tsx && grep -Fq 'width: "20%"' src/Clients.tsx && grep -Fq 'width: "22%"' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: owner Leads colgroup is the 6-col 21/16/12/9/20/22 branch (sums 100%)"
 else
@@ -3912,7 +3921,7 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage header missing from $NEWEST_JS39"
   fi
-  if grep -Fq '!W0&&I.jsxDEV("td",{"data-label":"Stage",children:I.jsxDEV("div",{className:"stage-cell"' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9$]+&&I\.jsxDEV\("td",\{"data-label":"Stage",children:I\.jsxDEV\("div",\{className:"stage-cell"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: StageBadge+stage-select td is owner-Leads-gated in the built rows"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage td missing from $NEWEST_JS39"
@@ -3927,10 +3936,10 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col fallback colgroup missing from $NEWEST_JS39"
   fi
-  if grep -Fq 'jsxDEV("td",{"data-label":"Stage",children:I.jsxDEV(n3,{stage:' "$NEWEST_JS39"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC rows keep their ungated Stage cell (StageBadge)"
+  if grep -Eq '![A-Za-z0-9$]+&&I\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:I\.jsxDEV\(n3,\{stage:' "$NEWEST_JS39" && ! grep -Fq 'jsxDEV("td",{"data-label":"Stage",children:I.jsxDEV(n3,{stage:' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC Stage cell is owner-gated in the built rows (hidden on owner Leads, kept for tenants)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: ungated Lost/DNC Stage cell missing from $NEWEST_JS39"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Lost/DNC Stage cell missing from $NEWEST_JS39"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 39b bundle check"
