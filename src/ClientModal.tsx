@@ -27,6 +27,14 @@ interface Props {
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
 }
 
+/** Local YYYY-MM-DD — the same convention task dates use; the DNC date
+ *  auto-fills to today when the DNC toggle is switched on. */
+function localToday(d: Date = new Date()): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
 /** Empty value for every field the intake form can touch (universal +
  *  adaptive). New keys default so the server's create defaults match. The
  *  adaptive keys are re-declared as required so form code never hits
@@ -57,6 +65,12 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
   parkingAccess: string;
   petOnPremises: boolean;
   preferredServiceLocation: string;
+  /** Owner request 2026-08-14 — lost + DNC pipeline-status flags. */
+  lost: boolean;
+  lostReason: string;
+  dnc: boolean;
+  dncReason: string;
+  dncDate: string;
 };
 
 export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, busy, onClose, onSave }: Props) {
@@ -107,6 +121,11 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     parkingAccess: "",
     petOnPremises: false,
     preferredServiceLocation: "",
+    lost: false,
+    lostReason: "",
+    dnc: false,
+    dncReason: "",
+    dncDate: "",
   });
   const [form, setForm] = useState<FormState>(() =>
     client
@@ -155,6 +174,11 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
           parkingAccess: client.parkingAccess ?? "",
           petOnPremises: client.petOnPremises ?? false,
           preferredServiceLocation: client.preferredServiceLocation ?? "",
+          lost: client.lost ?? false,
+          lostReason: client.lostReason ?? "",
+          dnc: client.dnc ?? false,
+          dncReason: client.dncReason ?? "",
+          dncDate: client.dncDate ?? "",
         }
       : empty(),
   );
@@ -295,6 +319,14 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
             }),
         customFields,
         dealValue: Number(form.dealValue) || 0,
+        // Owner request 2026-08-14 — lost/DNC: cleared flags ship cleared
+        // metadata (the server normalizes anyway — this keeps the payload
+        // honest for the modal's own optimistic render).
+        lost: form.lost,
+        lostReason: form.lost ? form.lostReason.trim() : "",
+        dnc: form.dnc,
+        dncReason: form.dnc ? form.dncReason.trim() : "",
+        dncDate: form.dnc ? form.dncDate : "",
       },
       client,
     );
@@ -788,6 +820,91 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               </section>
             ),
           )}
+          {/* Owner request 2026-08-14 — Lead status: the lost + DNC flags.
+              Rendered OUTSIDE the adaptive intake engine so these controls
+              exist for every record and every workspace (owner + client
+              accounts alike); the DNC warning banner shows prominently while
+              the flag is set. The DNC date auto-fills to today when the
+              toggle is switched on (editable after). */}
+          <section className="intake-section" aria-label="Lead status">
+            <div className="intake-section-title">Lead status</div>
+            {form.dnc && (
+              <div className="alert alert-warn dnc-banner" role="alert">
+                <strong>Do not call/contact</strong>
+                <span>
+                  {form.dncDate ? ` marked ${form.dncDate}` : ""}
+                  {form.dncReason ? ` — ${form.dncReason}` : ""}
+                </span>
+              </div>
+            )}
+            <div className="form-grid intake-grid">
+              <div className="field intake-block">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={form.lost}
+                    onChange={(e) => {
+                      set("lost", e.target.checked);
+                      if (!e.target.checked) set("lostReason", "");
+                    }}
+                  />
+                  <span>Mark as lost (not interested)</span>
+                </label>
+                {form.lost && (
+                  <div className="field status-reason">
+                    <span className="field-label">Lost reason</span>
+                    <input
+                      value={form.lostReason}
+                      onChange={(e) => set("lostReason", e.target.value)}
+                      placeholder="Why this lead is lost"
+                      maxLength={300}
+                      aria-label="Lost reason"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="field intake-block">
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={form.dnc}
+                    onChange={(e) => {
+                      set("dnc", e.target.checked);
+                      if (e.target.checked && !form.dncDate) set("dncDate", localToday());
+                      if (!e.target.checked) {
+                        set("dncReason", "");
+                        set("dncDate", "");
+                      }
+                    }}
+                  />
+                  <span>Do not contact (DNC)</span>
+                </label>
+                {form.dnc && (
+                  <>
+                    <div className="field status-reason">
+                      <span className="field-label">DNC reason</span>
+                      <input
+                        value={form.dncReason}
+                        onChange={(e) => set("dncReason", e.target.value)}
+                        placeholder="e.g. Asked not to be contacted"
+                        maxLength={300}
+                        aria-label="DNC reason"
+                      />
+                    </div>
+                    <div className="field status-reason">
+                      <span className="field-label">DNC date</span>
+                      <input
+                        type="date"
+                        value={form.dncDate}
+                        onChange={(e) => set("dncDate", e.target.value)}
+                        aria-label="DNC date"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
           <div className="modal-actions">
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
               Cancel

@@ -250,6 +250,8 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
                           {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
+                        {c.lost && <span className="chip chip-lost">Lost</span>}
+                        {c.dnc && <span className="chip chip-dnc">DNC</span>}
                         {c.archived && <span className="chip chip-archived">archived</span>}
                       </div>
                       {c.industry && <div className="cell-sub">{c.industry}</div>}

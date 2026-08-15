@@ -377,6 +377,14 @@ select option {
   border-color: rgba(255, 107, 107, 0.35);
   color: #ffb3b3;
 }
+.alert-warn {
+  background: rgba(255, 196, 107, 0.08);
+  border-color: rgba(255, 196, 107, 0.4);
+  color: #ffd9a3;
+}
+.alert-warn strong {
+  color: #ffcf8a;
+}
 
 .alert-setup {
   background: rgba(255, 196, 107, 0.08);
@@ -1356,6 +1364,25 @@ legend.field-label {
 .chip-archived {
   background: var(--danger-dim);
   border-color: rgba(255, 107, 107, 0.3);
+  color: #ffb3b3;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+/* Owner request 2026-08-14 — lost + DNC status chips (Lead status). */
+.chip-lost {
+  background: rgba(255, 196, 107, 0.1);
+  border-color: rgba(255, 196, 107, 0.35);
+  color: #ffcf8a;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.chip-dnc {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.4);
   color: #ffb3b3;
   font-size: 10.5px;
   text-transform: uppercase;
@@ -3134,4 +3161,26 @@ legend.field-label {
   gap: 12px;
   margin-top: 16px;
   flex-wrap: wrap;
+}
+
+/* Owner request 2026-08-14 — DNC warning banner inside table rows (the DNC
+   list view) and the status reason inputs in the client modal. */
+.dnc-banner-row {
+  display: block;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  color: #ffb3b3;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 6px 9px;
+}
+.dnc-banner + .form-grid {
+  margin-top: 12px;
+}
+.status-reason {
+  margin-top: 10px;
+}
+.status-reason input {
+  width: 100%;
 }

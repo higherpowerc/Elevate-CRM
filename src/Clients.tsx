@@ -7,7 +7,10 @@ import ClientModal from "./ClientModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import StageEditor from "./StageEditor";
 
-type Filter = "active" | "archived" | "all";
+/** Owner request 2026-08-14 — "lost" and "dnc" are STATUS views: they render
+ *  the Lost section / DNC list instead of the pipeline table. The pipeline
+ *  segs (Active/Archived/All) exclude lost leads from their counts. */
+type Filter = "active" | "archived" | "all" | "lost" | "dnc";
 
 /** Owner request 2026-08-15 — which slice of the org's ordered pipeline this
  *  pipeline view renders (positional, rename-safe — never hardcoded names):
@@ -141,22 +144,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     return () => window.removeEventListener("keydown", onKey as unknown as EventListener);
   }, [stageModal, busy]);
 
-  const visible = useMemo(() => {
-    if (!clients) return [];
-    const q = query.trim().toLowerCase();
-    return clients.filter((c) => {
-      /* Positional pipeline buckets (owner request 2026-08-14/15): only
-         clients whose stage is inside THIS view's scoped stage slice are
-         pipeline records here. Everything else — for the owner that means the
-         terminal (sold) stage and the other pipeline bucket — lives on its
-         own tab, archived or not. */
-      if (!scopedStages.includes(c.stage)) return false;
-      const matchFilter =
-        filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
-      if (!matchFilter) return false;
-      /* Stage chip filter — intersects with the toggle above and the search
-         below. A selected chip narrows to exactly that pipeline stage. */
-      if (activeStageFilter && c.stage !== activeStageFilter) return false;
+  /** Shared search predicate — the pipeline rows, the Lost section and the
+   *  DNC list all filter on the same search box. */
+  const matchesQuery = useCallback(
+    (c: Client): boolean => {
+      const q = query.trim().toLowerCase();
       if (!q) return true;
       return [
         c.companyName,
@@ -172,8 +164,52 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         .join(" ")
         .toLowerCase()
         .includes(q);
+    },
+    [query],
+  );
+
+  const visible = useMemo(() => {
+    if (!clients) return [];
+    /* Owner request 2026-08-14 — the Lost / DNC views list every record in
+       THIS view's stage scope with the flag set (the stage chip + search
+       still intersect). */
+    if (filter === "lost") {
+      return clients.filter(
+        (c) =>
+          c.lost &&
+          scopedStages.includes(c.stage) &&
+          (!activeStageFilter || c.stage === activeStageFilter) &&
+          matchesQuery(c),
+      );
+    }
+    if (filter === "dnc") {
+      return clients.filter(
+        (c) =>
+          c.dnc &&
+          scopedStages.includes(c.stage) &&
+          (!activeStageFilter || c.stage === activeStageFilter) &&
+          matchesQuery(c),
+      );
+    }
+    return clients.filter((c) => {
+      /* Positional pipeline buckets (owner request 2026-08-14/15): only
+         clients whose stage is inside THIS view's scoped stage slice are
+         pipeline records here. Everything else — for the owner that means the
+         terminal (sold) stage and the other pipeline bucket — lives on its
+         own tab, archived or not. */
+      if (!scopedStages.includes(c.stage)) return false;
+      /* Owner request 2026-08-14 — lost leads are excluded from the visible
+         pipeline rows (they live in the Lost section). */
+      if (c.lost) return false;
+      const matchFilter =
+        filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
+      if (!matchFilter) return false;
+      /* Stage chip filter — intersects with the toggle above and the search
+         below. A selected chip narrows to exactly that pipeline stage. */
+      if (activeStageFilter && c.stage !== activeStageFilter) return false;
+      return matchesQuery(c);
     });
-  }, [clients, filter, query, activeStageFilter, scopedStages]);
+  }, [clients, filter, query, activeStageFilter, scopedStages, matchesQuery]);
 
   /* Owner request 2026-08-14 — chip counts. Non-archived clients per stage,
      computed live from the same loaded list the table renders, so the chips
@@ -186,6 +222,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     if (clients) {
       for (const c of clients) {
         if (c.archived) continue;
+        if (c.lost) continue; // lost leads never count toward pipeline chips
         if (!scopedStages.includes(c.stage)) continue;
         m[c.stage] = (m[c.stage] ?? 0) + 1;
       }
@@ -254,6 +291,21 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     }
   }
 
+  /** Owner request 2026-08-14 — restore a lost lead to the pipeline: clears
+   *  the lost flag (the reason is cleared server-side too). */
+  async function handleRestore(c: Client) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateClient(c.id, { ...c, lost: false });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Restore failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!clients) {
     return error ? (
       <div className="alert alert-error">{error}</div>
@@ -267,9 +319,15 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
      pipeline tab, or the terminal/sold stage for tenants) are counted on
      their own tabs, not here. */
   const scoped = clients.filter((c) => scopedStages.includes(c.stage));
+  /* Owner request 2026-08-14 — lost leads are excluded from the pipeline seg
+     counts (Active/Archived/All); they surface on the "Lost" seg (and DNC
+     carries its own list). */
   const counts = {
-    active: scoped.filter((c) => !c.archived).length,
-    archived: scoped.filter((c) => c.archived).length,
+    active: scoped.filter((c) => !c.archived && !c.lost).length,
+    archived: scoped.filter((c) => c.archived && !c.lost).length,
+    all: scoped.filter((c) => !c.lost).length,
+    lost: scoped.filter((c) => c.lost).length,
+    dnc: scoped.filter((c) => c.dnc).length,
   };
 
   /* Owner request 2026-08-15 — the owner's three-bucket pipeline: the Leads
@@ -326,15 +384,18 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
 
       <div className="toolbar">
         <div className="seg">
-          {(["active", "archived", "all"] as Filter[]).map((f) => (
+          {/* Owner request 2026-08-14 — the seg row gains "Lost" (the Lost
+              section: leads marked not-interested, out of the pipeline
+              counts) and "DNC" (do-not-call list with its warning). */}
+          {(["active", "archived", "all", "lost", "dnc"] as Filter[]).map((f) => (
             <button
               key={f}
               className={filter === f ? "seg-btn active" : "seg-btn"}
               onClick={() => setFilter(f)}
             >
-              {f === "active" ? "Active" : f === "archived" ? "Archived" : "All"}
+              {f === "active" ? "Active" : f === "archived" ? "Archived" : f === "all" ? "All" : f === "lost" ? "Lost" : "DNC"}
               <span className="seg-count">
-                {f === "active" ? counts.active : f === "archived" ? counts.archived : scoped.length}
+                {f === "active" ? counts.active : f === "archived" ? counts.archived : f === "all" ? counts.all : f === "lost" ? counts.lost : counts.dnc}
               </span>
             </button>
           ))}
@@ -385,17 +446,123 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
 
       {visible.length === 0 ? (
         <div className="card empty">
-          <p className="empty-title">{scoped.length === 0 ? emptyTitle : "Nothing matches"}</p>
-          <p className="empty-sub">
-            {scoped.length === 0
-              ? emptySub
-              : "Try a different search or filter."}
+          <p className="empty-title">
+            {filter === "lost"
+              ? "No lost leads"
+              : filter === "dnc"
+                ? "No DNC entries"
+                : scoped.length === 0
+                  ? emptyTitle
+                  : "Nothing matches"}
           </p>
-          {scoped.length === 0 && (
+          <p className="empty-sub">
+            {filter === "lost"
+              ? "Leads you mark as lost show up here — they stay out of your pipeline counts."
+              : filter === "dnc"
+                ? "Leads with a do-not-contact flag show up here with their warning."
+                : scoped.length === 0
+                  ? emptySub
+                  : "Try a different search or filter."}
+          </p>
+          {scoped.length === 0 && filter !== "lost" && filter !== "dnc" && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {emptyCta}
             </button>
           )}
+        </div>
+      ) : filter === "lost" || filter === "dnc" ? (
+        /* Owner request 2026-08-14 — the Lost section / DNC list. Lost rows
+           show the lost reason + a "Restore to pipeline" action (clears the
+           flag); DNC rows carry the warning banner inline. Both share the
+           stage chip filter and the search box with the pipeline table. */
+        <div className="card table-wrap">
+          <table className="table clients-table">
+            <colgroup>
+              <col style={{ width: "26%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "38%" }} />
+              <col style={{ width: "22%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Stage</th>
+                <th>{filter === "lost" ? "Lost reason" : "Do-not-contact"}</th>
+                <th className="actions-th">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => (
+                <tr key={c.id} className={c.archived ? "row-archived" : ""}>
+                  <td className="cell-strong" data-label="Client">
+                    <div className="cell-company">
+                      <span className="cell-name" title={c.companyName}>
+                        {c.companyName}
+                      </span>
+                      {c.lost && <span className="chip chip-lost">Lost</span>}
+                      {c.dnc && <span className="chip chip-dnc">DNC</span>}
+                      {c.archived && <span className="chip chip-archived">archived</span>}
+                    </div>
+                    {c.industry && <div className="cell-sub">{c.industry}</div>}
+                  </td>
+                  <td data-label="Stage">
+                    <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
+                  </td>
+                  <td data-label={filter === "lost" ? "Lost reason" : "Do-not-contact"}>
+                    {filter === "lost" ? (
+                      <span className="cell-muted" title={c.lostReason}>
+                        {c.lostReason || "No reason given"}
+                      </span>
+                    ) : (
+                      <span className="dnc-banner-row">
+                        Do not call/contact — marked {c.dncDate || "—"}
+                        {c.dncReason ? `: ${c.dncReason}` : ""}
+                      </span>
+                    )}
+                  </td>
+                  <td data-label="Actions">
+                    <div className="row-actions">
+                      <button
+                        className="icon-btn"
+                        title="Edit"
+                        aria-label={`Edit ${c.companyName}`}
+                        onClick={() => setModal({ mode: "edit", client: c })}
+                      >
+                        Edit
+                      </button>
+                      {filter === "lost" && (
+                        <button
+                          className="icon-btn"
+                          title="Restore to pipeline — clears the lost flag"
+                          aria-label={`Restore ${c.companyName} to pipeline`}
+                          onClick={() => handleRestore(c)}
+                          disabled={busy}
+                        >
+                          Restore
+                        </button>
+                      )}
+                      <button
+                        className="icon-btn"
+                        title={c.archived ? "Unarchive" : "Archive"}
+                        aria-label={c.archived ? "Unarchive" : "Archive"}
+                        onClick={() => handleArchive(c)}
+                      >
+                        {c.archived ? "Restore" : "Archive"}
+                      </button>
+                      <button
+                        className="icon-btn danger"
+                        title="Delete"
+                        aria-label={`Delete ${c.companyName}`}
+                        onClick={() => setDeleting(c)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="card table-wrap">
@@ -433,6 +600,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
                           {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
+                        {c.lost && <span className="chip chip-lost">Lost</span>}
+                        {c.dnc && <span className="chip chip-dnc">DNC</span>}
                         {c.archived && <span className="chip chip-archived">archived</span>}
                       </div>
                       {c.industry && <div className="cell-sub">{c.industry}</div>}
