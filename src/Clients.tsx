@@ -799,9 +799,17 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           into the MIDDLE stage via the same update path as
                           the stage picker). */}
                       <div className="cell-next-stack">
-                        <span className="cell-muted cell-next" title={c.nextAction || undefined}>
-                          {c.nextAction || "—"}
-                        </span>
+                        {/* Owner bug report 2026-08-15 — the owner's Leads tab
+                            shows ONLY the "Start Onboarding" quick action under
+                            Next action: the next-action text span is hidden
+                            there (ownerLeadsTab) so the cell reads clean. Client
+                            accounts and the owner's Onboarding tab keep the
+                            text span exactly as before. */}
+                        {!ownerLeadsTab && (
+                          <span className="cell-muted cell-next" title={c.nextAction || undefined}>
+                            {c.nextAction || "—"}
+                          </span>
+                        )}
                         {onboardingStage && (
                           <button
                             type="button"

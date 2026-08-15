@@ -3700,7 +3700,63 @@ else
 fi
 echo "-- 37c. Done =="
 echo "  ✓ 37: owner-workspace UI fixes verified (Admin restack + entry-point rule)"
+echo "== 38. Owner-workspace UI fixes 2 (2026-08-15): Leads Next-action cell + table-fit sweep =="
+echo "-- 38a. Fix A: owner Leads tab Next-action cell shows ONLY the Start Onboarding button =="
+# Owner bug report 2026-08-15: the nextAction text span rendered ABOVE the
+# "Start Onboarding" button in the owner Leads tab's Next-action cell. The
+# span is now gated on !ownerLeadsTab — hidden ONLY on the owner Leads tab
+# (scope "first"); tenant rows and the owner Onboarding tab keep the text.
+if grep -Fq "{!ownerLeadsTab && (" src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: nextAction text span is owner-Leads-gated (hidden when ownerLeadsTab)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-Leads gating missing in src/Clients.tsx"
+fi
+if grep -Fq "cell-next-stack" src/Clients.tsx && grep -Fq "cell-muted cell-next" src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: tenant/Onboarding next-action text span intact (cell-next kept)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: cell-next span missing from src/Clients.tsx"
+fi
+echo "-- 38b. Fix B: owner table-fit sweep — owner-scoped nav fit (no page horizontal scroll at ~1280 / <=980) =="
+# Owner permission 2026-08-15: no cut-off columns, no overlapping controls,
+# no horizontal scroll at ~1280px and below 980px. Sweep found every table
+# already fits its wrap (wrapScroll=0 at both widths) — the ONLY page-level
+# horizontal scroll came from the owner's 8-tab header (nav-right stuck out
+# ~25px at 1280 and ~200px at 980). Fix is owner-scoped (.owner-workspace)
+# so client-account headers stay pixel-identical.
+NEWEST_JS38=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS38=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS38" ]; then
+  if grep -Fq "owner-workspace" "$NEWEST_JS38"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: app root carries the owner-workspace class (owner-scoped CSS hooks)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: owner-workspace class missing from $NEWEST_JS38"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 38 bundle check"
+fi
+if [ -n "$NEWEST_CSS38" ]; then
+  if grep -Fq "@media (max-width:1320px)" "$NEWEST_CSS38" && grep -Fq ".owner-workspace .nav-inner{gap:14px;padding:0 16px}" "$NEWEST_CSS38"; then
+    PASS=$((PASS+1)); echo "  ✓ css: owner nav tightens at <=1320 (1280px no longer overflows)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ css: <=1320 owner nav rules missing from $NEWEST_CSS38"
+  fi
+  if grep -Fq "@media (max-width:1100px)" "$NEWEST_CSS38" && grep -Fq ".owner-workspace .nav-user{display:none}" "$NEWEST_CSS38"; then
+    PASS=$((PASS+1)); echo "  ✓ css: owner nav-user hides at <=1100 (980px nav fits without the user chip)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ css: <=1100 owner nav rules missing from $NEWEST_CSS38"
+  fi
+  if grep -Fq ".owner-workspace .tabs{min-width:0;overflow-x:auto}" "$NEWEST_CSS38"; then
+    PASS=$((PASS+1)); echo "  ✓ css: owner tabs row is internally scrollable (page can never horizontal-scroll)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ css: owner tabs overflow guard missing from $NEWEST_CSS38"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 38 css check"
+fi
+echo "-- 38c. Done =="
+echo "  ✓ 38: owner Next-action cell clean on Leads; table-fit sweep verified (owner-scoped header fit, tenant untouched)"
 echo "RESULT: $PASS passed, $FAIL failed"
+
 
 rm -f "$JAR" /tmp/body.json "$PASS_TMP"
 [ "$FAIL" -eq 0 ]
