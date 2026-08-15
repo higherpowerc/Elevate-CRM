@@ -95,7 +95,7 @@ check "dashboard → 200" 200 "$S"
 grep -q '"Sold":0' /tmp/body.json && echo "  ✓ Sold=0" || echo "  ✗ Sold count: $(cat /tmp/body.json)"
 grep -q '"Intakes":1' /tmp/body.json && echo "  ✓ Intakes=1" || echo "  ✗ Intakes count: $(cat /tmp/body.json)"
 grep -q '"Leads":1' /tmp/body.json && echo "  ✓ Leads=1" || echo "  ✗ Leads count: $(cat /tmp/body.json)"
-grep -q '"projectedPipeline":20400' /tmp/body.json && echo "  ✓ projectedPipeline = 20400 (15000+5400, labeled projected not revenue)" || echo "  ✗ pipeline: $(cat /tmp/body.json)"
+grep -q '"projectedPipeline":5400' /tmp/body.json && echo "  ✓ projectedPipeline = 5400 (OWNER: Leads stage only — Acme's 15000 in Intakes excluded, not revenue)" || echo "  ✗ pipeline: $(cat /tmp/body.json)"
 
 echo "== 8. Archive affects dashboard only =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
@@ -104,7 +104,7 @@ S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
 check "archive Northline → 200" 200 "$S"
 grep -q '"archived":true' /tmp/body.json && echo "  ✓ archived=true" || echo "  ✗ archive failed: $(cat /tmp/body.json)"
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
-grep -q '"projectedPipeline":15000' /tmp/body.json && echo "  ✓ pipeline now 15000 (archived excluded)" || echo "  ✗ pipeline after archive: $(cat /tmp/body.json)"
+grep -q '"projectedPipeline":0' /tmp/body.json && echo "  ✓ pipeline now 0 (owner Leads-stage only: Northline archived, Acme in Intakes excluded)" || echo "  ✗ pipeline after archive: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/clients")
 check "default list → 200" 200 "$S"
 grep -qv 'Northline' /tmp/body.json && echo "  ✓ archived hidden in default list" || echo "  ✗ archived still in default list"
@@ -656,6 +656,21 @@ grep -q '"amount":777.77' /tmp/body.json && echo "  ✓ member sees their own in
 S=$(code -b "$JAR2" "$BASE/api/dashboard")
 check "member dashboard counts own data → 200" 200 "$S"
 grep -q '"projectedPipeline":5000' /tmp/body.json && grep -q '"totalClients":1' /tmp/body.json && echo "  ✓ member dashboard counts only their own data" || echo "  ✗ member dashboard: $(cat /tmp/body.json)"
+echo "-- 16f2. Tenant projectedPipeline keeps its own ALL-STAGE sum (owner-only change, owner direction 2026-08-15) --"
+# The member org already has Member Corp (dealValue 5000, first stage). Add a
+# second client in the member's LAST stage: a tenant's projectedPipeline must
+# still sum deal values across EVERY stage (their whole book) — only the
+# OWNER's KPI narrows to the first stage.
+code -b "$JAR2" "$BASE/api/settings" > /dev/null
+MEM_LAST2=$(python3 -c "import json;st=json.load(open('/tmp/body.json'))['settings']['stages'];print(st[-1])")
+S=$(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Member Later Stage Co\",\"clientType\":\"commercial\",\"dealValue\":2500,\"stage\":\"$MEM_LAST2\"}" "$BASE/api/clients")
+check "16f2: member creates a client in a LATER (last) stage \"$MEM_LAST2\" → 201" 201 "$S"
+MC2_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (member later-stage client id=$MC2_ID, stage=$MEM_LAST2)"
+code -b "$JAR2" "$BASE/api/dashboard" > /dev/null
+grep -q '"projectedPipeline":7500' /tmp/body.json && echo "  ✓ 16f2: member projectedPipeline = 7500 (5000+2500 — ALL stages still summed for tenants)" || echo "  ✗ 16f2: member pipeline: $(cat /tmp/body.json)"
+check "16f2: remove the later-stage member client (cleanup) → 200" 200 $(code -b "$JAR2" -X DELETE "$BASE/api/clients/$MC2_ID")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d = json.load(open('/tmp/body.json'))
@@ -3414,9 +3429,12 @@ assert mid is None or d['stageCounts'][mid] == base['stageCounts'][mid] + 1, d['
 # "Sold MRR" (clientMrr, shown beside projected pipeline) = terminal-stage
 # deal-value sum — exactly +333 for the sold client.
 assert abs(d['clientMrr'] - (base['clientMrr'] + 333)) < 0.001, (d['clientMrr'], base['clientMrr'])
-# projectedPipeline still sums every non-lost deal value (incl. the sold one).
-assert abs(d['projectedPipeline'] - (base['projectedPipeline'] + 111 + 222 + 333)) < 0.001, d['projectedPipeline']
-print("  ✓ API values the owner KPIs render: Active leads = first stage only; Onboarding = middle stage; Sold MRR = terminal deal sum (+333)")
+# projectedPipeline (OWNER, direction 2026-08-15) = FIRST-stage deal values
+# only — the +222 middle-stage and +333 terminal-stage deals must NOT appear
+# (that money is the Onboarding/Sold MRR figures). Positional: uses the
+# owner's actual first stage name, whatever it is.
+assert abs(d['projectedPipeline'] - (base['projectedPipeline'] + 111)) < 0.001, d['projectedPipeline']
+print("  ✓ API values the owner KPIs render: Active leads = first stage only; Onboarding = middle stage; Sold MRR = terminal deal sum (+333); projected pipeline = first-stage deal sum only (+111)")
 PY
 then
   PASS=$((PASS+1)); echo "  ✓ 35e: owner-cockpit API surface correct (first-stage Active leads, middle-stage Onboarding, sold-stage MRR)"

@@ -138,8 +138,14 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
      the visible wording differs. */
   const bookWord = ownerOrg ? "lead" : "client";
   const activeKpi = ownerOrg ? "Active leads" : "Active clients";
+  /* Owner direction 2026-08-15 (clarified twice) — the owner's Projected
+     pipeline KPI is the FIRST pipeline stage's deal-value sum only (their
+     prospects bucket), so the note names that stage (positional +
+     rename-safe). Client accounts keep the all-stage wording. */
   const pipelineNote = ownerOrg
-    ? "Sum of deal values · active leads only — not revenue"
+    ? stages.length > 0
+      ? `Sum of deal values · ${stages[0]} stage only — not revenue`
+      : "Sum of deal values · Leads stage only — not revenue"
     : "Sum of deal values · active clients only — not revenue";
   const lastStageNote = lastStage
     ? ownerOrg
