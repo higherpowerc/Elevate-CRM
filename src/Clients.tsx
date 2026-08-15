@@ -18,10 +18,10 @@ interface Props {
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
    *  owner calls its pipeline records "leads", so this page's headings, CTA
    *  and empty states read "Lead(s)" instead of "Client(s)". Tenant orgs
-   *  (role=member) keep "Clients" everywhere — their customers stay
-   *  "clients", and this pipeline tab keeps the "Clients" label (their flat
-   *  directory tab reads "All clients"). Purely presentational; data and
-   *  stages are untouched. */
+   *  (role=member) keep "clients" wording for their records. Purely
+   *  presentational; data and stages are untouched. (2026-08-15: the nav tab
+   *  labels themselves are unified — the pipeline tab reads "Leads" and the
+   *  directory tab reads "Clients" in every workspace.) */
   ownerOrg?: boolean;
   /** Owner request 2026-08-14 — deep-linked stage filter: the Dashboard's
    *  "View →" on a stage card hands its stage name here, and this view opens

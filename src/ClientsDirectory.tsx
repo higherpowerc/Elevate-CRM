@@ -12,11 +12,10 @@ interface Props {
    *  only sold clients live here. Refreshed from /api/settings on load so a
    *  stage rename made in Settings applies to this tab immediately. */
   stages: Stage[];
-  /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
-   *  owner calls its pipeline records "leads", so the pipeline tab reads
-   *  "Leads". THIS tab is the independent client directory — the owner
-   *  explicitly asked for a "Clients" tab, and tenant orgs (role=member)
-   *  keep "clients" wording everywhere (their tab reads "All clients").
+  /** Owner request 2026-08-14: THIS tab is the independent client directory —
+   *  the owner explicitly asked for a "Clients" tab. Owner request
+   *  2026-08-15: the tab reads "Clients" in every workspace — owner and
+   *  client accounts alike (the member-org "All clients" variant is gone).
    *  Purely presentational; data untouched. */
   ownerOrg?: boolean;
 }
@@ -172,7 +171,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>{ownerOrg ? "Clients" : "All clients"}</h1>
+          <h1>Clients</h1>
           <p className="page-sub">
             {sold.length} {sold.length === 1 ? "client" : "clients"} · {archived} archived · book value{" "}
             <strong>{money(bookValue)}</strong>
