@@ -5,13 +5,14 @@ import { StageBadge, ServiceChips } from "./bits";
 import ProvisionNotices from "./ProvisionNotices";
 
 interface Props {
-  /** Owner request 2026-08-14 — the pipeline now lives on its own "Leads"
-   *  tab (the split-out "Clients" tab is the flat directory), so every
-   *  "View →" / empty-state CTA from the dashboard deep-links there. Each
-   *  stage card hands its stage name along, so the Leads view opens with
-   *  that stage's chip pre-selected; the empty-state CTA (no stage) opens
-   *  with "All". */
-  onGoToLeads: (stage?: string) => void;
+  /** Owner request 2026-08-14/15 — the Dashboard's stage cards deep-link into
+   *  the pipeline. The callback hands the stage NAME to App, which routes it
+   *  positionally (owner request 2026-08-15): first stage → Leads tab,
+   *  middle stage → Onboarding tab (owner) / Leads tab (tenant), terminal
+   *  stage → Clients directory tab. Each pipeline view opens with that
+   *  stage's chip pre-selected; the empty-state CTA (no stage) opens the
+   *  owner's Leads on "All". */
+  onGoToStage: (stage?: string) => void;
   /** The tenant's ordered pipeline stages (drives the breakdown grid + KPI). */
   stages: Stage[];
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
@@ -65,7 +66,7 @@ function EyeOffIcon() {
   );
 }
 
-export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Props) {
+export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -183,7 +184,7 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
               <span className="stage-caption">{stageCaption}</span>
               <button
                 className="link-btn"
-                onClick={() => onGoToLeads(stage)}
+                onClick={() => onGoToStage(stage)}
                 aria-label={`View ${stage} in the pipeline`}
               >
                 View →
@@ -299,7 +300,7 @@ export default function Dashboard({ onGoToLeads, stages, ownerOrg = false }: Pro
         <div className="card empty">
           <p className="empty-title">{emptyTitle}</p>
           <p className="empty-sub">Add your first prospect and the pipeline starts filling in.</p>
-          <button className="btn btn-primary" onClick={() => onGoToLeads()}>
+          <button className="btn btn-primary" onClick={() => onGoToStage()}>
             {emptyCta}
           </button>
         </div>
