@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
+import { usePii, blurPii, PII_FIELD_KEYS } from "./pii";
 import {
   getCustomGroupsFor,
   getIntakeLayout,
@@ -74,6 +75,8 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
 };
 
 export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, busy, onClose, onSave }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const createStage = defaultStage ?? stages[0] ?? "Leads";
   const empty = (): FormState => ({
     companyName: "",
@@ -516,6 +519,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               ? setField(key, e.target.value === "" ? 0 : Number(e.target.value))
               : setField(key, e.target.value)
           }
+          className={PII_FIELD_KEYS.has(f.key) && pii ? "pii-blur" : undefined}
           placeholder={f.placeholder}
           maxLength={f.maxLength}
           required={f.key === "companyName"}
@@ -537,6 +541,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
             <div className="field">
               <input
                 value={form.address}
+                className={pii ? "pii-blur" : undefined}
                 onChange={(e) => set("address", e.target.value)}
                 placeholder="Street address"
                 maxLength={200}
@@ -548,6 +553,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 <span className="field-label">City</span>
                 <input
                   value={form.city}
+                  className={pii ? "pii-blur" : undefined}
                   onChange={(e) => set("city", e.target.value)}
                   placeholder="Seattle"
                   maxLength={100}
@@ -557,6 +563,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 <span className="field-label">State</span>
                 <input
                   value={form.state}
+                  className={pii ? "pii-blur" : undefined}
                   onChange={(e) => set("state", e.target.value)}
                   placeholder="WA"
                   maxLength={50}
@@ -566,6 +573,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 <span className="field-label">ZIP / postal</span>
                 <input
                   value={form.zip}
+                  className={pii ? "pii-blur" : undefined}
                   onChange={(e) => set("zip", e.target.value)}
                   placeholder="98101"
                   maxLength={20}
@@ -591,6 +599,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 <div className="field">
                   <input
                     value={form.billingAddress}
+                    className={pii ? "pii-blur" : undefined}
                     onChange={(e) => set("billingAddress", e.target.value)}
                     placeholder="Billing street address"
                     maxLength={200}
@@ -602,6 +611,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                     <span className="field-label">Billing city</span>
                     <input
                       value={form.billingCity}
+                      className={pii ? "pii-blur" : undefined}
                       onChange={(e) => set("billingCity", e.target.value)}
                       placeholder="Seattle"
                       maxLength={100}
@@ -611,6 +621,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                     <span className="field-label">Billing state</span>
                     <input
                       value={form.billingState}
+                      className={pii ? "pii-blur" : undefined}
                       onChange={(e) => set("billingState", e.target.value)}
                       placeholder="WA"
                       maxLength={50}
@@ -620,6 +631,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                     <span className="field-label">Billing ZIP / postal</span>
                     <input
                       value={form.billingZip}
+                      className={pii ? "pii-blur" : undefined}
                       onChange={(e) => set("billingZip", e.target.value)}
                       placeholder="98101"
                       maxLength={20}
@@ -651,6 +663,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                   <span className="field-label">Business / DBA name</span>
                   <input
                     value={form.dbaName}
+                    className={pii ? "pii-blur" : undefined}
                     onChange={(e) => set("dbaName", e.target.value)}
                     placeholder="e.g. Jane Doe Detailing LLC"
                     maxLength={200}
@@ -660,6 +673,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                   <span className="field-label">EIN or SSN</span>
                   <input
                     value={form.einSsn}
+                    className={pii ? "pii-blur" : undefined}
                     onChange={(e) => set("einSsn", e.target.value)}
                     placeholder="For 1099 clients"
                     maxLength={50}

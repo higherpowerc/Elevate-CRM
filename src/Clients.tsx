@@ -3,6 +3,7 @@ import { api, type ClientInput } from "./api";
 import { money, fmtDate, type Client, type CustomFieldDef, type Stage } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
+import { usePii, blurPii } from "./pii";
 import ClientModal from "./ClientModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import StageEditor from "./StageEditor";
@@ -76,6 +77,10 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
   const [stageCounts, setStageCounts] = useState<Record<string, number>>({});
   const [stageModal, setStageModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* Global privacy eye (2026-08-14 owner request) — blur client names/addresses/
+     contact details in the pipeline rows while the top-nav eye is on. */
+  const pii = usePii();
   const [filter, setFilter] = useState<Filter>("active");
   const [query, setQuery] = useState("");
   /* Owner request 2026-08-14 — stage chip filter (null = "All"). Initialized
@@ -498,7 +503,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                 <tr key={c.id} className={c.archived ? "row-archived" : ""}>
                   <td className="cell-strong" data-label="Client">
                     <div className="cell-company">
-                      <span className="cell-name" title={c.companyName}>
+                      <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                         {c.companyName}
                       </span>
                       {c.lost && <span className="chip chip-lost">Lost</span>}
@@ -596,7 +601,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
                     <td className="cell-strong" data-label="Client">
                       <div className="cell-company">
-                        <span className="cell-name" title={c.companyName}>
+                        <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                           {c.companyName}
                         </span>
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
@@ -608,7 +613,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                       </div>
                       {c.industry && <div className="cell-sub">{c.industry}</div>}
                       {fullAddress && (
-                        <div className="cell-sub addr-line" title={fullAddress}>
+                        <div className={`cell-sub addr-line${blurPii(pii)}`} title={fullAddress}>
                           {fullAddress}
                         </div>
                       )}
@@ -636,9 +641,9 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </td>
                     <td data-label="Contact">
                       <div className="cell-contact">
-                        {c.contactName || "—"}
-                        {c.email && <div className="cell-sub" title={c.email}>{c.email}</div>}
-                        {c.phone && <div className="cell-sub" title={c.phone}>{c.phone}</div>}
+                        <span className={pii ? "pii-blur" : undefined}>{c.contactName || "—"}</span>
+                        {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
+                        {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
                       </div>
                     </td>
                     <td data-label="Services">

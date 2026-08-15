@@ -1172,6 +1172,22 @@ legend.field-label {
   user-select: none;
   transition: filter 0.15s ease;
 }
+/* Global privacy eye (2026-08-14 owner request): the same blur treatment as
+   .money-blur, applied to any element carrying PII — client/company names,
+   phone, email, address — while the top-nav eye is on. Kept as its own class
+   so it can be attached to any element regardless of what else it renders. */
+.pii-blur {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+/* The top-nav privacy-eye toggle — "active" marks the blurring state
+   (accent-colored, matching the app's active-tab treatment). */
+.pii-eye-btn.active {
+  color: var(--lime);
+  border-color: var(--lime);
+  background: var(--lime-dim);
+}
 
 /* Dashboard task overview (2026-08-14 owner request) */
 

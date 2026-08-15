@@ -19,6 +19,8 @@ interface Props {
   /** Applied to the wrapper so callers can size it in flex rows. */
   className?: string;
   id?: string;
+  /** Global privacy eye: blur the input + option labels while ON. */
+  piiBlur?: boolean;
 }
 
 /** Cap on rendered options; the remainder is shown as a "keep typing" hint. */
@@ -43,6 +45,7 @@ export default function SearchableSelect({
   emptyLabel,
   className,
   id,
+  piiBlur = false,
 }: Props) {
   const labelOf = useMemo(() => {
     const byValue = new Map(options.map((o) => [o.value, o.label]));
@@ -133,7 +136,7 @@ export default function SearchableSelect({
     <div className={className ? `combobox ${className}` : "combobox"} id={id}>
       <input
         ref={inputRef}
-        className="combobox-input"
+        className={`combobox-input${piiBlur ? " pii-blur" : ""}`}
         type="text"
         role="combobox"
         aria-expanded={open}
@@ -180,7 +183,7 @@ export default function SearchableSelect({
                 key={o.value}
                 aria-selected={value === o.value}
                 id={`${listId}-o-${i}`}
-                className={`combobox-opt${i === hi ? " active" : ""}${value === o.value ? " selected" : ""}`}
+                className={`combobox-opt${i === hi ? " active" : ""}${value === o.value ? " selected" : ""}${piiBlur ? " pii-blur" : ""}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => select(o.value, o.label)}
                 onMouseEnter={() => setHi(i)}

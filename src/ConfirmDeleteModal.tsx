@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { usePii } from "./pii";
 
 /**
  * Typed-delete confirmation (owner direction): ANY delete in the app must be
@@ -36,6 +37,8 @@ export default function ConfirmDeleteModal({
   onCancel,
   onConfirm,
 }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [typed, setTyped] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   // Case-insensitive per owner decision: "delete", "Delete", "DELETE" all count.
@@ -73,7 +76,7 @@ export default function ConfirmDeleteModal({
         </div>
         <div className="confirm-body">
           <p className="confirm-delete-msg">
-            Are you sure you want to delete <strong>{entity}</strong>? This cannot be undone.
+            Are you sure you want to delete <strong className={pii ? "pii-blur" : undefined}>{entity}</strong>? This cannot be undone.
           </p>
           {note}
           <label className="field confirm-delete-field">

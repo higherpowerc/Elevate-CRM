@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type InvoiceInput } from "./api";
+import { usePii, blurPii } from "./pii";
 import {
   INVOICE_STATUSES,
   INVOICE_STATUS_TONE,
@@ -30,6 +31,8 @@ function isOverdue(inv: Invoice): boolean {
 }
 
 export default function Finance() {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -234,6 +237,7 @@ export default function Finance() {
 
       <form className="card inv-add" onSubmit={handleQuickAdd}>
         <SearchableSelect
+          piiBlur={pii}
           className="inv-add-client"
           value={clientId}
           onChange={setClientId}
@@ -350,7 +354,7 @@ export default function Finance() {
                 <div className="inv-body">
                   <div className="inv-client">
                     {inv.clientName ? (
-                      <span className="chip">{inv.clientName}</span>
+                      <span className={`chip${blurPii(pii)}`}>{inv.clientName}</span>
                     ) : (
                       <span className="inv-noclient">No client</span>
                     )}
@@ -416,7 +420,7 @@ export default function Finance() {
           entity={
             <>
               {money(deleting.amount)} invoice
-              {deleting.clientName ? ` for ${deleting.clientName}` : ""}
+              {deleting.clientName ? <> for <span className={pii ? "pii-blur" : undefined}>{deleting.clientName}</span></> : ""}
             </>
           }
           confirmLabel="Delete permanently"

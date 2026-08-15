@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, Task } from "./types";
 import type { TaskInput } from "./api";
+import { usePii } from "./pii";
 
 interface Props {
   task: Task;
@@ -11,6 +12,8 @@ interface Props {
 }
 
 export default function TaskModal({ task, clients, busy, onClose, onSave }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [title, setTitle] = useState(task.title);
   const [clientId, setClientId] = useState(task.clientId === null ? "" : String(task.clientId));
   const [dueDate, setDueDate] = useState(task.dueDate);
@@ -73,7 +76,7 @@ export default function TaskModal({ task, clients, busy, onClose, onSave }: Prop
           </label>
           <label className="field">
             <span className="field-label">Client</span>
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
+            <select className={pii ? "pii-blur" : undefined} value={clientId} onChange={(e) => setClientId(e.target.value)}>
               <option value="">No client (standalone)</option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>

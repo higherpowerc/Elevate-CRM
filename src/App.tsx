@@ -11,6 +11,7 @@ import Settings from "./Settings";
 import { api } from "./api";
 import { DEFAULT_STAGES, type User } from "./types";
 import { initials } from "./bits";
+import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "./pii";
 
 /* Owner request 2026-08-14 — the single "Clients" tab splits into TWO:
  *   "leads"  → the pipeline view (stage chips, Active/Archived/All, stage
@@ -59,6 +60,27 @@ export default function App() {
      into a client tenant's workspace; drives the banner in the shell. */
   const [impersonating, setImpersonating] = useState(false);
   const [returning, setReturning] = useState(false);
+
+  /* Global privacy eye (owner request 2026-08-14): one toggle in the top nav,
+     visible on EVERY screen of EVERY workspace, that blurs all PII (client/
+     company names, phone, email, address). Default off; the choice persists
+     per browser via localStorage (same pattern as the Dashboard money eye —
+     that one stays Dashboard-only and untouched). */
+  const [piiHidden, setPiiHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(PII_HIDDEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(PII_HIDDEN_KEY, piiHidden ? "1" : "0");
+    } catch {
+      /* storage unavailable (private mode) — the toggle just won't persist */
+    }
+  }, [piiHidden]);
+  const piiTitle = piiHidden ? "Show client details" : "Hide client details";
 
   useEffect(() => {
     const onUnauthorized = () => {
@@ -236,7 +258,8 @@ export default function App() {
 
   return (
     <div className="app" style={accentStyle}>
-      <header className="nav">
+      <PiiContext.Provider value={piiHidden}>
+        <header className="nav">
         {impersonating && (
           <div className="impersonate-banner" role="status" aria-label="Impersonation notice">
             <span className="impersonate-icon" aria-hidden="true">
@@ -343,7 +366,20 @@ export default function App() {
             </button>
           </nav>
           <div className="nav-right">
-            <span className="nav-user" title={user.email}>
+            {/* Global privacy eye (owner request 2026-08-14) — blurs names,
+                phone, email, address everywhere while ON; "active" styling
+                (accent border/fill) marks the blurring state. */}
+            <button
+              type="button"
+              className={`eye-btn pii-eye-btn${piiHidden ? " active" : ""}`}
+              onClick={() => setPiiHidden((v) => !v)}
+              aria-label={piiTitle}
+              aria-pressed={piiHidden}
+              title={piiTitle}
+            >
+              {piiHidden ? <PiiEyeOffIcon /> : <PiiEyeIcon />}
+            </button>
+            <span className={`nav-user${blurPii(piiHidden)}`} title={user.email}>
               {user.email}
               {orgName ? ` · ${orgName}` : ""}
             </span>
@@ -392,6 +428,7 @@ export default function App() {
       <footer className="foot">
         {(orgName || "Elevate Studio") + " CRM"} · product build · v0.1
       </footer>
+      </PiiContext.Provider>
     </div>
   );
 }
