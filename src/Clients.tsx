@@ -875,18 +875,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
                             {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
                           </span>
-                          {(c.agreementStatus ?? "not_sent") !== "not_sent" && (
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              title="View agreement details — status, signer, timestamp, IP, PDF"
-                              aria-label={`Agreement details for ${c.companyName}`}
-                              onClick={() => openAudit(c)}
-                              disabled={busy}
-                            >
-                              Audit
-                            </button>
-                          )}
                         </div>
                       </td>
                     ) : (
@@ -985,6 +973,25 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         {canEdit && (
                           <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
                             Edit
+                          </button>
+                        )}
+                        {/* Owner live-test finding 2026-08-15 — "place the audit
+                            button under actions": the agreement Audit button
+                            moves OUT of the Agreement-status cell and INTO the
+                            ACTIONS column (next to Edit/Delete), same behavior
+                            (opens the audit details: status, signer, timestamp,
+                            IP, PDF). Owner Onboarding tab only, and only once an
+                            agreement has actually been sent. */}
+                        {ownerOnboardingTab && (c.agreementStatus ?? "not_sent") !== "not_sent" && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="View agreement details — status, signer, timestamp, IP, PDF"
+                            aria-label={`Agreement details for ${c.companyName}`}
+                            onClick={() => openAudit(c)}
+                            disabled={busy}
+                          >
+                            Audit
                           </button>
                         )}
                         {/* Owner cockpit A — owner Leads tab only: quick Lost /

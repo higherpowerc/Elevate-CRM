@@ -5086,6 +5086,52 @@ if grep -q '"emailStatus":"failed"' /tmp/body.json && grep -q '"emailError"' /tm
 else
   FAIL=$((FAIL+1)); echo "  ✗ provisioning failure fields missing: $(cat /tmp/body.json)"
 fi
+echo "-- 45k. Central Documents view (owner live-test finding: 'where are we storing these documents — they should be under admin') =="
+# The owner's Documents tab renders the existing owner-only audit API. Verify
+# every field the view needs is present, the PDF link resolves, the tenant
+# still gets 403, and the view ships (source + bundle).
+S=$(code -b "$JA45" "$S45/api/agreements")
+PDF45=$(grep -o '"pdfId":"[a-f0-9]*"' /tmp/body.json | head -1 | cut -d'"' -f4)
+if grep -q '"clientName":"Harbor Legal LLP"' /tmp/body.json && grep -q '"signerName":"Jordan Lee"' /tmp/body.json && grep -q '"ipAddress":"127.0.0.1"' /tmp/body.json && grep -q '"consent":true' /tmp/body.json && grep -q '"status":"signed"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ owner audit API returns every Documents-view field (client, status, signer, IP, consent)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ owner audit API missing Documents fields: $(cat /tmp/body.json)"
+fi
+if [ -n "$PDF45" ]; then
+  S=$(code -b "$JAR" "$S45/agreement-pdf/$PDF45")
+  check "45k: Documents PDF link → 200" 200 "$S"
+  CT45=$(curl -s -b "$JAR" -o /dev/null -w "%{content_type}" "$S45/agreement-pdf/$PDF45")
+  if [ "$CT45" = "application/pdf" ]; then PASS=$((PASS+1)); echo "  ✓ PDF served with Content-Type application/pdf"; else FAIL=$((FAIL+1)); echo "  ✗ PDF content-type: $CT45"; fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no pdfId in owner audit list"; fi
+S=$(code -b "$JT45" "$S45/api/agreements")
+check "45k: tenant GET agreements → 403 (Documents view is owner-only)" 403 "$S"
+if grep -Fq "agreements" src/Documents.tsx && grep -Fq "agreement-pdf" src/Documents.tsx && grep -Fq "signedAt" src/Documents.tsx && grep -Fq "ipAddress" src/Documents.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Documents view renders envelopes + audit trail (signer/signedAt/IP/consent) + PDF links"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: src/Documents.tsx markers missing"; fi
+if grep -Fq 'setView("documents")' src/App.tsx && grep -Fq '"documents"' src/App.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner-only Documents tab wired in App.tsx"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Documents tab markers missing"; fi
+# Part B — the agreement Audit button moved OUT of the Agreement-status cell
+# and INTO the Actions column (next to Edit/Delete).
+if awk '/<td data-label="Agreement">/,/<\/td>/' src/Clients.tsx | grep -Fq "Agreement details for"; then
+  FAIL=$((FAIL+1)); echo "  ✗ audit button still inside the agreement-status cell"
+else
+  PASS=$((PASS+1)); echo "  ✓ audit button removed from the agreement-status cell"
+fi
+if awk '/<td data-label="Actions">/,/<\/td>/' src/Clients.tsx | grep -Fq "Agreement details for"; then
+  PASS=$((PASS+1)); echo "  ✓ audit button moved into the Actions column (next to Edit/Delete)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ audit button not found in the Actions column"; fi
+# Bundle markers (the 45h build above is still current — nothing rebuilt since).
+NEWEST_JS45=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS45" ] && grep -Fq "No agreement documents yet" "$NEWEST_JS45" && grep -Fq "Documents" "$NEWEST_JS45"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: Documents view shipped"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: Documents markers missing"; fi
+
 echo "-- 45j. Cleanup == "
 stop_crm "$MOCK45/srv.pid" 2>/dev/null
 kill "$MOCK45_PID" 2>/dev/null

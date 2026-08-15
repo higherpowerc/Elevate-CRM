@@ -7,6 +7,7 @@ import ClientsDirectory from "./ClientsDirectory";
 import Tasks from "./Tasks";
 import Finance from "./Finance";
 import Admin from "./Admin";
+import Documents from "./Documents";
 import Tickets from "./Tickets";
 import Settings from "./Settings";
 import { api } from "./api";
@@ -28,7 +29,7 @@ import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "
  * (prospects), Onboarding = the MIDDLE stages (intake leads), Clients = the
  * terminal stage (sold). Client accounts (role=member) are unchanged: their
  * Leads tab keeps showing every stage except their terminal one. */
-type View = "dashboard" | "leads" | "onboarding" | "clients" | "tasks" | "finance" | "admin" | "tickets" | "settings";
+type View = "dashboard" | "leads" | "onboarding" | "clients" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -166,6 +167,7 @@ export default function App() {
         return canSeeTab("settings");
       case "onboarding":
       case "admin":
+      case "documents":
         return isOwnerOrg;
     }
   };
@@ -414,6 +416,21 @@ export default function App() {
                 Admin
               </button>
             )}
+            {/* Owner live-test finding 2026-08-15 — "where are we storing
+                these documents right now — they should be under admin": the
+                OWNER workspace gains a central Documents tab listing EVERY
+                agreement envelope across all client accounts (status, signer,
+                signed date, IP + consent, PDF). Owner-workspace only — the
+                server's GET /api/agreements is requireAdmin, so tenant orgs
+                can never see the list. */}
+            {isOwnerOrg && (
+              <button
+                className={effectiveView === "documents" ? "tab active" : "tab"}
+                onClick={() => setView("documents")}
+              >
+                Documents
+              </button>
+            )}
             {/* Owner direction 2026-08-15 — support tickets: the OWNER's tab
                 reads "Tickets" (every account's tickets, worked to
                 resolution); client accounts read "Support" (their own org's
@@ -502,6 +519,8 @@ export default function App() {
           <Finance canEdit={canEditTab("finance")} />
         ) : effectiveView === "admin" ? (
           <Admin ownerOrgId={user.orgId} onViewAccount={handleImpersonate} />
+        ) : effectiveView === "documents" ? (
+          <Documents />
         ) : effectiveView === "tickets" ? (
           <Tickets ownerOrg={isOwnerOrg} canEdit={canEditTab("support")} />
         ) : (
