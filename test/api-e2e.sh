@@ -1029,12 +1029,13 @@ if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
   fi
   # Owner request 2026-08-14 — the single Clients tab split into TWO: "Leads"
   # (the pipeline) and "Clients" (the independent directory of every client).
-  # "All clients" is the member-org label for the directory tab; the search
-  # placeholder is unique to the directory page.
-  if grep -q "All clients" "$NEWEST_JS" && grep -q "Search company, contact, phone" "$NEWEST_JS"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the split Leads/Clients nav (directory tab labels + search)"
+  # Owner request 2026-08-15 — labels unified across EVERY workspace: the
+  # member-org "All clients" variant label is gone, so the built bundle must
+  # not contain it. The search placeholder is unique to the directory page.
+  if ! grep -q "All clients" "$NEWEST_JS" && grep -q "Search company, contact, phone" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle labels every workspace's directory tab \"Clients\" (no \"All clients\" variant)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ split Leads/Clients nav strings missing from $NEWEST_JS"
+    FAIL=$((FAIL+1)); echo "  ✗ \"All clients\" variant label still present in $NEWEST_JS"
   fi
   # 2026-08-14 owner requests — dashboard Task overview panel (stats + due
   # tones) and the privacy eye (hide/show amounts, persisted via localStorage).

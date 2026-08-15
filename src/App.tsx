@@ -17,9 +17,10 @@ import { initials } from "./bits";
  *              actions, Manage stages) — today's Clients tab, reframed.
  *   "clients" → the independent directory of ALL clients (any stage, incl.
  *              archived), flat and alphabetically sorted.
- * The owner workspace (role=admin) labels them "Leads" + "Clients"; tenant
- * orgs (role=member) keep "clients" wording everywhere — "Clients" (the
- * pipeline) + "All clients" (the directory). */
+ * Owner request 2026-08-15 — tab labels are unified across EVERY workspace:
+ * the pipeline tab always reads "Leads" and the directory tab always reads
+ * "Clients", for the owner and each client account alike (the member-org
+ * "Clients"/"All clients" variant labels are gone). */
 type View = "dashboard" | "leads" | "clients" | "tasks" | "finance" | "admin" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
@@ -236,9 +237,9 @@ export default function App() {
             </button>
             {/* Owner request 2026-08-14: "Leads" and "Clients" sit side by
                 side. The Leads tab is the pipeline; the Clients tab is the
-                independent directory of every client in the org. Tenant orgs
-                (role=member) never see "Leads" — their pipeline tab keeps
-                the "Clients" label and the directory reads "All clients". */}
+                independent directory of every client in the org. Owner
+                request 2026-08-15: both tabs read the same in every
+                workspace — owner and client accounts alike. */}
             <button
               className={view === "leads" ? "tab active" : "tab"}
               onClick={() => {
@@ -246,13 +247,13 @@ export default function App() {
                 setView("leads");
               }}
             >
-              {isOwnerOrg ? "Leads" : "Clients"}
+              Leads
             </button>
             <button
               className={view === "clients" ? "tab active" : "tab"}
               onClick={() => setView("clients")}
             >
-              {isOwnerOrg ? "Clients" : "All clients"}
+              Clients
             </button>
             <button
               className={view === "tasks" ? "tab active" : "tab"}
