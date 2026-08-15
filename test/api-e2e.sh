@@ -2316,8 +2316,10 @@ sleep 1
 if python3 - "$MOCK28_EMAILS" <<'PY' 2>"$MOCK28/emails-a.err"
 import json, sys
 lines = [json.loads(l) for l in open(sys.argv[1])]
-assert len(lines) == 1, [(l.get("subject"), l.get("to")) for l in lines]
-e = lines[0]
+# 3g-4 intake emails now accompany admin provisioning; only the reset email matters here.
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+assert len(reset) == 1, [(l.get("subject"), l.get("to")) for l in lines]
+e = reset[0]
 assert e["to"] == ["reseta@example.com"], e["to"]
 assert e["subject"] == "Reset your password", e["subject"]
 t = e["text"]
@@ -2329,7 +2331,8 @@ then PASS=$((PASS+1)); echo "  ✓ reset email: recipient, subject, origin URL w
 TOKENA=$(python3 - "$MOCK28_EMAILS" <<'PY'
 import json, sys, re
 lines = [json.loads(l) for l in open(sys.argv[1])]
-t = lines[0]["text"]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+t = reset[0]["text"]
 m = re.search(r"token=([0-9a-f]{64})", t)
 assert m, t
 print(m.group(1))
@@ -2341,7 +2344,7 @@ S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"nobody@example.com"}' "http://localhost:3005/api/auth/forgot")
 check "28a: forgot for unknown email → 200" 200 "$S"
 grep -Fq "a reset link is on its way" /tmp/body.json && echo "  ✓ identical generic message (no account enumeration)" || echo "  ✗ forgot response: $(cat /tmp/body.json)"
-if [ "$(wc -l < "$MOCK28_EMAILS")" -eq 1 ]; then
+if [ "$(grep -c 'Reset your password' "$MOCK28_EMAILS")" -eq 1 ]; then
   PASS=$((PASS+1)); echo "  ✓ unknown email sent NO reset email"
 else
   FAIL=$((FAIL+1)); echo "  ✗ unexpected email for unknown account: $(cat "$MOCK28_EMAILS")"
@@ -2380,8 +2383,9 @@ sleep 1
 TOKENA2=$(python3 - "$MOCK28_EMAILS" <<'PY'
 import json, sys, re
 lines = [json.loads(l) for l in open(sys.argv[1])]
-m = re.search(r"token=([0-9a-f]{64})", lines[-1]["text"])
-assert m, lines[-1]["text"]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+m = re.search(r"token=([0-9a-f]{64})", reset[-1]["text"])
+assert m, reset[-1]["text"]
 print(m.group(1))
 PY
 )
@@ -2399,8 +2403,9 @@ sleep 1
 TOKENA3=$(python3 - "$MOCK28_EMAILS" <<'PY'
 import json, sys, re
 lines = [json.loads(l) for l in open(sys.argv[1])]
-m = re.search(r"token=([0-9a-f]{64})", lines[-1]["text"])
-assert m, lines[-1]["text"]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+m = re.search(r"token=([0-9a-f]{64})", reset[-1]["text"])
+assert m, reset[-1]["text"]
 print(m.group(1))
 PY
 )
