@@ -68,6 +68,13 @@ textarea {
   font: inherit;
   color: var(--ink);
 }
+/* Native select dropdown popup (stage picker, etc.): force black background
+   with white lettering — the OS default bright popup with faint text is
+   unreadable on the dark theme. */
+select option {
+  background: #000;
+  color: #fff;
+}
 
 .serif {
   font-family: var(--font-serif);
