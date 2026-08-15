@@ -9,12 +9,25 @@ import StageEditor from "./StageEditor";
 
 type Filter = "active" | "archived" | "all";
 
+/** Owner request 2026-08-15 — which slice of the org's ordered pipeline this
+ *  pipeline view renders (positional, rename-safe — never hardcoded names):
+ *    "all"    → every stage EXCEPT the terminal (last) one — the tenant
+ *               (role=member) Leads tab, unchanged from PR #35.
+ *    "first"  → only stages[0] — the OWNER's Leads tab (prospects only).
+ *    "middle" → every stage between first and terminal — the OWNER's
+ *               Onboarding tab (intake leads live here).
+ *  The owner's three-bucket split is Leads = first, Onboarding = middle,
+ *  Clients (directory) = terminal. */
+export type StageScope = "all" | "first" | "middle";
+
 interface Props {
   /** The tenant's ordered pipeline stages — the stage column dropdown and
    *  badge tones are driven by this list (Phase 3a). Refreshed from
    *  /api/settings on every load so a stage change made through the "Manage
    *  stages" shortcut shows up immediately. */
   stages: Stage[];
+  /** Which pipeline slice to render (see StageScope above). Default "all". */
+  scope?: StageScope;
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
    *  owner calls its pipeline records "leads", so this page's headings, CTA
    *  and empty states read "Lead(s)" instead of "Client(s)". Tenant orgs
@@ -27,7 +40,8 @@ interface Props {
    *  "View →" on a stage card hands its stage name here, and this view opens
    *  with that stage chip selected. Names arrive from the org's CURRENT stage
    *  list (the dashboard cards are driven by the same settings), so a renamed
-   *  stage deep-links to itself. null/undefined = "All". */
+   *  stage deep-links to itself. null/undefined = "All". A name outside this
+   *  view's scope (e.g. the terminal stage) is ignored → "All". */
   initialStage?: string | null;
 }
 
@@ -39,7 +53,7 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   return value;
 }
 
-export default function Clients({ stages, ownerOrg = false, initialStage = null }: Props) {
+export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -66,18 +80,24 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
      toggle and search — all three intersect in the visible memo. */
   const [stageFilter, setStageFilter] = useState<string | null>(initialStage);
 
-  /* Owner request 2026-08-14 — terminal-stage split (GLOBAL): the pipeline
-     shows prospects only. The account's TERMINAL stage is the LAST entry of
-     its ordered stages (positional — renamed-safe, never hardcoded "Sold"):
-     sold customers leave this table and live in the directory tab instead.
-     `terminalStage` is derived from orgStages (refreshed from settings on
-     every load) so a rename/reorder made in "Manage stages" applies here
-     immediately. */
-  const terminalStage = orgStages.length > 0 ? orgStages[orgStages.length - 1] : "";
-  /* The Dashboard deep-links "View →" per stage card; a card that IS the
-     terminal stage has no chip anymore, so the link opens the pipeline on
-     "All" (the stale stage name is ignored). */
-  const activeStageFilter = stageFilter && stageFilter !== terminalStage ? stageFilter : null;
+  /* Owner request 2026-08-14/15 — positional pipeline buckets (rename-safe,
+     never hardcoded stage names). FIRST = stages[0], TERMINAL = stages[last],
+     MIDDLE = everything between. `scopedStages` is the slice of the ordered
+     stages this view renders per its `scope` prop:
+       "all"    → all but the terminal stage (tenant Leads — PR #35 behavior)
+       "first"  → stages[0] (owner Leads)
+       "middle" → stages[1..last-1] (owner Onboarding)
+     Derived from orgStages (refreshed from settings on every load) so a
+     rename/reorder made in "Manage stages" applies here immediately. */
+  const scopedStages = useMemo<Stage[]>(() => {
+    if (scope === "first") return orgStages.length > 0 ? [orgStages[0]] : [];
+    if (scope === "middle") return orgStages.length > 2 ? orgStages.slice(1, -1) : [];
+    return orgStages.length > 0 ? orgStages.slice(0, -1) : [];
+  }, [scope, orgStages]);
+  /* The Dashboard deep-links "View →" per stage card; a stage outside this
+     view's scope (e.g. the terminal stage) has no chip here, so the link
+     opens the pipeline on "All" (the stale stage name is ignored). */
+  const activeStageFilter = stageFilter && scopedStages.includes(stageFilter) ? stageFilter : null;
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
@@ -125,10 +145,12 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
     if (!clients) return [];
     const q = query.trim().toLowerCase();
     return clients.filter((c) => {
-      /* Terminal-stage split (owner request 2026-08-14): the pipeline shows
-         prospects only — clients in the account's terminal (sold) stage never
-         appear here, archived or not. They live in the directory tab. */
-      if (c.stage === terminalStage) return false;
+      /* Positional pipeline buckets (owner request 2026-08-14/15): only
+         clients whose stage is inside THIS view's scoped stage slice are
+         pipeline records here. Everything else — for the owner that means the
+         terminal (sold) stage and the other pipeline bucket — lives on its
+         own tab, archived or not. */
+      if (!scopedStages.includes(c.stage)) return false;
       const matchFilter =
         filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
       if (!matchFilter) return false;
@@ -151,24 +173,25 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
         .toLowerCase()
         .includes(q);
     });
-  }, [clients, filter, query, activeStageFilter, terminalStage]);
+  }, [clients, filter, query, activeStageFilter, scopedStages]);
 
   /* Owner request 2026-08-14 — chip counts. Non-archived clients per stage,
      computed live from the same loaded list the table renders, so the chips
      always agree with the dashboard's stage breakdown (which is also
-     non-archived per stage) and with the "Active" count above. The terminal
-     (sold) stage has no chip — sold customers are not pipeline prospects. */
+     non-archived per stage) and with the "Active" count above. Only the
+     stages IN THIS VIEW's scope get chips (sold/terminal customers are not
+     pipeline prospects; the other owner bucket has its own tab). */
   const stageCountsActive = useMemo(() => {
     const m: Record<string, number> = {};
     if (clients) {
       for (const c of clients) {
         if (c.archived) continue;
-        if (c.stage === terminalStage) continue;
+        if (!scopedStages.includes(c.stage)) continue;
         m[c.stage] = (m[c.stage] ?? 0) + 1;
       }
     }
     return m;
-  }, [clients, terminalStage]);
+  }, [clients, scopedStages]);
 
   const totalValue = useMemo(
     () => visible.filter((c) => !c.archived).reduce((sum, c) => sum + (c.dealValue || 0), 0),
@@ -239,27 +262,41 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
     );
   }
 
-  /* Terminal-stage split: the pipeline's Active/Archived/All counts cover
-     prospects only — sold customers (terminal stage) are counted in the
-     directory tab, not here. */
-  const nonTerminal = clients.filter((c) => c.stage !== terminalStage);
+  /* Positional buckets: the view's Active/Archived/All counts cover the
+     scoped stage slice only — clients in other buckets (the owner's other
+     pipeline tab, or the terminal/sold stage for tenants) are counted on
+     their own tabs, not here. */
+  const scoped = clients.filter((c) => scopedStages.includes(c.stage));
   const counts = {
-    active: nonTerminal.filter((c) => !c.archived).length,
-    archived: nonTerminal.filter((c) => c.archived).length,
+    active: scoped.filter((c) => !c.archived).length,
+    archived: scoped.filter((c) => c.archived).length,
   };
 
-  /* Owner workspace labels its pipeline records "leads" (owner direction
-     2026-08-14); tenant orgs keep "clients". Same page, same data — only
-     the visible wording differs. */
-  const heading = ownerOrg ? "Leads" : (<>
+  /* Owner request 2026-08-15 — the owner's three-bucket pipeline: the Leads
+     tab is the FIRST stage ("prospects"), the Onboarding tab is the MIDDLE
+     stages ("intake leads"), the Clients tab is the terminal stage (sold).
+     Tenant orgs (role=member) keep the single pipeline — every stage except
+     terminal — with "clients" wording for their records. Same page, same
+     data — only the visible wording and the scoped stage slice differ. */
+  const heading = scope === "middle" ? "Onboarding" : ownerOrg ? "Leads" : (<>
     Client <em className="serif">book</em>
   </>);
   const addCta = ownerOrg ? "+ New lead" : "+ New client";
-  const emptyTitle = ownerOrg ? "No leads yet" : "No clients yet";
-  const emptySub = ownerOrg
+  const emptyTitle = scope === "middle" ? "No onboarding clients yet"
+    : ownerOrg && scope === "first" ? "No prospects yet"
+    : ownerOrg ? "No leads yet" : "No clients yet";
+  const emptySub = scope === "middle"
+    ? "Intake leads between your first and final pipeline stages live here — move one into your final stage and it becomes a client."
+    : ownerOrg && scope === "first"
+    ? "Add your first prospect to start tracking the pipeline."
+    : ownerOrg
     ? "Add your first lead to start tracking the pipeline."
     : "Add your first client to start tracking the pipeline.";
-  const emptyCta = ownerOrg ? "Add your first lead" : "Add your first client";
+  const emptyCta = scope === "middle"
+    ? "Add your first lead"
+    : ownerOrg && scope === "first"
+    ? "Add your first prospect"
+    : ownerOrg ? "Add your first lead" : "Add your first client";
 
   return (
     <div className="page">
@@ -297,7 +334,7 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
             >
               {f === "active" ? "Active" : f === "archived" ? "Archived" : "All"}
               <span className="seg-count">
-                {f === "active" ? counts.active : f === "archived" ? counts.archived : nonTerminal.length}
+                {f === "active" ? counts.active : f === "archived" ? counts.archived : scoped.length}
               </span>
             </button>
           ))}
@@ -310,14 +347,17 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search clients"
         />
-        {/* Owner request 2026-08-14 — stage chip row: "All" + one chip per
-            org stage, each with its live non-archived count (same numbers as
-            the dashboard stage breakdown), EXCEPT the terminal stage — sold
-            customers are not pipeline prospects and get no chip (they live in
-            the directory tab). Clicking a chip filters the table to that
-            stage; clicking the active chip again toggles it off; "All"
-            clears. Stage names come from the org's CURRENT stages (orgStages,
-            refreshed with every load), so renames show up here immediately. */}
+        {/* Owner request 2026-08-14/15 — stage chip row: "All" + one chip per
+            stage IN THIS VIEW's scope, each with its live non-archived count
+            (same numbers as the dashboard stage breakdown). The tenant Leads
+            tab scopes to every non-terminal stage; the owner Leads tab scopes
+            to the FIRST stage; the owner Onboarding tab scopes to the MIDDLE
+            stages. Stages outside the scope (terminal/sold — the other owner
+            bucket) get no chip here — they live on their own tabs. Clicking a
+            chip filters the table to that stage; clicking the active chip
+            again toggles it off; "All" clears. Stage names come from the
+            org's CURRENT stages (orgStages, refreshed with every load), so
+            renames show up here immediately. */}
         <div className="stage-chips" role="group" aria-label="Filter by stage">
           <button
             type="button"
@@ -328,33 +368,30 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
             All
             <span className="seg-count">{counts.active}</span>
           </button>
-          {orgStages.map((s) => {
-            if (s === terminalStage) return null;
-            return (
-              <button
-                type="button"
-                key={s}
-                className={activeStageFilter === s ? "stage-chip active" : "stage-chip"}
-                aria-pressed={activeStageFilter === s}
-                onClick={() => setStageFilter((cur) => (cur === s ? null : s))}
-              >
-                {s}
-                <span className="seg-count">{stageCountsActive[s] ?? 0}</span>
-              </button>
-            );
-          })}
+          {scopedStages.map((s) => (
+            <button
+              type="button"
+              key={s}
+              className={activeStageFilter === s ? "stage-chip active" : "stage-chip"}
+              aria-pressed={activeStageFilter === s}
+              onClick={() => setStageFilter((cur) => (cur === s ? null : s))}
+            >
+              {s}
+              <span className="seg-count">{stageCountsActive[s] ?? 0}</span>
+            </button>
+          ))}
         </div>
       </div>
 
       {visible.length === 0 ? (
         <div className="card empty">
-          <p className="empty-title">{clients.length === 0 ? emptyTitle : "Nothing matches"}</p>
+          <p className="empty-title">{scoped.length === 0 ? emptyTitle : "Nothing matches"}</p>
           <p className="empty-sub">
-            {clients.length === 0
+            {scoped.length === 0
               ? emptySub
               : "Try a different search or filter."}
           </p>
-          {clients.length === 0 && (
+          {scoped.length === 0 && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {emptyCta}
             </button>
@@ -495,6 +532,11 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
         <ClientModal
           client={modal.mode === "edit" ? modal.client : undefined}
           stages={orgStages}
+          /* Owner request 2026-08-15 — "+ New lead" defaults to the bucket's
+             first stage: the owner Leads tab → stages[0], the owner
+             Onboarding tab → the FIRST MIDDLE stage (stages[1]). The tenant
+             pipeline and the old default already land on stages[0]. */
+          defaultStage={scope === "middle" ? orgStages[1] : undefined}
           customFieldDefs={customFieldDefs}
           intake={intake}
           busy={busy}
