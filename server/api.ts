@@ -249,6 +249,12 @@ function toClient(row: ClientRow) {
     parkingAccess: row.parking_access,
     petOnPremises: row.pet_on_premises === 1,
     preferredServiceLocation: row.preferred_service_location,
+    // Owner request 2026-08-14 — lost + DNC pipeline-status flags.
+    lost: row.lost === 1,
+    lostReason: row.lost_reason,
+    dnc: row.dnc === 1,
+    dncReason: row.dnc_reason,
+    dncDate: row.dnc_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -312,6 +318,15 @@ interface ClientInput {
   parkingAccess?: string;
   petOnPremises?: boolean;
   preferredServiceLocation?: string;
+  /** Owner request 2026-08-14 — lost + DNC flags. Every key is OPTIONAL:
+   *  on create, absent keys default (false / ''); on update, absent keys
+   *  leave the stored value untouched (only keys present in the body are
+   *  persisted). */
+  lost?: boolean;
+  lostReason?: string;
+  dnc?: boolean;
+  dncReason?: string;
+  dncDate?: string;
 }
 
 /** Adaptive intake Phase 1: optional TEXT columns — client JSON key → DB
@@ -340,6 +355,22 @@ const INTAKE_TEXT_COLS: { key: string; col: string; max: number; label: string }
   { key: "parkingAccess", col: "parking_access", max: 2000, label: "Parking / access" },
   { key: "preferredServiceLocation", col: "preferred_service_location", max: 200, label: "Preferred service location" },
 ];
+
+/** Owner request 2026-08-14 — lost + DNC flags. Column list for client
+ *  create (absent keys default to false / ''), mirroring INTAKE_COLS. */
+const STATUS_COLS: string[] = ["lost", "lost_reason", "dnc", "dnc_reason", "dnc_date"];
+
+/** The lost/DNC values from a parsed ClientInput, in STATUS_COLS order. */
+function statusValues(c: ClientInput): (string | number)[] {
+  const rec = c as unknown as Record<string, unknown>;
+  return [
+    rec.lost === true ? 1 : 0,
+    typeof rec.lostReason === "string" ? rec.lostReason : "",
+    rec.dnc === true ? 1 : 0,
+    typeof rec.dncReason === "string" ? rec.dncReason : "",
+    typeof rec.dncDate === "string" ? rec.dncDate : "",
+  ];
+}
 
 /** Adaptive intake Phase 1: optional yes/no columns (stored as 0/1). */
 const INTAKE_BOOL_COLS: { key: string; col: string; label: string }[] = [
@@ -607,6 +638,50 @@ function validateClient(
     else return { ok: false, error: `${f.label} must be yes or no.` };
   }
 
+  // Owner request 2026-08-14 — lost + DNC flags. All OPTIONAL: on create,
+  // absent keys default to false / ''; on update, only keys present in the
+  // body are persisted (absent keys leave the stored value untouched, the
+  // same partial-update rule the intake fields follow). Clearing a flag also
+  // clears its reason/date so the record never keeps stale metadata.
+  const statusText = (v: unknown, label: string, max = 300): { ok: true; value: string } | { ok: false; error: string } => {
+    if (v === undefined || v === null) return { ok: true, value: "" };
+    if (typeof v !== "string") return { ok: false, error: `${label} must be text.` };
+    const t = v.trim();
+    if (t.length > max) return { ok: false, error: `${label} must be under ${max + 1} characters.` };
+    return { ok: true, value: t };
+  };
+  let statusLost: boolean | undefined;
+  if (body.lost !== undefined && body.lost !== null) {
+    if (typeof body.lost !== "boolean") return { ok: false, error: "lost must be a boolean." };
+    statusLost = body.lost;
+  }
+  let statusLostReason: string | undefined;
+  if (body.lostReason !== undefined && body.lostReason !== null) {
+    const r = statusText(body.lostReason, "Lost reason");
+    if (!r.ok) return r;
+    statusLostReason = r.value;
+  }
+  let statusDnc: boolean | undefined;
+  if (body.dnc !== undefined && body.dnc !== null) {
+    if (typeof body.dnc !== "boolean") return { ok: false, error: "dnc must be a boolean." };
+    statusDnc = body.dnc;
+  }
+  let statusDncReason: string | undefined;
+  if (body.dncReason !== undefined && body.dncReason !== null) {
+    const r = statusText(body.dncReason, "DNC reason");
+    if (!r.ok) return r;
+    statusDncReason = r.value;
+  }
+  let statusDncDate: string | undefined;
+  if (body.dncDate !== undefined && body.dncDate !== null) {
+    const r = statusText(body.dncDate, "DNC date", 20);
+    if (!r.ok) return r;
+    if (r.value && !/^\d{4}-\d{2}-\d{2}$/.test(r.value)) {
+      return { ok: false, error: "DNC date must be a date like 2026-08-01." };
+    }
+    statusDncDate = r.value;
+  }
+
   const value: ClientInput = {
     companyName,
     contactName: str(body.contactName, 200),
@@ -635,6 +710,32 @@ function validateClient(
   for (const f of INTAKE_BOOL_COLS) {
     const v = intakeBool[f.key];
     if (v !== undefined) (value as unknown as Record<string, unknown>)[f.key] = v;
+  }
+  // Lost/DNC: only keys present in the body are persisted (create defaults
+  // them, update leaves absent ones untouched). Clearing the flag clears the
+  // accompanying reason/date — a restored lead is clean again.
+  if (statusLost !== undefined) {
+    (value as unknown as Record<string, unknown>).lost = statusLost;
+    (value as unknown as Record<string, unknown>).lostReason = statusLost ? (statusLostReason ?? "") : "";
+  } else if (statusLostReason !== undefined) {
+    (value as unknown as Record<string, unknown>).lostReason = statusLostReason;
+  }
+  if (statusDnc !== undefined) {
+    (value as unknown as Record<string, unknown>).dnc = statusDnc;
+    if (statusDnc) {
+      (value as unknown as Record<string, unknown>).dncReason = statusDncReason ?? "";
+      (value as unknown as Record<string, unknown>).dncDate = statusDncDate ?? "";
+    } else {
+      (value as unknown as Record<string, unknown>).dncReason = "";
+      (value as unknown as Record<string, unknown>).dncDate = "";
+    }
+  } else {
+    if (statusDncReason !== undefined) {
+      (value as unknown as Record<string, unknown>).dncReason = statusDncReason;
+    }
+    if (statusDncDate !== undefined) {
+      (value as unknown as Record<string, unknown>).dncDate = statusDncDate;
+    }
   }
   return { ok: true, value };
 }
@@ -1799,8 +1900,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const orgStages = org ? parseStages(org.stages) : [...DEFAULT_STAGES];
     const stageCounts = {} as Record<Stage, number>;
     for (const s of orgStages) stageCounts[s] = 0;
+    // Owner request 2026-08-14 — LOST leads are excluded from the stage
+    // breakdown and the projected pipeline (dead leads are not pipeline
+    // prospects). totalClients stays a plain record count (archived + lost
+    // included — it labels the "in the book" header, not a pipeline KPI).
     const rows = db
-      .query("SELECT stage, COUNT(*) AS c FROM clients WHERE org_id = ? AND archived = 0 GROUP BY stage")
+      .query("SELECT stage, COUNT(*) AS c FROM clients WHERE org_id = ? AND archived = 0 AND lost = 0 GROUP BY stage")
       .all(orgId) as { stage: Stage; c: number }[];
     for (const r of rows) if (r.stage in stageCounts) stageCounts[r.stage] = r.c;
 
@@ -1811,7 +1916,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       .query("SELECT COUNT(*) AS c FROM clients WHERE org_id = ? AND archived = 1")
       .get(orgId) as { c: number };
     const value = db
-      .query("SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients WHERE org_id = ? AND archived = 0")
+      .query("SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients WHERE org_id = ? AND archived = 0 AND lost = 0")
       .get(orgId) as { v: number };
     const recent = (
       db
@@ -2173,8 +2278,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, ${INTAKE_COLS.join(", ")})
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")})`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")})`,
       )
       .run(
         orgId,
@@ -2183,6 +2288,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         c.archived ? 1 : 0,
         c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
         ...intake.values,
+        ...statusValues(c),
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row) }, 201);
@@ -2242,6 +2348,23 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
           sets.push(`${f.col} = ?`);
           params.push(v === true ? 1 : 0);
         }
+      }
+      // Owner request 2026-08-14 — lost/DNC: persisted ONLY when present in
+      // the body (partial updates never clobber absent flags). Clearing a flag
+      // also clears its reason/date (validateClient already normalizes that).
+      if (body.lost !== undefined && body.lost !== null) {
+        sets.push("lost = ?");
+        params.push(rec.lost === true ? 1 : 0);
+        sets.push("lost_reason = ?");
+        params.push(typeof rec.lostReason === "string" ? rec.lostReason : "");
+      }
+      if (body.dnc !== undefined && body.dnc !== null) {
+        sets.push("dnc = ?");
+        params.push(rec.dnc === true ? 1 : 0);
+        sets.push("dnc_reason = ?");
+        params.push(typeof rec.dncReason === "string" ? rec.dncReason : "");
+        sets.push("dnc_date = ?");
+        params.push(typeof rec.dncDate === "string" ? rec.dncDate : "");
       }
       sets.push("updated_at = datetime('now')");
       params.push(id, orgId);

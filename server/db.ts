@@ -655,6 +655,35 @@ db.exec(`
 }
 
 /**
+ * Lost-leads + DNC migration (owner request 2026-08-14, shipped 2026-08-15).
+ * Idempotent — safe on every boot.
+ *
+ * clients gains the per-record pipeline-status flags:
+ *   lost        0/1 — lead is not interested / dead (excluded from pipeline
+ *                    counts/KPIs and the pipeline rows everywhere)
+ *   lost_reason free text — why the lead is lost
+ *   dnc         0/1 — do-not-call / do-not-contact
+ *   dnc_reason  free text — why DNC was set
+ *   dnc_date    YYYY-MM-DD — when DNC was set (auto-filled to today on toggle)
+ *
+ * All plain INTEGER/TEXT with DEFAULTs, so existing rows backfill cleanly
+ * and no FK games are needed (the same pattern the Phase 3e migration uses).
+ */
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${ddl}`);
+    }
+  };
+  addCol("lost", "lost INTEGER NOT NULL DEFAULT 0");
+  addCol("lost_reason", "lost_reason TEXT NOT NULL DEFAULT ''");
+  addCol("dnc", "dnc INTEGER NOT NULL DEFAULT 0");
+  addCol("dnc_reason", "dnc_reason TEXT NOT NULL DEFAULT ''");
+  addCol("dnc_date", "dnc_date TEXT NOT NULL DEFAULT ''");
+}
+
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
@@ -845,6 +874,14 @@ export interface ClientRow {
   parking_access: string;
   pet_on_premises: number;
   preferred_service_location: string;
+  /** Owner request 2026-08-14 — lost + DNC pipeline-status flags. `lost`
+   *  leads are excluded from pipeline counts/KPIs everywhere; `dnc` carries
+   *  the do-not-call warning (reason + when it was set). */
+  lost: number;
+  lost_reason: string;
+  dnc: number;
+  dnc_reason: string;
+  dnc_date: string;
   created_at: string;
   updated_at: string;
   /** 3g-3: the new tenant org auto-provisioned when the owner sold this

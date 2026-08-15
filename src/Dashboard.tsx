@@ -102,6 +102,11 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
 
   const hasClients = data.totalClients > 0;
   const lastStage = stages.length > 0 ? stages[stages.length - 1] : "";
+  /* Owner request 2026-08-14 — lost leads are excluded from every pipeline
+     KPI. The "Active" count is the sum of the (server-side) stageCounts —
+     which already exclude lost + archived — rather than totalClients minus
+     archived (totalClients stays the "in the book" record count). */
+  const activeClients = Object.values(data.stageCounts).reduce((sum, n) => sum + (n ?? 0), 0);
 
   /* Owner workspace labels its pipeline records "leads" (owner direction
      2026-08-14); tenant orgs keep "clients". Same page, same data — only
@@ -160,8 +165,8 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
         </div>
         <div className="card kpi">
           <span className="kpi-label">{activeKpi}</span>
-          <span className="kpi-value">{data.totalClients - data.archivedClients}</span>
-          <span className="kpi-note">Non-archived entries across all stages</span>
+          <span className="kpi-value">{activeClients}</span>
+          <span className="kpi-note">Non-archived, non-lost entries across all stages</span>
         </div>
         <div className="card kpi">
           <span className="kpi-label">In final stage</span>

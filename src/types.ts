@@ -116,6 +116,15 @@ export interface Client {
   parkingAccess?: string;
   petOnPremises?: boolean;
   preferredServiceLocation?: string;
+  /** Owner request 2026-08-14 — lost + DNC pipeline-status flags. `lost`
+   *  leads are excluded from pipeline counts/KPIs and the pipeline rows; the
+   *  Lost section on the Leads tab lists them. `dnc` is do-not-call: the
+   *  warning banner shows in the record modal and the DNC list. */
+  lost: boolean;
+  lostReason: string;
+  dnc: boolean;
+  dncReason: string;
+  dncDate: string;
   createdAt: string;
   updatedAt: string;
 }
