@@ -1074,6 +1074,46 @@ legend.field-label {
   font-size: 12px;
   color: var(--muted-2);
 }
+/* Owner Dashboard — consolidated "Pipeline overview" card (owner direction
+   2026-08-15, refined during live test): ONE card, exactly five rows, no
+   duplicate figures anywhere on the page. Money rows carry the privacy-eye
+   toggle; count rows carry the View deep-link. Tenants never see this card
+   (they keep the KPI row + "Stage breakdown" grid). */
+.pipeline-overview {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 22px 6px;
+}
+.pipeline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 16px;
+  row-gap: 3px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+.pipeline-row:last-child {
+  border-bottom: 0;
+}
+.pipeline-value {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-left: auto;
+}
+.pipeline-value.lime {
+  color: var(--lime);
+}
+.pipeline-note {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+.pipeline-row .link-btn {
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 /* Four-up KPI row (Finance) */
 .kpi-row-4 {

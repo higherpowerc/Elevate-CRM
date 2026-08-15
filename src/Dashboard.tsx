@@ -107,6 +107,7 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
   if (!data) return <div className="skeleton-block" aria-label="Loading dashboard" />;
 
   const hasClients = data.totalClients > 0;
+  const firstStage = stages.length > 0 ? stages[0] : "";
   const lastStage = stages.length > 0 ? stages[stages.length - 1] : "";
   /* Owner cockpit A (owner direction 2026-08-15) — the OWNER's "Active
      leads" KPI counts ONLY the FIRST stage (the Leads position): the owner's
@@ -176,12 +177,12 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       ? "No invoices this month yet"
       : "Invoices dated this month";
 
-  /* Owner direction 2026-08-15 — the per-stage cards (count + View deep-link)
-     are shared by both workspace kinds; only WHERE they render differs:
-     the OWNER's fold INTO the "Pipeline overview" section (under the KPI
-     cards, no standalone heading) while TENANTS keep the standalone "Stage
-     breakdown" card. Stage names stay positional/rename-safe (whatever the
-     workspace's pipeline says). */
+  /* Owner direction 2026-08-15 (refined during live test) — the shared
+     per-stage cards (count + View deep-link, positional/rename-safe) are now
+     TENANT-ONLY: they feed the standalone "Stage breakdown" card that client
+     accounts keep exactly as before. The OWNER no longer renders them at all
+     — the consolidated five-row "Pipeline overview" card (below) carries
+     every pipeline figure the owner sees. */
   const stageCards = stages.map((stage, i) => (
     <div className="card stage-card" key={`${i}-${stage}`}>
       <div className="stage-top">
@@ -221,12 +222,91 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
           view; the Admin tab carries the full credentials). */}
       {ownerOrg && <ProvisionNotices />}
 
-      <div className="kpi-row">
-        {/* Workspace money KPI: members see their own business's money per
-            their revenue model. The owner's MRR figure is shown as "Sold MRR"
-            directly beside the projected pipeline (below) — a single MRR
-            figure, no duplicate top card. Both respect the privacy eye. */}
-        {!ownerOrg && (
+      {/* Owner direction 2026-08-15 (refined during live test) — the OWNER's
+          Dashboard shows the pipeline exactly ONCE: a single "Pipeline
+          overview" card with exactly five rows (Projected pipeline + Sold MRR
+          money figures with the privacy-eye toggle, then the three bucket
+          counts — Active leads with a Leads deep-link, Onboarding with an
+          Onboarding deep-link, Sold). The old duplicate KPI cards (Projected
+          pipeline / Sold MRR / Active leads / Onboarding) and the per-stage
+          grid are GONE — no pipeline figure appears twice anywhere on the
+          owner's page. TENANT dashboards keep their KPI row (own money card,
+          Projected pipeline, Active clients, In final stage) and their
+          standalone "Stage breakdown" card exactly as before. */}
+      {ownerOrg ? (
+        <div className="card pipeline-overview">
+          <div className="pipeline-row">
+            <span className="kpi-label kpi-label-row">
+              Projected pipeline
+              <button
+                type="button"
+                className="eye-btn"
+                onClick={() => setMoneyHidden((v) => !v)}
+                aria-label={moneyTitle}
+                aria-pressed={moneyHidden}
+                title={moneyTitle}
+              >
+                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+            <span className={`pipeline-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
+            <span className="pipeline-note">{pipelineNote}</span>
+          </div>
+          <div className="pipeline-row">
+            <span className="kpi-label kpi-label-row">
+              Sold MRR
+              <button
+                type="button"
+                className="eye-btn"
+                onClick={() => setMoneyHidden((v) => !v)}
+                aria-label={moneyTitle}
+                aria-pressed={moneyHidden}
+                title={moneyTitle}
+              >
+                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+            <span className={`pipeline-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
+            <span className="pipeline-note">Deal value of sold clients — records in your last pipeline stage</span>
+          </div>
+          <div className="pipeline-row">
+            <span className="kpi-label">{activeKpi}</span>
+            <span className="pipeline-value">{activeClients}</span>
+            {firstStage && (
+              <button
+                className="link-btn"
+                onClick={() => onGoToStage(firstStage)}
+                aria-label={`View ${firstStage} in the pipeline`}
+              >
+                View →
+              </button>
+            )}
+            <span className="pipeline-note">Non-archived, non-lost leads in your first stage</span>
+          </div>
+          <div className="pipeline-row">
+            <span className="kpi-label">Onboarding</span>
+            <span className="pipeline-value">{midStage ? data.stageCounts[midStage] ?? 0 : 0}</span>
+            {midStage && (
+              <button
+                className="link-btn"
+                onClick={() => onGoToStage(midStage)}
+                aria-label={`View ${midStage} in the Onboarding pipeline`}
+              >
+                View →
+              </button>
+            )}
+            <span className="pipeline-note">{onboardingNote}</span>
+          </div>
+          <div className="pipeline-row">
+            <span className="kpi-label">Sold</span>
+            <span className="pipeline-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
+            <span className="pipeline-note">{lastStageNote}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="kpi-row">
+          {/* Workspace money KPI: members see their own business's money per
+              their revenue model. Both respect the privacy eye. */}
           <div className="card kpi">
             <span className="kpi-label kpi-label-row">
               {moneyKpiLabel}
@@ -244,34 +324,9 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
             <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(moneyKpiValue)}</span>
             <span className="kpi-note">{moneyKpiNote}</span>
           </div>
-        )}
-        <div className="card kpi">
-          <span className="kpi-label kpi-label-row">
-            Projected pipeline
-            <button
-              type="button"
-              className="eye-btn"
-              onClick={() => setMoneyHidden((v) => !v)}
-              aria-label={moneyTitle}
-              aria-pressed={moneyHidden}
-              title={moneyTitle}
-            >
-              {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
-            </button>
-          </span>
-          <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
-          <span className="kpi-note">{pipelineNote}</span>
-        </div>
-        {/* Owner cockpit A (owner direction 2026-08-15) — "Sold MRR" sits
-            directly beside the projected pipeline: the deal value of the
-            owner's OWN client records in the terminal/Sold stage (excl. lost
-            + archived). Same figure the Clients tab shows as "Client MRR";
-            shown once, here, so the owner reads both money figures in one
-            glance. */}
-        {ownerOrg && (
           <div className="card kpi">
             <span className="kpi-label kpi-label-row">
-              Sold MRR
+              Projected pipeline
               <button
                 type="button"
                 className="eye-btn"
@@ -283,56 +338,28 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
                 {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </span>
-            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
-            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
+            <span className="kpi-note">{pipelineNote}</span>
           </div>
-        )}
-        <div className="card kpi">
-          <span className="kpi-label">{activeKpi}</span>
-          <span className="kpi-value">{activeClients}</span>
-          <span className="kpi-note">
-            {ownerOrg
-              ? "Non-archived, non-lost leads in your first stage"
-              : "Non-archived, non-lost entries across all stages"}
-          </span>
-        </div>
-        {/* Owner cockpit A (owner direction 2026-08-15) — the owner's third
-            bucket KPI: "Onboarding" shows the MIDDLE stage (between first and
-            terminal) with a deep-link that opens the Onboarding tab
-            pre-filtered to that stage (mirrors the stage-card "View →"
-            pattern). Client accounts keep the original "In final stage"
-            last-stage KPI unchanged. */}
-        {ownerOrg && midStage ? (
           <div className="card kpi">
-            <span className="kpi-label">Onboarding</span>
-            <span className="kpi-value">{data.stageCounts[midStage] ?? 0}</span>
-            <span className="kpi-note">{onboardingNote}</span>
-            <button
-              className="link-btn"
-              onClick={() => onGoToStage(midStage)}
-              aria-label={`View ${midStage} in the Onboarding pipeline`}
-            >
-              View →
-            </button>
+            <span className="kpi-label">{activeKpi}</span>
+            <span className="kpi-value">{activeClients}</span>
+            <span className="kpi-note">Non-archived, non-lost entries across all stages</span>
           </div>
-        ) : (
           <div className="card kpi">
             <span className="kpi-label">In final stage</span>
             <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
             <span className="kpi-note">{lastStageNote}</span>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Owner direction 2026-08-15 — the OWNER workspace's Dashboard has NO
-          standalone "Stage breakdown" card: the per-stage data (each stage's
-          count + its View deep-link, positional/rename-safe) renders INSIDE
-          the "Pipeline overview" section, directly under the KPI cards.
-          TENANT dashboards keep the standalone "Stage breakdown" card exactly
-          as before (same heading, same stage grid). */}
-      {ownerOrg ? (
-        <div className="stage-grid owner-pipeline-stages">{stageCards}</div>
-      ) : (
+      {/* Owner direction 2026-08-15 (refined during live test) — the OWNER
+          renders no standalone stage grid: the five-row Pipeline overview card
+          above carries every pipeline figure (it replaces the per-stage
+          cards). TENANT dashboards keep the standalone "Stage breakdown" card
+          exactly as before (same heading, same grid). */}
+      {ownerOrg ? null : (
         <>
           <h2 className="section-title">Stage breakdown</h2>
           <div className="stage-grid">{stageCards}</div>
