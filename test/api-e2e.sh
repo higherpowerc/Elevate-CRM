@@ -3103,7 +3103,7 @@ rm -f "$JARA32" "$JARB32"
 echo "  ✓ 32h: test clients, isolation tenants and provisioned workspaces removed"
 echo ""
 
-echo "== 33. MRR + vertical revenue dashboards (owner request 2026-08-14) =="
+echo "== 33. MRR + vertical revenue dashboards (owner request 2026-08-14/15 — Client MRR = sold-stage deal values) =="
 THIS_MONTH=$(python3 -c "import datetime;print(datetime.date.today().strftime('%Y-%m-01'))")
 LAST_MONTH=$(python3 -c "import datetime;d=datetime.date.today();print((d.replace(day=1)-datetime.timedelta(days=1)).strftime('%Y-%m-15'))")
 JAR33=$(mktemp)
@@ -3143,20 +3143,100 @@ S=$(code -b "$JAR33" "$BASE/api/dashboard")
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr'] - 139.5) < 0.001, d.get('clientMrr')
+assert 'clientMrr' in d and 'orgCount' in d, "owner must see clientMrr + orgCount"
 assert d['orgCount'] >= 4, d.get('orgCount')  # owner + med spa + sales + plain (plus any earlier leftovers)
 assert 'salesThisMonth' in d and 'subscriptionsTotal' in d and 'revenueModel' in d
+# Owner direction 2026-08-15: clientMrr is the SUM of the owner's OWN client
+# records' deal values in the terminal/"Sold" stage (lost/archived excluded).
+# Earlier sections (3g-3 / 32) already leave real sold records, so capture the
+# baseline and assert deltas. Billing amounts must NOT be part of the figure.
+open('/tmp/mrr_base33', 'w').write(repr(d['clientMrr']))
 open('/tmp/owner_before33.json', 'w').write(json.dumps({'salesThisMonth': d['salesThisMonth'], 'subscriptionsTotal': d['subscriptionsTotal']}))
-print("  ✓ 33h: owner dashboard clientMrr=139.50 (99.50+40+0), orgCount present, own money keys too")
+print("  ✓ 33h: owner dashboard clientMrr baseline=%s (deal-value sum, NOT billing amounts), orgCount present, own money keys too" % d['clientMrr'])
 PY
+MRR_BASE33=$(cat /tmp/mrr_base33)
 S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
   -d '{"monthlySubscriptionAmount":59.50}' "$BASE/api/admin/orgs/$MED33")
-check "33h1: owner PATCH med spa amount → 59.50" 200 "$S"
+check "33h1: owner PATCH med spa BILLING amount → 59.50 (Phase 5 prep, still works)" 200 "$S"
 S=$(code -b "$JAR33" "$BASE/api/dashboard")
-grep -q '"clientMrr":99.5' /tmp/body.json && echo "  ✓ 33h2: clientMrr updated to 99.50 (59.50+40 — one change reflects)" || echo "  ✗ 33h2: $(cat /tmp/body.json)"
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
+print("  ✓ 33h2: PATCHing a billing amount does NOT change clientMrr (still %s)" % os.environ['MRR_BASE33'])
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h2: billing amount does not feed MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h2: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# Deal-value MRR: only terminal-stage, non-lost, non-archived owner records count.
+code -b "$JAR33" "$BASE/api/settings" > /dev/null
+TERM33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
+S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"MRR Deal Co","clientType":"commercial","contactName":"D","email":"deal33@x.com","dealValue":250,"stage":"Leads"}' "$BASE/api/clients")
+check "33h3: owner creates client record dealValue=250 in a non-terminal stage" 201 "$S"
+MRRCLI33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
+print("  ✓ 33h4: non-terminal-stage deal value excluded from clientMrr (still %s)" % os.environ['MRR_BASE33'])
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h4: non-terminal deal value excluded from MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h4: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\"}" "$BASE/api/clients/$MRRCLI33")
+check "33h5: owner moves record into the terminal stage ($TERM33)" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 250)) < 0.001, d.get('clientMrr')
+print("  ✓ 33h6: clientMrr=%s — terminal-stage deal value counts (baseline+250)" % d['clientMrr'])
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h6: sold-stage deal value included in MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h6: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\",\"lost\":true,\"lostReason\":\"Deal fell through\"}" "$BASE/api/clients/$MRRCLI33")
+check "33h7: owner marks the sold record lost" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
+print("  ✓ 33h8: lost sold record excluded from clientMrr")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h8: lost record excluded from MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h8: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\",\"lost\":false}" "$BASE/api/clients/$MRRCLI33")
+check "33h9: owner un-losts the record" 200 "$S"
+S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\",\"archived\":true}" "$BASE/api/clients/$MRRCLI33")
+check "33h10: owner archives the sold record" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
+print("  ✓ 33h11: archived sold record excluded from clientMrr")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h11: archived record excluded from MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h11: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\",\"archived\":false}" "$BASE/api/clients/$MRRCLI33")
+check "33h12: owner un-archives the record" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 250)) < 0.001, d.get('clientMrr')
+print("  ✓ 33h13: clientMrr back to baseline+250 after un-archive")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h13: un-archive restores the value in MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h13: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
   -d '{"monthlySubscriptionAmount":99.50}' "$BASE/api/admin/orgs/$MED33")
-check "33h3: owner restores med spa amount → 99.50" 200 "$S"
+check "33h14: owner restores med spa BILLING amount → 99.50" 200 "$S"
 S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
   -d '{"monthlySubscriptionAmount":-5}' "$BASE/api/admin/orgs/$MED33")
 check "33i: negative monthly amount rejected" 400 "$S"
@@ -3203,11 +3283,12 @@ S=$(code -b "$JAR33" "$BASE/api/dashboard")
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr'] - 139.5) < 0.001, d.get('clientMrr')
+base = float(open('/tmp/mrr_base33').read())
+assert abs(d['clientMrr'] - (base + 250)) < 0.001, d.get('clientMrr')
 before = json.load(open('/tmp/owner_before33.json'))
 assert d['salesThisMonth'] == before['salesThisMonth'], (d['salesThisMonth'], before['salesThisMonth'])
 assert d['subscriptionsTotal'] == before['subscriptionsTotal'], (d['subscriptionsTotal'], before['subscriptionsTotal'])
-print("  ✓ 33n3: owner MRR + own totals untouched by tenant activity (isolation)")
+print("  ✓ 33n3: owner MRR (baseline+250) + own totals untouched by tenant activity (isolation)")
 PY
 S=$(code -b "$JARMED" -X PATCH -H 'Content-Type: application/json' \
   -d '{"monthlySubscriptionAmount":1}' "$BASE/api/admin/orgs/$MED33")
@@ -3254,7 +3335,7 @@ echo "-- 33 bundle surface: MRR/revenue strings in the shipped bundle --"
 bun run build >/dev/null 2>&1
 NEWEST_JS33=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS33" ]; then
-  for STR33 in "Client MRR" "Sales this month" "Subscriptions" "Revenue model" "Monthly amount" "Save revenue model"; do
+  for STR33 in "Client MRR" "Sales this month" "Subscriptions" "Revenue model" "Monthly billing amount" "Save revenue model"; do
     if grep -Fq "$STR33" "$NEWEST_JS33"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR33\""
     else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR33\""; fi
   done
@@ -3265,7 +3346,7 @@ echo "-- 33zb. Cleanup == "
 code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$MED33" > /dev/null
 code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$SAL33" > /dev/null
 code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$GEN33" > /dev/null
-rm -f "$JAR33" "$JARMED" "$JARSAL" /tmp/owner_before33.json
+rm -f "$JAR33" "$JARMED" "$JARSAL" /tmp/owner_before33.json /tmp/mrr_base33
 echo "  ✓ 33zb: MRR test orgs removed"
 
 echo "== 34. Global privacy eye (owner request 2026-08-14) =="

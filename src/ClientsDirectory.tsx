@@ -51,10 +51,11 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
     customIntakeGroups: [],
   });
   const [error, setError] = useState<string | null>(null);
-  /* Owner request 2026-08-14 — the owner's Clients tab (sold-customer
-     directory) leads with the Client MRR KPI: sum of what every client
-     account pays per month. The dashboard endpoint returns clientMrr ONLY
-     for admin sessions, so members never fetch it. */
+  /* Owner request 2026-08-14/15 — the owner's Clients tab (sold-customer
+     directory) leads with the Client MRR KPI: sum of the owner's own client
+     records' deal values in the terminal/"Sold" stage (paying clients sold),
+     excluding lost and archived records. The dashboard endpoint returns
+     clientMrr ONLY for admin sessions, so members never fetch it. */
   const [dash, setDash] = useState<DashboardData | null>(null);
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
@@ -251,7 +252,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
             <span className={`kpi-value lime${moneyHidden ? " money-blur" : ""}`}>
               {money(dash?.clientMrr ?? 0)}
             </span>
-            <span className="kpi-note">Monthly subscription revenue from all client accounts</span>
+            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
           </div>
         </div>
       )}

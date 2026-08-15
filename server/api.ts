@@ -2048,11 +2048,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       clientName: r.client_name ?? "",
     }));
 
-    /* Owner request 2026-08-14 — MRR + vertical revenue dashboards.
+    /* Owner request 2026-08-14/15 — MRR + vertical revenue dashboards.
        Two distinct workspaces, one endpoint:
-         OWNER (role=admin): clientMrr = SUM of every client account's
-           monthly_subscription_amount (what the owner charges them) +
-           orgCount (client-account count for the "+ New client" total).
+         OWNER (role=admin): clientMrr = SUM of the OWNER's own client
+           records' deal values (clients.deal_value) in the terminal/last
+           pipeline stage ("Sold" for the owner — positionally detected,
+           renamed-safe), excluding lost and archived records — the total
+           for paying clients sold. orgCount = client-account count for the
+           "+ New client" total. The per-account billing amount
+           (orgs.monthly_subscription_amount) is Phase 5 billing prep only
+           and does NOT feed MRR (owner direction 2026-08-15).
          ANY ORG: its OWN business money — salesThisMonth = SUM of this
            org's invoices dated in the current calendar month (due_date,
            the settable date; invoices without a date never count),
@@ -2098,11 +2103,25 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       subscriptionsTotal,
       revenueModel,
     };
-    // Owner-only MRR + account count (members never receive these keys).
+    // Owner-only Client MRR + account count (members never receive these keys).
+    // Owner direction 2026-08-15: Client MRR = SUM of deal values on the
+    // owner's OWN client records in the terminal (last/"Sold") pipeline stage,
+    // excluding lost and archived records — "total for paying clients sold".
+    // The per-account billing amount (orgs.monthly_subscription_amount) no
+    // longer feeds MRR (Phase 5 billing prep only).
     if (auth.role === "admin") {
-      const mrr = db
-        .query("SELECT COALESCE(SUM(monthly_subscription_amount), 0) AS v FROM orgs")
-        .get() as { v: number };
+      const mrrOrg = getOrg(orgId);
+      const mrrStages = mrrOrg ? parseStages(mrrOrg.stages) : [...DEFAULT_STAGES];
+      const terminalStage = mrrStages.length > 0 ? mrrStages[mrrStages.length - 1] : "";
+      const mrr = terminalStage
+        ? (db
+            .query(
+              `SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients
+               WHERE org_id = ? AND lost = 0 AND archived = 0
+                 AND LOWER(TRIM(stage)) = LOWER(TRIM(?))`,
+            )
+            .get(orgId, terminalStage) as { v: number })
+        : { v: 0 };
       const orgsAgg = db.query("SELECT COUNT(*) AS c FROM orgs").get() as { c: number };
       resp.clientMrr = mrr.v;
       resp.orgCount = orgsAgg.c;

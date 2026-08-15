@@ -138,9 +138,11 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
   const moneyTitle = moneyHidden ? "Show amounts" : "Hide amounts";
   const blur = (on: boolean) => (on ? " money-blur" : "");
 
-  /* Owner request 2026-08-14 — money KPI by workspace:
-       OWNER  → "Client MRR" = SUM of what every client account pays per month
-                (the sales cockpit figure for selling the CRM).
+  /* Owner request 2026-08-14/15 — money KPI by workspace:
+       OWNER  → "Client MRR" = SUM of the owner's own client records' deal
+                values in the terminal/"Sold" stage (paying clients sold),
+                excluding lost and archived records (owner direction
+                2026-08-15 — the sales cockpit figure for selling the CRM).
        MEMBER → their OWN business's money: "Sales this month" (invoices dated
                 this calendar month) or "Subscriptions" (their clients'
                 recurring monthly amounts), per the org's revenue model. */
@@ -208,7 +210,7 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
               </button>
             </span>
             <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
-            <span className="kpi-note">Monthly subscription revenue from all client accounts</span>
+            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
           </div>
         ) : (
           <div className="card kpi">
