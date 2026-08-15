@@ -3,6 +3,7 @@ import { api, type TaskInput } from "./api";
 import { fmtDate, type Client, type Task } from "./types";
 import TaskModal from "./TaskModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
+import { usePii, blurPii } from "./pii";
 
 type Filter = "open" | "done" | "all";
 
@@ -24,6 +25,8 @@ function dueTone(t: Task): "overdue" | "today" | "" {
 }
 
 export default function Tasks() {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -175,7 +178,7 @@ export default function Tasks() {
           aria-label="New task title"
           maxLength={200}
         />
-        <select value={clientId} onChange={(e) => setClientId(e.target.value)} aria-label="Link to client">
+        <select className={pii ? "pii-blur" : undefined} value={clientId} onChange={(e) => setClientId(e.target.value)} aria-label="Link to client">
           <option value="">No client</option>
           {clients.map((c) => (
             <option key={c.id} value={c.id}>
@@ -264,8 +267,8 @@ export default function Tasks() {
                 </button>
                 <div className="task-body">
                   <div className="task-title">
-                    <span className="task-title-text">{t.title}</span>
-                    {t.clientName && <span className="chip">{t.clientName}</span>}
+                    <span className={`task-title-text${blurPii(pii)}`}>{t.title}</span>
+                    {t.clientName && <span className={`chip${blurPii(pii)}`}>{t.clientName}</span>}
                   </div>
                   <div className="task-meta">
                     {t.dueDate && (

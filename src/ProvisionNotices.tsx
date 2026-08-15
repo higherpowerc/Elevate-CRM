@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { fmtDate, type ProvisionEvent } from "./types";
+import { usePii } from "./pii";
 
 interface Props {
   /** Optional callback when the owner wants to open the provisioned account
@@ -17,6 +18,8 @@ interface Props {
  * owner dismisses it, so it survives a refresh until acted on.
  */
 export default function ProvisionNotices({ onViewAccount }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [provisions, setProvisions] = useState<ProvisionEvent[] | null>(null);
   const [dismissing, setDismissing] = useState<number | null>(null);
 
@@ -41,7 +44,7 @@ export default function ProvisionNotices({ onViewAccount }: Props) {
           <div className="prov-notice-body">
             <span className="chip chip-owner">New — auto-provisioned from sold lead</span>
             <p className="prov-notice-text">
-              <strong>{p.clientName}</strong> → new workspace <strong>{p.orgName}</strong>
+              <strong className={pii ? "pii-blur" : undefined}>{p.clientName}</strong> → new workspace <strong className={pii ? "pii-blur" : undefined}>{p.orgName}</strong>
               {onViewAccount && (
                 <button className="link-btn prov-open" onClick={() => onViewAccount(p.orgId)}>
                   Open account →

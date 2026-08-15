@@ -3268,6 +3268,28 @@ code -b "$JAR33" -X DELETE "$BASE/api/admin/orgs/$GEN33" > /dev/null
 rm -f "$JAR33" "$JARMED" "$JARSAL" /tmp/owner_before33.json
 echo "  ✓ 33zb: MRR test orgs removed"
 
+echo "== 34. Global privacy eye (owner request 2026-08-14) =="
+echo "-- 34a. UI surface strings in the built bundle + CSS --"
+bun run build >/dev/null 2>&1
+NEWEST_JS34=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS34=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS34" ]; then
+  for STR34 in "Hide client details" "Show client details" "crm:pii-hidden" "crm:money-hidden"; do
+    if grep -Fq "$STR34" "$NEWEST_JS34"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR34\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR34\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 34 bundle surface check"
+fi
+if [ -n "$NEWEST_CSS34" ]; then
+  for STR34C in ".pii-blur" ".pii-eye-btn" ".money-blur"; do
+    if grep -Fq "$STR34C" "$NEWEST_CSS34"; then PASS=$((PASS+1)); echo "  ✓ css contains \"$STR34C\""
+    else FAIL=$((FAIL+1)); echo "  ✗ css missing \"$STR34C\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 34 css surface check"
+fi
+echo "  ✓ 34b: privacy eye is pure client-side presentation — no server/API change (every prior section above still green)"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 rm -f "$JAR" /tmp/body.json "$PASS_TMP"

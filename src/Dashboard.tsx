@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { stageTone, money, fmtDate, type DashboardData, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
+import { usePii, blurPii } from "./pii";
 import ProvisionNotices from "./ProvisionNotices";
 
 interface Props {
@@ -74,6 +75,11 @@ function EyeOffIcon() {
 export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNewClient }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /* Global privacy eye (2026-08-14 owner request): blur client/company names
+     on this page too (task overview rows + Recently updated). The eye itself
+     lives in the top nav (App.tsx); this just consumes its state. */
+  const pii = usePii();
 
   /* Privacy eye (2026-08-14 owner request): blur/hide every money figure on
      the dashboard (the projected-pipeline KPI and the Deal column of Recently
@@ -309,10 +315,10 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
                 const due = dueInfo(t.dueDate);
                 return (
                   <li className="task-upcoming-item" key={t.id}>
-                    <span className="task-upcoming-title" title={t.title}>
+                    <span className={`task-upcoming-title${blurPii(pii)}`} title={t.title}>
                       {t.title}
                     </span>
-                    {t.clientName && <span className="chip">{t.clientName}</span>}
+                    {t.clientName && <span className={`chip${blurPii(pii)}`}>{t.clientName}</span>}
                     <span className={`task-upcoming-due${due.tone ? ` ${due.tone}` : ""}`}>{due.label}</span>
                   </li>
                 );
@@ -354,12 +360,12 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
               {data.recentClients.map((c) => (
                 <tr key={c.id}>
                   <td className="cell-strong">
-                    <span className="cell-name" title={c.companyName}>
+                    <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                       {c.companyName}
                     </span>
                   </td>
                   <td className="cell-muted">
-                    <span className="cell-name" title={c.contactName || undefined}>
+                    <span className={`cell-name${blurPii(pii)}`} title={c.contactName || undefined}>
                       {c.contactName || "—"}
                     </span>
                   </td>

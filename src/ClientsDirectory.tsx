@@ -3,6 +3,7 @@ import { api, type ClientInput } from "./api";
 import { money, type Client, type CustomFieldDef, type DashboardData, type Stage } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { ServiceChips } from "./bits";
+import { usePii, blurPii } from "./pii";
 import ClientModal from "./ClientModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 
@@ -30,6 +31,9 @@ interface Props {
  *  the same /api/clients (per-org scoped) as the Leads pipeline tab —
  *  filtering happens client-side. */
 export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur client
+     names/addresses/contact details in the directory rows. */
+  const pii = usePii();
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Local copy of the tenant's stages, refreshed from the settings endpoint
@@ -303,7 +307,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
                     <td className="cell-strong" data-label="Client">
                       <div className="cell-company">
-                        <span className="cell-name" title={c.companyName}>
+                        <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                           {c.companyName}
                         </span>
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
@@ -315,16 +319,16 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
                       </div>
                       {c.industry && <div className="cell-sub">{c.industry}</div>}
                       {fullAddress && (
-                        <div className="cell-sub addr-line" title={fullAddress}>
+                        <div className={`cell-sub addr-line${blurPii(pii)}`} title={fullAddress}>
                           {fullAddress}
                         </div>
                       )}
                     </td>
                     <td data-label="Contact">
                       <div className="cell-contact">
-                        {c.contactName || "—"}
-                        {c.email && <div className="cell-sub" title={c.email}>{c.email}</div>}
-                        {c.phone && <div className="cell-sub" title={c.phone}>{c.phone}</div>}
+                        <span className={pii ? "pii-blur" : undefined}>{c.contactName || "—"}</span>
+                        {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
+                        {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
                       </div>
                     </td>
                     <td data-label="Services">

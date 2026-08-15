@@ -4,6 +4,7 @@ import { fmtDate, type Org, type RevenueModel } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
+import { usePii, blurPii } from "./pii";
 
 interface Props {
   /** The admin's own org id — the owner workspace is never deletable. */
@@ -32,6 +33,8 @@ function generatePassword(): string {
 }
 
 export default function Admin({ ownerOrgId, onViewAccount }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Org whose "View account" is in flight (shows a spinner on that row). */
@@ -247,7 +250,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
             <div className="alert alert-success" role="status">
               <strong>Account created</strong>
               <p className="created-line">
-                <b>{created.orgName}</b> · {created.email}
+                <b className={pii ? "pii-blur" : undefined}>{created.orgName}</b> · <span className={pii ? "pii-blur" : undefined}>{created.email}</span>
               </p>
               <p className="created-line">
                 Business type: <b>{created.verticalLabel}</b>
@@ -383,7 +386,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                     <tr key={o.id}>
                       <td className="cell-strong" data-label="Clients">
                         <div className="cell-company">
-                          <span className="cell-name" title={o.name}>
+                          <span className={`cell-name${blurPii(pii)}`} title={o.name}>
                             {o.name}
                           </span>
                           {isOwner && <span className="chip chip-owner">owner</span>}
@@ -565,10 +568,10 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
             </div>
             <div className="confirm-body">
               <p className="confirm-delete-msg">
-                <strong>{resetResult.orgName}</strong> has a new temporary password.
+                <strong className={pii ? "pii-blur" : undefined}>{resetResult.orgName}</strong> has a new temporary password.
               </p>
               <p className="created-line">
-                Login: <code>{resetResult.email}</code>
+                Login: <code className={pii ? "pii-blur" : undefined}>{resetResult.email}</code>
               </p>
               <p className="created-line">
                 Temp password: <code>{resetResult.password}</code>

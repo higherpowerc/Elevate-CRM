@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { INVOICE_STATUSES, invoiceStatusLabel, type Client, type Invoice, type InvoiceStatus } from "./types";
 import type { InvoiceInput } from "./api";
 import SearchableSelect from "./SearchableSelect";
+import { usePii } from "./pii";
 
 interface Props {
   invoice: Invoice;
@@ -12,6 +13,8 @@ interface Props {
 }
 
 export default function InvoiceModal({ invoice, clients, busy, onClose, onSave }: Props) {
+  /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
+  const pii = usePii();
   const [clientId, setClientId] = useState(invoice.clientId === null ? "" : String(invoice.clientId));
   const [amount, setAmount] = useState(invoice.amount > 0 ? String(invoice.amount) : "");
   const [status, setStatus] = useState<InvoiceStatus>(invoice.status);
@@ -66,6 +69,7 @@ export default function InvoiceModal({ invoice, clients, busy, onClose, onSave }
           <label className="field">
             <span className="field-label">Client</span>
             <SearchableSelect
+              piiBlur={pii}
               value={clientId}
               onChange={setClientId}
               options={clients.map((c) => ({
