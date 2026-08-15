@@ -3936,7 +3936,7 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col fallback colgroup missing from $NEWEST_JS39"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&I\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:I\.jsxDEV\(n3,\{stage:' "$NEWEST_JS39" && ! grep -Fq 'jsxDEV("td",{"data-label":"Stage",children:I.jsxDEV(n3,{stage:' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9$]+&&I\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:I\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39" && ! grep -Eq 'jsxDEV\("td",\{"data-label":"Stage",children:I\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC Stage cell is owner-gated in the built rows (hidden on owner Leads, kept for tenants)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Lost/DNC Stage cell missing from $NEWEST_JS39"
@@ -3946,6 +3946,162 @@ else
 fi
 echo "-- 39c. Done =="
 echo "  ✓ 39: owner Onboarding Next-action = Send Agreements only; owner Leads Stage column removed (tenant views untouched)"
+
+echo "== 40. Owner cockpit refinements 3 (owner directions 2026-08-15): Dashboard stage fold + Admin owner-row filter + billing-model removal =="
+echo "-- 40a. Owner Dashboard: stage data folded INTO Pipeline overview (standalone Stage breakdown card removed) =="
+# Owner direction 2026-08-15 — the OWNER workspace's Dashboard has NO
+# standalone "Stage breakdown" card: the per-stage data (each stage's count +
+# its View deep-link, positional/rename-safe) renders INSIDE the "Pipeline
+# overview" section, directly under the KPI cards (KPI cards unchanged: Active
+# leads, Projected pipeline, Sold MRR, Onboarding). TENANT dashboards keep the
+# standalone "Stage breakdown" card exactly as before (same heading, same grid).
+bun run build >/dev/null 2>&1
+NEWEST_JS40=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS40" ]; then
+  if grep -Fq 'owner-pipeline-stages' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner stage cards render inside Pipeline overview (owner-pipeline-stages marker present)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: owner-pipeline-stages missing from $NEWEST_JS40"
+  fi
+  if grep -Fq 'Stage breakdown' "$NEWEST_JS40" && grep -Fq 'in the pipeline' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: tenant Stage breakdown card + per-stage View deep-links intact"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant stage-breakdown card or View deep-link missing from $NEWEST_JS40"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 40a bundle check"
+fi
+if grep -Fq '{ownerOrg ? (' src/Dashboard.tsx && grep -Fq 'owner-pipeline-stages' src/Dashboard.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Dashboard owner/tenant stage-card branch present (owner folds under the KPI cards)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Dashboard owner/tenant stage branch missing in src/Dashboard.tsx"
+fi
+if python3 - <<'PY' 2>"$PASS_TMP"
+src = open('src/Dashboard.tsx').read()
+i = src.index('owner-pipeline-stages')
+start = src.rindex('{ownerOrg ? (', 0, i)
+end = src.index(') : (', i)
+owner_branch = src[start:end]
+assert 'owner-pipeline-stages' in owner_branch
+assert 'Stage breakdown' not in owner_branch, 'owner branch must NOT render the standalone Stage breakdown heading'
+cards_start = src.index('const stageCards = stages.map')
+cards_end = src.index('\n  return (', cards_start)
+cards_block = src[cards_start:cards_end]
+assert 'in the pipeline' in cards_block, 'shared stage cards keep the View deep-link'
+tenant_start = src.index(') : (', i)
+tenant_end = src.index('Task overview', tenant_start)
+tenant_branch = src[tenant_start:tenant_end]
+assert 'Stage breakdown' in tenant_branch, 'tenant branch must keep the standalone Stage breakdown heading'
+assert 'stage-grid' in tenant_branch
+print('  ✓ source: owner branch = stage cards under Pipeline overview (no heading); tenant branch keeps Stage breakdown card')
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 40a2: stage-card branch structure correct (owner folds, tenant keeps heading)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 40a2: stage-card branch structure wrong"; cat "$PASS_TMP"
+fi
+echo "-- 40b. Admin tab: the owner's own workspace hidden from the client-account list =="
+# Owner direction 2026-08-15 — the Admin client-account list is for CLIENT
+# workspaces: the owner org is filtered out of the table rows, the
+# "N workspaces" count, and (with the row gone) its View-account / delete /
+# edit affordances. The server API /api/admin/orgs is UNCHANGED (still the
+# full list); the filter is UI-side only.
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "40b: server /api/admin/orgs still returns the full list" 200 "$S"
+if python3 - "$DEFAULT_ORG_ID" <<'PY' 2>"$PASS_TMP"
+import json, sys
+d = json.load(open('/tmp/body.json'))
+ids = [o['id'] for o in d['orgs']]
+assert int(sys.argv[1]) in ids, 'server must still return the owner org (UI filters, API unchanged)'
+print('  ✓ server /api/admin/orgs unchanged — owner org (%s) still in the list' % sys.argv[1])
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 40b: server API unchanged (owner org still returned; filter is UI-side)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 40b: server API no longer returns the owner org"; cat "$PASS_TMP"
+fi
+if grep -Fq 'const visibleOrgs = orgs' src/Admin.tsx && grep -Fq 'o.id !== ownerOrgId' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Admin filters the owner org out (visibleOrgs = orgs minus owner)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Admin owner-org filter missing from src/Admin.tsx"
+fi
+if grep -Fq 'visibleOrgs.length' src/Admin.tsx && grep -Fq 'visibleOrgs.length === 0' src/Admin.tsx && grep -Fq 'visibleOrgs.map' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: filtered list drives the workspaces count, empty state and table rows"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: visibleOrgs not wired to count/empty/rows in src/Admin.tsx"
+fi
+if ! grep -Fq 'chip-owner' src/Admin.tsx && ! grep -Fq 'The owner workspace cannot be deleted' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner-row chip + owner-row billing/action branches removed (row itself filtered out)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-row UI remnants still in src/Admin.tsx"
+fi
+if [ -n "$NEWEST_JS40" ]; then
+  if grep -Fq 'View account' "$NEWEST_JS40" && grep -Fq 'Reset password' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: tenant-row View-account / reset / delete affordances intact"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant-row affordances missing from $NEWEST_JS40"
+  fi
+fi
+echo "-- 40c. Admin tab: per-account Billing-model revenue select removed (billing amount kept) =="
+# Owner direction 2026-08-15 — one product, subscription-based: the Admin
+# per-account "Sales"/"Subscriptions" revenue-model select is gone, along with
+# its local state and revenueModel in the adminUpdateOrg payload. The
+# billing-amount input stays (Phase 5 billing prep). Server, vertical seeding
+# and the TENANT revenue toggle in Settings are untouched.
+if ! grep -Fq 'billing-model' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Admin has no billing-model select"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: billing-model select still present in src/Admin.tsx"
+fi
+if grep -Fq 'adminUpdateOrg(o.id, { monthlySubscriptionAmount: amount })' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Admin save sends only { monthlySubscriptionAmount } (no revenueModel)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: adminUpdateOrg payload wrong in src/Admin.tsx"
+fi
+if grep -Fq 'billing-amount' src/Admin.tsx && grep -Fq 'Billing $' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: billing-amount input kept (Phase 5 prep); column header reads 'Billing $'"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: billing-amount input or Billing header missing from src/Admin.tsx"
+fi
+if ! grep -Fq 'revenueModel' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: no revenueModel references remain in Admin"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: revenueModel still referenced in src/Admin.tsx"
+fi
+if ! grep -Fq '.billing-model' src/styles.css && grep -Fq '.billing-amount' src/styles.css; then
+  PASS=$((PASS+1)); echo "  ✓ css: dead .billing-model rules removed; .billing-amount white-on-black rule kept"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ css: .billing-model rules still present in src/styles.css"
+fi
+if [ -n "$NEWEST_JS40" ]; then
+  if ! grep -Fq 'billing-model' "$NEWEST_JS40" && grep -Fq 'billing-amount' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: billing-model select gone from the shipped bundle; billing-amount input kept"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: billing-model/billing-amount mismatch in $NEWEST_JS40"
+  fi
+  if grep -Fq 'Billing $' "$NEWEST_JS40" && ! grep -Fq 'Billing $ / model' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Admin billing column header updated ('Billing $', no '/ model')"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: Admin billing header wrong in $NEWEST_JS40"
+  fi
+fi
+echo "-- 40d. Tenant revenue toggle + server untouched =="
+# The tenant-facing revenue model (how a CLIENT's own business makes money) is
+# unchanged: Settings still ships the toggle strings and the server still
+# accepts revenueModel on /api/settings (tenant) — only the OWNER's Admin
+# selector is gone.
+if grep -Fq 'Save revenue model' src/Settings.tsx && grep -Fq 'revenueModel' src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: tenant revenue-model toggle intact in src/Settings.tsx (untouched)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: tenant revenue toggle missing from src/Settings.tsx"
+fi
+if grep -Fq 'revenueModel' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: server still accepts revenueModel (tenant settings unchanged)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: server revenueModel handling missing from server/api.ts"
+fi
+echo "-- 40e. Done == "
+echo "  ✓ 40: Dashboard stage fold + Admin owner-row filter + billing-model removal verified (owner-workspace only)"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 

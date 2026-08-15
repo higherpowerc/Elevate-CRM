@@ -108,10 +108,12 @@ export const api = {
     }),
   adminDeleteOrg: (id: number) =>
     request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
-  /* Owner request 2026-08-14 — owner edits a client account's billing:
-     the monthly subscription amount they pay (USD >= 0) and/or their revenue
-     model ("sales" | "subscription"). Owner-only; members get 403. */
-  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; revenueModel?: RevenueModel }) =>
+  /* Owner request 2026-08-14 — owner edits a client account's billing: the
+     monthly subscription amount they pay (USD >= 0). Owner direction
+     2026-08-15 — the per-account revenue-model selector is REMOVED (one
+     product, subscription-based): adminUpdateOrg sends only the billing
+     amount. Owner-only; members get 403. */
+  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number }) =>
     request<{ ok: true; org: { id: number; name: string } }>(`/api/admin/orgs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
