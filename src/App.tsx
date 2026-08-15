@@ -395,7 +395,6 @@ export default function App() {
             onGoToStage={goToStage}
             stages={stages}
             ownerOrg={isOwnerOrg}
-            onNewClient={() => setView("admin")}
           />
         ) : view === "leads" ? (
           /* Owner request 2026-08-15 — the owner's Leads tab scopes to the

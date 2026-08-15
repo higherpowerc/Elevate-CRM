@@ -22,11 +22,6 @@ interface Props {
    *  "client(s)". Tenant orgs (role=member) keep "clients" everywhere.
    *  Purely presentational; data and stages are untouched. */
   ownerOrg?: boolean;
-  /** Owner request 2026-08-14 — the "+ New client" affordance on the owner
-   *  dashboard provisions a client ACCOUNT (the owner's Clients = the orgs
-   *  paying for the CRM), so the button routes to the Admin tab. The client
-   *  account count renders underneath it. */
-  onNewClient?: () => void;
 }
 
 /** Local YYYY-MM-DD — the same convention the task date inputs store
@@ -72,7 +67,7 @@ function EyeOffIcon() {
   );
 }
 
-export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNewClient }: Props) {
+export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -193,21 +188,6 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
             {data.archivedClients > 0 && ` · ${data.archivedClients} archived`}
           </p>
         </div>
-        {/* Owner request 2026-08-14 — the owner's dashboard carries the
-            "+ New client" affordance (provision a client ACCOUNT → Admin tab)
-            with the client-account count underneath. */}
-        {ownerOrg && (
-          <div className="page-actions page-actions-col">
-            {onNewClient && (
-              <button className="btn btn-primary" onClick={onNewClient}>
-                + New client
-              </button>
-            )}
-            <span className="page-actions-sub">
-              {data.orgCount ?? 0} client account{(data.orgCount ?? 0) === 1 ? "" : "s"}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* 3g-3 — owner-only: sold-lead auto-provisioning notices (dismissed on

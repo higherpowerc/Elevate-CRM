@@ -3615,6 +3615,91 @@ code -b "$JAR36" -X DELETE "$BASE/api/admin/orgs/$T36_ORG" > /dev/null
 code -b "$JAR36" -X DELETE "$BASE/api/clients/$A36_ID" > /dev/null
 rm -f "$JAR36" "$JART36" /tmp/s36-settings.json
 echo "  ✓ 36f: agreement test client + tenant org removed"
+echo "== 37. Owner-workspace UI fixes (2026-08-15) =="
+echo "-- 37a. Admin tab: form above, table full width, no control overlap =="
+# Owner bug report 2026-08-15 (re-reported): the old .admin-grid was a
+# 2-column layout (380px create-form column + 1fr table) with table-layout:
+# fixed and no explicit column widths, so the 6 dense columns squeezed the
+# billing controls and action buttons into overlap at ~1280px. The fix is
+# CSS-only (single-column restack + explicit widths + wrap guards), so the
+# checks lock the built CSS/JS surface.
+NEWEST_JS37=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS37=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_CSS37" ]; then
+  if ! grep -Fq "380px" "$NEWEST_CSS37"; then
+    PASS=$((PASS+1)); echo "  ✓ css: Admin grid no longer uses a 380px side column (form now above the table)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ css: 380px Admin side column still present in $NEWEST_CSS37"
+  fi
+  if grep -Fq "admin-grid{display:grid;grid-template-columns:1fr" "$NEWEST_CSS37"; then
+    PASS=$((PASS+1)); echo "  ✓ css: .admin-grid is single-column (form above, table full width below)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ css: .admin-grid single-column rule missing from $NEWEST_CSS37"
+  fi
+  if grep -Fq "admin-table .row-actions,.admin-table .admin-billing-edit{flex-wrap:wrap}" "$NEWEST_CSS37"; then
+    PASS=$((PASS+1)); echo "  ✓ css: Admin actions + billing controls wrap inside their fixed columns (no overlap)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ css: Admin wrap guards missing from $NEWEST_CSS37"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 37 admin-layout check"
+fi
+if [ -n "$NEWEST_JS37" ]; then
+  if grep -Fq 'width:"7%"' "$NEWEST_JS37" && grep -Fq 'width:"25%"' "$NEWEST_JS37" && grep -Fq 'width:"9%"' "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Admin table has explicit column widths (compact numeric, wide billing/actions)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: Admin colgroup widths missing from $NEWEST_JS37"
+  fi
+  if ! grep -Fq 'width:"33%"' "$NEWEST_JS37" && ! grep -Fq 'width:"12%"' "$NEWEST_JS37" && ! grep -Fq 'width:"23%"' "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: old equal-split Admin colgroup widths are gone"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: old Admin colgroup widths still present in $NEWEST_JS37"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 37 admin-layout check"
+fi
+echo "-- 37b. Entry-point rule: only Admin adds clients, only Leads adds leads (owner workspace) =="
+# Owner direction 2026-08-15: the ONLY place to add a client is the Admin
+# tab's "create client account" form; the ONLY place to add a lead is the
+# Leads tab. The owner's "+ New client" affordances are gone from the
+# Dashboard and the Clients directory (tenant workspaces keep theirs).
+if [ -n "$NEWEST_JS37" ]; then
+  if ! grep -Fq "onNewClient" "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner Dashboard \"+ New client\" provisioning affordance removed (onNewClient gone)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: onNewClient still present in $NEWEST_JS37"
+  fi
+  if grep -Fq "+ New lead" "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Leads tab keeps \"+ New lead\" (the lead entry point)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: \"+ New lead\" missing from $NEWEST_JS37"
+  fi
+  if grep -Fq "Create client account" "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Admin \"create client account\" form remains the single client entry point"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: \"Create client account\" missing from $NEWEST_JS37"
+  fi
+  if grep -Fq "+ New client" "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: tenant \"+ New client\" CTAs intact (client accounts' workspaces untouched)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: \"+ New client\" missing from $NEWEST_JS37"
+  fi
+fi
+# Source-level locks: the Clients directory's two "+ New client" buttons are
+# gated behind !ownerOrg (the owner's directory shows none; tenants keep
+# theirs), and no component still wires the Dashboard provisioning callback.
+if grep -Fq "!ownerOrg" src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Clients directory \"+ New client\" buttons are owner-gated (owner hidden, tenants kept)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: ClientsDirectory owner-gating missing"
+fi
+if grep -Fq "onNewClient" src/Dashboard.tsx src/App.tsx; then
+  FAIL=$((FAIL+1)); echo "  ✗ source: onNewClient still referenced"
+else
+  PASS=$((PASS+1)); echo "  ✓ source: no onNewClient references remain (Dashboard/App clean)"
+fi
+echo "-- 37c. Done =="
+echo "  ✓ 37: owner-workspace UI fixes verified (Admin restack + entry-point rule)"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 rm -f "$JAR" /tmp/body.json "$PASS_TMP"
