@@ -1536,6 +1536,54 @@ legend.field-label {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ── Owner cockpit A (owner direction 2026-08-15) ───────────── */
+/* The owner's Leads tables show the FULL business name: wrap instead of
+   ellipsis-truncate. table-layout stays fixed (the 3i table-fit rule holds —
+   long names wrap to extra lines rather than widening columns or scrolling).
+   Client accounts keep the truncated cell. */
+.table.owner-leads .cell-name {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+}
+/* The Next-action cell becomes a small stack so the "Start Onboarding"
+   quick action sits under the next-action text. */
+.cell-next-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+/* Compact accent button for the owner Leads tab's "Start Onboarding" row
+   action — small enough that the fixed-width column stays fit. */
+.start-onboarding-btn {
+  background: rgba(214, 255, 63, 0.08);
+  border: 1px solid rgba(214, 255, 63, 0.35);
+  border-radius: 7px;
+  color: var(--lime);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 4px 8px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.start-onboarding-btn:hover {
+  background: rgba(214, 255, 63, 0.16);
+  border-color: var(--lime);
+}
+.start-onboarding-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* The owner Leads tab's Actions column holds more buttons (Edit / Lost /
+   DNC / Delete) — let them wrap inside the fixed column instead of
+   overflowing the table edge. */
+.table.owner-leads .row-actions {
+  flex-wrap: wrap;
+}
 
 .stage-cell {
   display: flex;

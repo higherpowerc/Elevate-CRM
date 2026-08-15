@@ -57,6 +57,14 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   return value;
 }
 
+/** Local YYYY-MM-DD — for the DNC quick row-action's "marked" date (owner
+ *  cockpit A 2026-08-15). Same convention the task date inputs use. */
+function localTodayStr(d: Date = new Date()): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
 export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
@@ -313,6 +321,35 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     }
   }
 
+  /** Owner cockpit A (owner direction 2026-08-15) — Leads-tab quick status
+   *  actions, the SAME update path as the stage picker (api.updateClient):
+   *  "Lost" flags the lead lost (it leaves the pipeline for the Lost
+   *  section); "DNC" toggles the do-not-call flag (stamping today's date
+   *  when turning it on). Reasons are optional — add them via the edit
+   *  modal. The refetch after the update keeps the row in sync either way. */
+  async function handleFlag(c: Client, flag: "lost" | "dnc") {
+    setBusy(true);
+    setError(null);
+    try {
+      if (flag === "lost") {
+        await api.updateClient(c.id, { ...c, lost: true });
+      } else {
+        const turningOn = !c.dnc;
+        await api.updateClient(c.id, {
+          ...c,
+          dnc: turningOn,
+          dncDate: turningOn ? localTodayStr() : "",
+          dncReason: "",
+        });
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Status update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!clients) {
     return error ? (
       <div className="alert alert-error">{error}</div>
@@ -336,6 +373,19 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     lost: scoped.filter((c) => c.lost).length,
     dnc: scoped.filter((c) => c.dnc).length,
   };
+
+  /* Owner cockpit A (owner direction 2026-08-15) — the owner's LEADS tab
+     (scope "first", the prospects bucket) gets the cockpit quick actions:
+     the "Business name" column label, the unwrapped full-name rows, the
+     "Start Onboarding" action (moves the lead into the MIDDLE stage — the
+     onboarding position, positional + rename-safe) and the Lost / DNC row
+     buttons with the pipeline-row Archive action removed (archiving stays
+     available on the Clients directory and the Onboarding tab). Client
+     accounts (role=member) and the owner's Onboarding tab are untouched —
+     they keep "Client", the truncated cells and the Archive row action. */
+  const ownerLeadsTab = ownerOrg && scope === "first";
+  const onboardingStage =
+    ownerOrg && scope === "first" && orgStages.length > 2 ? orgStages[1] : null;
 
   /* Owner request 2026-08-15 — the owner's three-bucket pipeline: the Leads
      tab is the FIRST stage ("prospects"), the Onboarding tab is the MIDDLE
@@ -483,7 +533,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
            flag); DNC rows carry the warning banner inline. Both share the
            stage chip filter and the search box with the pipeline table. */
         <div className="card table-wrap">
-          <table className="table clients-table">
+          <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
             <colgroup>
               <col style={{ width: "26%" }} />
               <col style={{ width: "14%" }} />
@@ -492,7 +542,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
             </colgroup>
             <thead>
               <tr>
-                <th>Client</th>
+                <th>{ownerOrg ? "Business name" : "Client"}</th>
                 <th>Stage</th>
                 <th>{filter === "lost" ? "Lost reason" : "Do-not-contact"}</th>
                 <th className="actions-th">Actions</th>
@@ -501,7 +551,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
             <tbody>
               {visible.map((c) => (
                 <tr key={c.id} className={c.archived ? "row-archived" : ""}>
-                  <td className="cell-strong" data-label="Client">
+                  <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Client"}>
                     <div className="cell-company">
                       <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                         {c.companyName}
@@ -573,19 +623,23 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         </div>
       ) : (
         <div className="card table-wrap">
-          <table className="table clients-table">
+          <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
             <colgroup>
-              <col style={{ width: "21%" }} />
-              <col style={{ width: "15%" }} />
+              {/* Owner cockpit A — the owner's Leads tab rebalances the fixed
+                  columns: a touch more room for the (unwrapped) business-name
+                  column, the Next-action stack and the extra Lost/DNC actions
+                  while the 3i table-fit rule still holds (100% total). */}
+              <col style={{ width: ownerOrg ? "19%" : "21%" }} />
+              <col style={{ width: ownerOrg ? "14%" : "15%" }} />
               <col style={{ width: "11%" }} />
               <col style={{ width: "8%" }} />
               <col style={{ width: "15%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "18%" }} />
+              <col style={{ width: ownerOrg ? "15%" : "12%" }} />
+              <col style={{ width: ownerOrg ? "18%" : "18%" }} />
             </colgroup>
             <thead>
               <tr>
-                <th>Client</th>
+                <th>{ownerOrg ? "Business name" : "Client"}</th>
                 <th>Contact</th>
                 <th>Services</th>
                 <th className="num">Deal</th>
@@ -599,7 +653,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                 const fullAddress = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
                 return (
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
-                    <td className="cell-strong" data-label="Client">
+                    <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Client"}>
                       <div className="cell-company">
                         <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                           {c.companyName}
@@ -670,22 +724,64 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         </select>
                       </div>
                     </td>
-                    <td className="cell-muted cell-next" data-label="Next action" title={c.nextAction || undefined}>
-                      {c.nextAction || "—"}
+                    <td data-label="Next action">
+                      {/* Owner cockpit A — the Next-action cell becomes a
+                          small stack: the (possibly wrapped) next-action
+                          text with the "Start Onboarding" quick action
+                          underneath (owner Leads tab only — moves the lead
+                          into the MIDDLE stage via the same update path as
+                          the stage picker). */}
+                      <div className="cell-next-stack">
+                        <span className="cell-muted cell-next" title={c.nextAction || undefined}>
+                          {c.nextAction || "—"}
+                        </span>
+                        {onboardingStage && (
+                          <button
+                            type="button"
+                            className="start-onboarding-btn"
+                            title={`Start onboarding — move ${c.companyName} to ${onboardingStage}`}
+                            aria-label={`Start onboarding for ${c.companyName}`}
+                            onClick={() => handleStageMove(c, onboardingStage)}
+                            disabled={busy}
+                          >
+                            Start Onboarding
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td data-label="Actions">
                       <div className="row-actions">
                         <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
                           Edit
                         </button>
-                        <button
-                          className="icon-btn"
-                          title={c.archived ? "Unarchive" : "Archive"}
-                          aria-label={c.archived ? "Unarchive" : "Archive"}
-                          onClick={() => handleArchive(c)}
-                        >
-                          {c.archived ? "Restore" : "Archive"}
-                        </button>
+                        {/* Owner cockpit A — owner Leads tab only: quick Lost /
+                            DNC flags (same update path as the stage picker);
+                            the pipeline-row Archive action is removed per the
+                            owner (archiving lives on the Clients directory and
+                            the Onboarding tab). Client accounts keep their
+                            Archive row action exactly as before. */}
+                        {ownerLeadsTab && (
+                          <button
+                            className="icon-btn"
+                            title="Mark as lost — moves the lead to the Lost section"
+                            aria-label={`Mark ${c.companyName} as lost`}
+                            onClick={() => handleFlag(c, "lost")}
+                            disabled={busy}
+                          >
+                            Lost
+                          </button>
+                        )}
+                        {ownerLeadsTab && (
+                          <button
+                            className="icon-btn"
+                            title={c.dnc ? "Clear the do-not-call flag" : "Mark do-not-call"}
+                            aria-label={c.dnc ? `Clear DNC for ${c.companyName}` : `Mark ${c.companyName} as DNC`}
+                            onClick={() => handleFlag(c, "dnc")}
+                            disabled={busy}
+                          >
+                            DNC
+                          </button>
+                        )}
                         <button
                           className="icon-btn danger"
                           title="Delete"

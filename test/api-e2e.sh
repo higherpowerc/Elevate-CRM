@@ -3371,6 +3371,114 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 34 css surface check"
 fi
 echo "  ✓ 34b: privacy eye is pure client-side presentation — no server/API change (every prior section above still green)"
+echo "== 35. Owner cockpit alterations A (owner direction 2026-08-15) =="
+echo "-- 35a. API surface the owner KPIs render: Active leads = FIRST stage only, Onboarding = MIDDLE stage, Sold MRR (clientMrr) = terminal deal sum =="
+JAR35=$(mktemp)
+S=$(code -c "$JAR35" -b "$JAR35" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "35a: owner login" 200 "$S"
+code -b "$JAR35" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/s35-settings.json
+code -b "$JAR35" "$BASE/api/dashboard" > /dev/null
+cp /tmp/body.json /tmp/s35-baseline.json
+FIRST35=$(python3 -c "import json;print(json.load(open('/tmp/s35-settings.json'))['settings']['stages'][0])")
+MID35=$(python3 -c "import json;st=json.load(open('/tmp/s35-settings.json'))['settings']['stages'];print(st[1] if len(st)>2 else '')")
+TERM35=$(python3 -c "import json;print(json.load(open('/tmp/s35-settings.json'))['settings']['stages'][-1])")
+S=$(code -b "$JAR35" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cockpit First Co\",\"clientType\":\"commercial\",\"dealValue\":111,\"stage\":\"$FIRST35\",\"nextAction\":\"Intro call\"}" "$BASE/api/clients")
+check "35b: owner creates a FIRST-stage lead (the Active-leads source)" 201 "$S"
+C1_35=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JAR35" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cockpit Mid Co\",\"clientType\":\"commercial\",\"dealValue\":222,\"stage\":\"$MID35\",\"nextAction\":\"Onboarding call\"}" "$BASE/api/clients")
+check "35c: owner creates a MIDDLE-stage lead (the Onboarding-KPI source)" 201 "$S"
+C2_35=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JAR35" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cockpit Sold Co\",\"clientType\":\"commercial\",\"dealValue\":333,\"stage\":\"$TERM35\"}" "$BASE/api/clients")
+check "35d: owner creates a TERMINAL-stage client (the Sold-MRR source)" 201 "$S"
+C3_35=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+code -b "$JAR35" "$BASE/api/dashboard" > /dev/null
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+base = json.load(open('/tmp/s35-baseline.json'))
+d = json.load(open('/tmp/body.json'))
+st = json.load(open('/tmp/s35-settings.json'))['settings']['stages']
+first, mid, term = st[0], (st[1] if len(st) > 2 else None), st[-1]
+# "Active leads" KPI = the FIRST stage count ONLY — not the all-stages sum
+# (the pre-change behavior: activeClients summed every stageCount).
+assert d['stageCounts'][first] == base['stageCounts'][first] + 1, (d['stageCounts'], base['stageCounts'])
+total_all = sum(d['stageCounts'].values())
+assert total_all == sum(base['stageCounts'].values()) + 3, (total_all, base['stageCounts'])
+assert d['stageCounts'][first] < total_all, "first-stage count must differ from the old all-stages sum"
+# "Onboarding" KPI = the MIDDLE stage count (between first and terminal).
+assert mid is None or d['stageCounts'][mid] == base['stageCounts'][mid] + 1, d['stageCounts']
+# "Sold MRR" (clientMrr, shown beside projected pipeline) = terminal-stage
+# deal-value sum — exactly +333 for the sold client.
+assert abs(d['clientMrr'] - (base['clientMrr'] + 333)) < 0.001, (d['clientMrr'], base['clientMrr'])
+# projectedPipeline still sums every non-lost deal value (incl. the sold one).
+assert abs(d['projectedPipeline'] - (base['projectedPipeline'] + 111 + 222 + 333)) < 0.001, d['projectedPipeline']
+print("  ✓ API values the owner KPIs render: Active leads = first stage only; Onboarding = middle stage; Sold MRR = terminal deal sum (+333)")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 35e: owner-cockpit API surface correct (first-stage Active leads, middle-stage Onboarding, sold-stage MRR)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 35e: owner-cockpit API surface wrong"; cat "$PASS_TMP"
+fi
+echo "-- 35f. Client accounts (role=member) unchanged: no clientMrr, all-stages stageCounts intact =="
+S=$(code -b "$JAR35" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Cockpit Tenant Co","email":"cockpit-tenant@example.com","password":"cockpittenant123"}' "$BASE/api/admin/orgs")
+check "35f: owner provisions cockpit tenant org → 201" 201 "$S"
+T35_ORG=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+JART35=$(mktemp)
+S=$(code -c "$JART35" -b "$JART35" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"cockpit-tenant@example.com","password":"cockpittenant123"}' "$BASE/api/auth/login")
+check "35f2: cockpit tenant login → 200" 200 "$S"
+code -b "$JART35" "$BASE/api/dashboard" > /dev/null
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert 'clientMrr' not in d, "tenant must never receive clientMrr"
+assert len(d['stageCounts']) > 0, d['stageCounts']
+print("  ✓ tenant dashboard has no clientMrr; stageCounts intact (tenant 'Active clients' still sums every stage — unchanged)")
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 35g: tenant workspace unchanged (no clientMrr; all-stages stageCounts)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 35g: tenant workspace changed"; cat "$PASS_TMP"
+fi
+echo "-- 35h. UI surface: owner-cockpit strings + CSS in the built bundle =="
+bun run build >/dev/null 2>&1
+NEWEST_JS35=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS35=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS35" ]; then
+  for STR35 in "Business name" "Start Onboarding" "your onboarding pipeline" "Client MRR" "Sold MRR" "Active leads"; do
+    if grep -Fq "$STR35" "$NEWEST_JS35"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR35\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR35\""; fi
+  done
+  # The tenant path must keep the untouched labels/notes ("In final stage"
+  # last-stage KPI + the owner "Leads in …" notes on both buckets).
+  if grep -Fq "In final stage" "$NEWEST_JS35" && grep -Fq 'Leads in "' "$NEWEST_JS35"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle keeps the tenant \"In final stage\" KPI + the \"Leads in …\" notes"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ tenant KPI strings missing from $NEWEST_JS35"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 35 bundle surface check"
+fi
+if [ -n "$NEWEST_CSS35" ]; then
+  for STR35C in ".owner-leads" ".start-onboarding-btn" ".cell-next-stack"; do
+    if grep -Fq "$STR35C" "$NEWEST_CSS35"; then PASS=$((PASS+1)); echo "  ✓ css contains \"$STR35C\""
+    else FAIL=$((FAIL+1)); echo "  ✗ css missing \"$STR35C\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 35 css surface check"
+fi
+echo "-- 35i. Cleanup =="
+code -b "$JAR35" -X DELETE "$BASE/api/admin/orgs/$T35_ORG" > /dev/null
+for CID35 in $C1_35 $C2_35 $C3_35; do
+  code -b "$JAR35" -X DELETE "$BASE/api/clients/$CID35" > /dev/null
+done
+rm -f "$JAR35" "$JART35" /tmp/s35-settings.json /tmp/s35-baseline.json
+echo "  ✓ 35i: cockpit test clients + tenant org removed"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 rm -f "$JAR" /tmp/body.json "$PASS_TMP"
