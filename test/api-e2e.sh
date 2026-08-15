@@ -2981,16 +2981,22 @@ check "32c: bad dncDate → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: 
 check "32c: over-long lostReason → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Long Reason Co\",\"clientType\":\"residential\",\"lost\":true,\"lostReason\":\"$(python3 -c "print('x'*301)")\"}" "$BASE/api/clients")
 echo "-- 32d. Restore to pipeline (lost=false) brings the lead back =="
+# Baseline recaptured NOW: 32b's DNC Lead Co (dealValue 500, stage Intakes) is
+# non-lost and legitimately in the pipeline, so the pre-restore snapshot
+# already includes its 500.
+code -b "$JAR" "$BASE/api/dashboard" > /dev/null
+D32_LEADS1=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Leads',0))")
+D32_PIPE1=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['projectedPipeline'])")
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"companyName":"Lost Lead Co","clientType":"commercial","dealValue":9999,"stage":"Leads","lost":false}' "$BASE/api/clients/$LOST32_ID")
 check "32d: restore lost (lost=false) → 200" 200 "$S"
 grep -q '"lost":false' /tmp/body.json && grep -qv '"lostReason":"Chose' /tmp/body.json && echo "  ✓ restore clears the flag + reason" || echo "  ✗ restore: $(cat /tmp/body.json)"
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
-if D32_LEADS0="$D32_LEADS0" D32_PIPE0="$D32_PIPE0" python3 - <<'PY' 2>"$PASS_TMP"
+if D32_LEADS1="$D32_LEADS1" D32_PIPE1="$D32_PIPE1" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 d = json.load(open('/tmp/body.json'))
-assert d['stageCounts'].get('Leads',0) == int(os.environ['D32_LEADS0']) + 1, d['stageCounts']
-assert d['projectedPipeline'] == float(os.environ['D32_PIPE0']) + 9999, d['projectedPipeline']
+assert d['stageCounts'].get('Leads',0) == int(os.environ['D32_LEADS1']) + 1, d['stageCounts']
+assert d['projectedPipeline'] == float(os.environ['D32_PIPE1']) + 9999, d['projectedPipeline']
 print("  ✓ stageCounts.Leads + projectedPipeline include the restored lead again")
 PY
 then PASS=$((PASS+1)); echo "  ✓ 32d: restore brings the lead back into the pipeline counts"
