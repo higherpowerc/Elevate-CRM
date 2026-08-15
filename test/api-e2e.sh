@@ -3743,7 +3743,7 @@ if [ -n "$NEWEST_JS37" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: Admin colgroup widths missing from $NEWEST_JS37"
   fi
-  if ! grep -Fq 'width:"33%"' "$NEWEST_JS37" && ! grep -Fq 'width:"12%"' "$NEWEST_JS37" && ! grep -Fq 'width:"23%"' "$NEWEST_JS37"; then
+  if ! grep -Fq 'width:"33%"' "$NEWEST_JS37" && ! grep -Fq 'width:"23%"' "$NEWEST_JS37"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: old equal-split Admin colgroup widths are gone"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: old Admin colgroup widths still present in $NEWEST_JS37"
@@ -3797,10 +3797,11 @@ echo "== 38. Owner-workspace UI fixes 2 (2026-08-15): Leads Next-action cell + t
 echo "-- 38a. Fix A: owner Leads tab Next-action cell shows ONLY the Start Onboarding button =="
 # Owner bug report 2026-08-15: the nextAction text span rendered ABOVE the
 # "Start Onboarding" button in the owner Leads tab's Next-action cell. The
-# span is now gated on !ownerLeadsTab — hidden ONLY on the owner Leads tab
-# (scope "first"); tenant rows and the owner Onboarding tab keep the text.
-if grep -Fq "{!ownerLeadsTab && (" src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: nextAction text span is owner-Leads-gated (hidden when ownerLeadsTab)"
+# span is gated on !ownerLeadsTab — hidden on the owner Leads tab (scope
+# "first"). (Owner direction 2026-08-15 extended the same gating to the
+# owner's Onboarding tab — see section 39.)
+if grep -Fq "{!ownerLeadsTab && !ownerOnboardingTab && (" src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: nextAction text span is owner-Leads+Onboarding-gated (hidden on both owner tabs)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: owner-Leads gating missing in src/Clients.tsx"
 fi
@@ -3848,6 +3849,95 @@ else
 fi
 echo "-- 38c. Done =="
 echo "  ✓ 38: owner Next-action cell clean on Leads; table-fit sweep verified (owner-scoped header fit, tenant untouched)"
+echo "== 39. Owner-workspace UI fixes 3 (2026-08-15): Onboarding Next-action + owner Leads Stage column =="
+echo "-- 39a. Fix A (backlog fc9e2df2): owner Onboarding tab Next-action cell shows ONLY the Send Agreements button =="
+# Owner direction 2026-08-15: the owner's Onboarding tab (scope "middle") must
+# show ONLY the "Send Agreements" quick action under Next action — same
+# pattern as the owner Leads tab (PR #48). The nextAction text span is hidden
+# when ownerLeadsTab OR ownerOnboardingTab; tenant rows keep the text.
+if grep -Fq '{!ownerLeadsTab && !ownerOnboardingTab && (' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: nextAction span hidden on owner Leads AND owner Onboarding (double gating)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner Onboarding nextAction gating missing in src/Clients.tsx"
+fi
+if grep -Fq 'cell-muted cell-next' src/Clients.tsx && grep -Fq 'send-agreements-btn' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: tenant next-action text span + owner Send Agreements button both intact"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: cell-next span or send-agreements button missing from src/Clients.tsx"
+fi
+NEWEST_JS39=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS39" ]; then
+  if grep -Fq '!W0&&!F2&&I.jsxDEV("span",{className:"cell-muted cell-next"' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: cell-next span is gated on BOTH owner-tab flags (Leads + Onboarding)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: double-gated cell-next span missing from $NEWEST_JS39"
+  fi
+  if grep -Fq 'children:L.nextAction||"—"' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: tenant next-action text fallback still rendered (tenants keep the text)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant next-action text fallback missing from $NEWEST_JS39"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 39a bundle check"
+fi
+echo "-- 39b. Fix B (backlog ab979ee6): owner Leads tab drops the Stage column (6-col table) =="
+# Owner direction 2026-08-15: the owner's Leads tab (scope "first") removes the
+# Stage column entirely — header th, StageBadge+stage-select td, and the 5th
+# colgroup col (15%) — rebalancing to Business name/Contact/Services/Deal/Next
+# action/Actions = 21/16/12/9/20/22. The owner's Onboarding tab keeps its
+# 7-col layout (incl. Stage); tenants keep their stage picker.
+if grep -Fq '{!ownerLeadsTab && <th>Stage</th>}' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Stage header th is owner-Leads-gated (hidden on owner Leads, kept elsewhere)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: gated Stage header missing in src/Clients.tsx"
+fi
+if grep -Fq '{!ownerLeadsTab && (' src/Clients.tsx && grep -Fq 'data-label="Stage"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: StageBadge+stage-select td is owner-Leads-gated (tenant picker intact)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: gated Stage td missing in src/Clients.tsx"
+fi
+if grep -Fq 'ownerLeadsTab ? (' src/Clients.tsx && grep -Fq 'width: "21%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx && grep -Fq 'width: "12%"' src/Clients.tsx && grep -Fq 'width: "9%"' src/Clients.tsx && grep -Fq 'width: "20%"' src/Clients.tsx && grep -Fq 'width: "22%"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Leads colgroup is the 6-col 21/16/12/9/20/22 branch (sums 100%)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 6-col owner Leads colgroup branch missing in src/Clients.tsx"
+fi
+if grep -Fq 'ownerOrg ? "19%" : "21%"' src/Clients.tsx && grep -Fq 'ownerOrg ? "18%" : "18%"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: 7-col fallback colgroup retained (owner Onboarding + tenant views keep Stage)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 7-col fallback colgroup missing from src/Clients.tsx"
+fi
+if [ -n "$NEWEST_JS39" ]; then
+  if grep -Fq 'children:"Stage"},void 0,!1,void 0,this),I.jsxDEV("th",{children:"Next action"' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: main-table Stage header followed by the Next-action th (gated structure)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage header missing from $NEWEST_JS39"
+  fi
+  if grep -Fq '!W0&&I.jsxDEV("td",{"data-label":"Stage",children:I.jsxDEV("div",{className:"stage-cell"' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: StageBadge+stage-select td is owner-Leads-gated in the built rows"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage td missing from $NEWEST_JS39"
+  fi
+  if grep -Fq 'width:"21%"}},void 0,!1,void 0,this),I.jsxDEV("col",{style:{width:"16%"}}' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: 6-col owner Leads colgroup present (21/16/12… sequence)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: 6-col owner Leads colgroup missing from $NEWEST_JS39"
+  fi
+  if grep -Fq 'width:P?"19%":"21%"' "$NEWEST_JS39" && grep -Fq 'width:P?"18%":"18%"' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: 7-col fallback colgroup retained (owner Onboarding + tenants keep Stage)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col fallback colgroup missing from $NEWEST_JS39"
+  fi
+  if grep -Fq 'jsxDEV("td",{"data-label":"Stage",children:I.jsxDEV(n3,{stage:' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC rows keep their ungated Stage cell (StageBadge)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: ungated Lost/DNC Stage cell missing from $NEWEST_JS39"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 39b bundle check"
+fi
+echo "-- 39c. Done =="
+echo "  ✓ 39: owner Onboarding Next-action = Send Agreements only; owner Leads Stage column removed (tenant views untouched)"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
