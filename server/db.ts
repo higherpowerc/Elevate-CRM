@@ -1000,7 +1000,8 @@ export interface ClientRow {
    *  "subscription"). Default 0. */
   monthly_amount: number;
   /** Owner cockpit B (owner direction 2026-08-15) — DocuSign agreement
-   *  status: "not_sent" | "sent" | "signed" (default "not_sent"). Tracked
+   *  status: "not_sent" | "sent" | "delivered" | "signed" | "declined"
+   *  (default "not_sent"). Tracked
    *  manually by the OWNER org only; tenant orgs never receive/write it. */
   agreement_status: string;
 }

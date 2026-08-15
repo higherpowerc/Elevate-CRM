@@ -1661,6 +1661,68 @@ legend.field-label {
   gap: 6px;
   min-width: 0;
 }
+/* Owner cockpit B (PR #53) — the compact DocuSign lifecycle stepper in the
+   owner's Onboarding Agreement cell: a 4-dot progress row (Not sent → Sent →
+   Delivered → Signed) with completed dots filled and the current step
+   highlighted; "declined" is NOT a step in the bar — it renders as a
+   distinct red failure pill instead. */
+.agree-tracker {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+  max-width: 120px;
+}
+.agree-tracker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(242, 241, 236, 0.14);
+  border: 1px solid var(--line-strong);
+  flex: 0 0 auto;
+  cursor: default;
+}
+.agree-tracker-dot.done {
+  background: var(--green);
+  border-color: var(--green);
+  opacity: 0.65;
+}
+.agree-tracker-dot.current {
+  background: var(--green);
+  border-color: var(--green);
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px rgba(124, 227, 139, 0.25);
+}
+.agree-tracker-line {
+  height: 2px;
+  flex: 1 1 auto;
+  min-width: 6px;
+  background: rgba(242, 241, 236, 0.14);
+  border-radius: 1px;
+}
+.agree-tracker-line.done {
+  background: var(--green);
+  opacity: 0.55;
+}
+.agree-tracker.declined {
+  width: auto;
+  max-width: none;
+}
+.agree-tracker-fail {
+  display: inline-flex;
+  align-items: center;
+  color: var(--danger);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  background: var(--danger-dim);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
 /* The owner Leads tab's Actions column holds more buttons (Edit / Lost /
    DNC / Delete) — let them wrap inside the fixed column instead of
    overflowing the table edge. */

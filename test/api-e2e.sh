@@ -3630,6 +3630,17 @@ check "36c3: owner PUT agreementStatus=not_sent (manual reset) → 200" 200 "$S"
 grep -q '"agreementStatus":"not_sent"' /tmp/body.json && echo "  ✓ response agreementStatus=not_sent (reset works)" || echo "  ✗ reset failed: $(cat /tmp/body.json)"
 check "36c4: owner PUT invalid agreementStatus → 400" 400 $(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"agreementStatus\":\"bogus\"}" "$BASE/api/clients/$A36_ID")
+# PR #53 — the widened lifecycle: delivered (opened by the signer) and
+# declined (signer refused, red failure state) are valid owner-only states.
+S=$(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"agreementStatus\":\"delivered\"}" "$BASE/api/clients/$A36_ID")
+check "36c5: owner PUT agreementStatus=delivered → 200" 200 "$S"
+grep -q '"agreementStatus":"delivered"' /tmp/body.json && echo "  ✓ response agreementStatus=delivered (DocuSign delivered state works)" || echo "  ✗ delivered not applied: $(cat /tmp/body.json)"
+S=$(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"agreementStatus\":\"declined\"}" "$BASE/api/clients/$A36_ID")
+check "36c6: owner PUT agreementStatus=declined (failure state) → 200" 200 "$S"
+grep -q '"agreementStatus":"declined"' /tmp/body.json && echo "  ✓ response agreementStatus=declined (red failure state persists)" || echo "  ✗ declined not applied: $(cat /tmp/body.json)"
+
 echo "-- 36d. Isolation: the tenant org never receives agreementStatus and cannot write it =="
 S=$(code -b "$JAR36" -X POST -H 'Content-Type: application/json' \
   -d '{"name":"Agreement Tenant Co","email":"agreement-tenant@example.com","password":"agreementtenant123"}' "$BASE/api/admin/orgs")
@@ -3673,6 +3684,24 @@ if grep -q 'agreementStatus' /tmp/body.json; then
 else
   PASS=$((PASS+1)); echo "  ✓ tenant PUT response has NO agreementStatus (payload ignored, not leaked)"
 fi
+# PR #53 — the NEW lifecycle states must be just as isolated: tenant PUTs with
+# delivered/declined are ignored the same way (no leak, no persistence).
+S=$(code -b "$JART36" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Client Co","clientType":"commercial","dealValue":10,"stage":"Prospect","services":["Cleaning"],"agreementStatus":"delivered"}' "$BASE/api/clients/$AT36_ID")
+check "36d7: tenant PUT agreementStatus=delivered → 200 (ignored)" 200 "$S"
+if grep -q 'agreementStatus' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ tenant PUT delivered response LEAKED agreementStatus"
+else
+  PASS=$((PASS+1)); echo "  ✓ tenant PUT delivered response has NO agreementStatus (payload ignored, not leaked)"
+fi
+S=$(code -b "$JART36" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Client Co","clientType":"commercial","dealValue":10,"stage":"Prospect","services":["Cleaning"],"agreementStatus":"declined"}' "$BASE/api/clients/$AT36_ID")
+check "36d8: tenant PUT agreementStatus=declined → 200 (ignored)" 200 "$S"
+if grep -q 'agreementStatus' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ tenant PUT declined response LEAKED agreementStatus"
+else
+  PASS=$((PASS+1)); echo "  ✓ tenant PUT declined response has NO agreementStatus (payload ignored, not leaked)"
+fi
 echo "-- 36e. UI surface: owner Onboarding swaps Services → Agreement; tenant keeps its Services column =="
 bun run build >/dev/null 2>&1
 NEWEST_JS36=$(ls -t dist/index-*.js 2>/dev/null | head -1)
@@ -3683,7 +3712,9 @@ if [ -n "$NEWEST_JS36" ]; then
   # Not sent/Sent/Signed select), while client accounts AND the owner Leads
   # tab keep "Services" — both branches compile into the bundle, proving the
   # conditional exists (the tenant path stays untouched).
-  for STR36 in "Send Agreements" "Agreement" "Not sent" "Sent" "Signed"; do
+  # PR #53 — the loop also locks the widened lifecycle strings + the
+  # tracker markers into the owner-built bundle.
+  for STR36 in "Send Agreements" "Agreement" "Not sent" "Sent" "Delivered" "Signed" "Declined" "agree-tracker" "agree-tracker-fail"; do
     if grep -Fq "$STR36" "$NEWEST_JS36"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR36\""
     else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR36\""; fi
   done
@@ -3696,7 +3727,7 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 36 bundle surface check"
 fi
 if [ -n "$NEWEST_CSS36" ]; then
-  for STR36C in ".agree-cell" ".send-agreements-btn"; do
+  for STR36C in ".agree-cell" ".send-agreements-btn" ".agree-tracker" ".agree-tracker-dot" ".agree-tracker-fail"; do
     if grep -Fq "$STR36C" "$NEWEST_CSS36"; then PASS=$((PASS+1)); echo "  ✓ css contains \"$STR36C\""
     else FAIL=$((FAIL+1)); echo "  ✗ css missing \"$STR36C\""; fi
   done
@@ -3867,7 +3898,7 @@ else
 fi
 NEWEST_JS39=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS39" ]; then
-  if grep -Eq '![A-Za-z0-9$]+&&![A-Za-z0-9$]+&&I\.jsxDEV\("span",\{className:"cell-muted cell-next"' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9$]+&&![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("span",\{className:"cell-muted cell-next"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: cell-next span is gated on BOTH owner-tab flags (Leads + Onboarding)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: double-gated cell-next span missing from $NEWEST_JS39"
@@ -3916,27 +3947,27 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ source: 7-col fallback colgroup missing from src/Clients.tsx"
 fi
 if [ -n "$NEWEST_JS39" ]; then
-  if grep -Fq 'children:"Stage"},void 0,!1,void 0,this),I.jsxDEV("th",{children:"Next action"' "$NEWEST_JS39"; then
+  if grep -Eq 'children:"Stage"},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("th",{children:"Next action"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: main-table Stage header followed by the Next-action th (gated structure)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage header missing from $NEWEST_JS39"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&I\.jsxDEV\("td",\{"data-label":"Stage",children:I\.jsxDEV\("div",\{className:"stage-cell"' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\("div",\{className:"stage-cell"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: StageBadge+stage-select td is owner-Leads-gated in the built rows"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage td missing from $NEWEST_JS39"
   fi
-  if grep -Fq 'width:"21%"}},void 0,!1,void 0,this),I.jsxDEV("col",{style:{width:"16%"}}' "$NEWEST_JS39"; then
+  if grep -Eq 'width:"21%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"16%"}}' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: 6-col owner Leads colgroup present (21/16/12… sequence)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 6-col owner Leads colgroup missing from $NEWEST_JS39"
   fi
-  if grep -Fq 'width:P?"19%":"21%"' "$NEWEST_JS39" && grep -Fq 'width:P?"18%":"18%"' "$NEWEST_JS39"; then
+  if grep -Eq 'width:[A-Za-z0-9$_]+\?"19%":"21%"' "$NEWEST_JS39" && grep -Eq 'width:[A-Za-z0-9$_]+\?"18%":"18%"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: 7-col fallback colgroup retained (owner Onboarding + tenants keep Stage)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col fallback colgroup missing from $NEWEST_JS39"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&I\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:I\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39" && ! grep -Eq 'jsxDEV\("td",\{"data-label":"Stage",children:I\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39" && ! grep -Eq 'jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC Stage cell is owner-gated in the built rows (hidden on owner Leads, kept for tenants)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Lost/DNC Stage cell missing from $NEWEST_JS39"
@@ -4103,6 +4134,77 @@ fi
 echo "-- 40e. Done == "
 echo "  ✓ 40: Dashboard stage fold + Admin owner-row filter + billing-model removal verified (owner-workspace only)"
 
+echo "== 41. Owner cockpit refinements 4 (2026-08-15): DocuSign lifecycle tracker + Onboarding Stage badge-only (PR #53) =="
+echo "-- 41a. Source: AgreementStatus widened to the full DocuSign lifecycle (client + server in lockstep) =="
+if grep -Fq 'export type AgreementStatus = "not_sent" | "sent" | "delivered" | "signed" | "declined"' src/types.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: AgreementStatus union widened to the 5-state DocuSign lifecycle"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: AgreementStatus union not widened in src/types.ts"
+fi
+if grep -Fq 'export const AGREEMENT_STATUSES = ["not_sent", "sent", "delivered", "signed", "declined"] as const' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: server AGREEMENT_STATUSES widened in lockstep (server validation accepts the new states)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: server AGREEMENT_STATUSES not widened"
+fi
+echo "-- 41b. Source: Agreement cell = lifecycle tracker + badge + manual select; Stage select owner-Onboarding-gated =="
+if grep -Fq '<AgreementTracker status={c.agreementStatus ?? "not_sent"} />' src/Clients.tsx && grep -Fq 'className="agree-tracker"' src/Clients.tsx && grep -Fq 'agree-tracker-fail' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Agreement cell renders the lifecycle tracker (declined = red failure pill)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: AgreementTracker missing from the owner Onboarding Agreement cell"
+fi
+if grep -Fq '<option value="delivered">Delivered</option>' src/Clients.tsx && grep -Fq '<option value="declined">Declined</option>' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: agreement select offers delivered + declined (owner can set every lifecycle state manually)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: agreement select options missing delivered/declined"
+fi
+if grep -Fq '{!ownerOnboardingTab && (' src/Clients.tsx && grep -Fq 'className="stage-select"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Stage select is owner-Onboarding-gated (owner Onboarding = badge only; tenants keep their picker)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-Onboarding stage-select gate missing in src/Clients.tsx"
+fi
+echo "-- 41c. Bundle + CSS: tracker compiled, 5-state select shipped, owner Onboarding stage select gated in the built rows =="
+bun run build >/dev/null 2>&1
+NEWEST_JS41=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS41=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS41" ]; then
+  if grep -Fq 'Agreement status: ${' "$NEWEST_JS41" && grep -Fq 'agree-tracker declined' "$NEWEST_JS41" && grep -Fq 'agree-tracker-dot' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: lifecycle tracker rendered (stepper aria-label, declined state, step dots)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: lifecycle tracker missing from $NEWEST_JS41"
+  fi
+  if grep -Eq 'children:[A-Za-z0-9$_]+\?"Agreement":"Services"' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Agreement/Services column swap still compiled (owner Onboarding vs tenant)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: Agreement/Services swap missing from $NEWEST_JS41"
+  fi
+  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("select",\{className:"stage-select",value:[A-Za-z0-9$_]+\.stage' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner Onboarding stage select is gated in the built rows (badge-only for the owner)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: gated stage select missing from $NEWEST_JS41"
+  fi
+  if grep -Eq 'jsxDEV\("select",\{className:"stage-select",value:[A-Za-z0-9$_]+\.stage' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: stage select element still shipped (tenants render it; owner Onboarding is gated)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: stage select element missing from $NEWEST_JS41"
+  fi
+  if grep -Fq 'value:"delivered"' "$NEWEST_JS41" && grep -Fq 'value:"declined"' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: agreement select options carry delivered + declined values"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: delivered/declined option values missing from $NEWEST_JS41"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 41 bundle check"
+fi
+if [ -n "$NEWEST_CSS41" ]; then
+  for STR41C in ".agree-tracker{" ".agree-tracker-dot" ".agree-tracker-dot.done" ".agree-tracker-dot.current" ".agree-tracker-line" ".agree-tracker.declined" ".agree-tracker-fail"; do
+    if grep -Fq "$STR41C" "$NEWEST_CSS41"; then PASS=$((PASS+1)); echo "  ✓ css contains \"$STR41C\""
+    else FAIL=$((FAIL+1)); echo "  ✗ css missing \"$STR41C\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 41 css check"
+fi
+echo "-- 41d. Done =="
+echo "  ✓ 41: DocuSign lifecycle tracker + Onboarding Stage badge-only verified (owner-workspace only, tenant views untouched)"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

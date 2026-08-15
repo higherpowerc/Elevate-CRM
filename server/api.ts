@@ -289,14 +289,16 @@ export function isRevenueModel(v: unknown): v is RevenueModel {
   return typeof v === "string" && (REVENUE_MODELS as readonly string[]).includes(v);
 }
 
-/** Owner cockpit B (owner direction 2026-08-15) — per-client DocuSign
- *  agreement status: "not_sent" → "sent" → "signed". The owner tracks where
- *  each onboarding client is in completing forms MANUALLY today; real
- *  DocuSign envelope sending is wired LATER once the owner connects a
- *  DocuSign account. OWNER-workspace-only: the value is exposed to and
- *  writable by the owner org (role=admin) only — tenant orgs never receive
- *  it in API responses and never write it (their payloads are ignored). */
-export const AGREEMENT_STATUSES = ["not_sent", "sent", "signed"] as const;
+/** Owner cockpit B (owner direction 2026-08-15; PR #53 widens to the full
+ *  DocuSign lifecycle) — per-client DocuSign agreement status:
+ *  "not_sent" → "sent" → "delivered" → "signed", with "declined" as a
+ *  terminal failure state (the signer refused). The owner tracks where each
+ *  onboarding client is in completing forms MANUALLY today; real DocuSign
+ *  envelope sending is wired LATER once the owner connects a DocuSign
+ *  account. OWNER-workspace-only: the value is exposed to and writable by
+ *  the owner org (role=admin) only — tenant orgs never receive it in API
+ *  responses and never write it (their payloads are ignored). */
+export const AGREEMENT_STATUSES = ["not_sent", "sent", "delivered", "signed", "declined"] as const;
 export type AgreementStatus = (typeof AGREEMENT_STATUSES)[number];
 
 export function isAgreementStatus(v: unknown): v is AgreementStatus {
@@ -748,7 +750,7 @@ function validateClient(
   let agreementStatus: AgreementStatus | undefined;
   if (ownerOrg && body.agreementStatus !== undefined && body.agreementStatus !== null) {
     if (typeof body.agreementStatus !== "string" || !isAgreementStatus(body.agreementStatus.trim())) {
-      return { ok: false, error: "Agreement status must be not_sent, sent, or signed." };
+      return { ok: false, error: "Agreement status must be not_sent, sent, delivered, signed, or declined." };
     }
     agreementStatus = body.agreementStatus.trim() as AgreementStatus;
   }
