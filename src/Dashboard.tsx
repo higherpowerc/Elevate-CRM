@@ -21,6 +21,11 @@ interface Props {
    *  "client(s)". Tenant orgs (role=member) keep "clients" everywhere.
    *  Purely presentational; data and stages are untouched. */
   ownerOrg?: boolean;
+  /** Owner request 2026-08-14 — the "+ New client" affordance on the owner
+   *  dashboard provisions a client ACCOUNT (the owner's Clients = the orgs
+   *  paying for the CRM), so the button routes to the Admin tab. The client
+   *  account count renders underneath it. */
+  onNewClient?: () => void;
 }
 
 /** Local YYYY-MM-DD — the same convention the task date inputs store
@@ -66,7 +71,7 @@ function EyeOffIcon() {
   );
 }
 
-export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Props) {
+export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNewClient }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -127,6 +132,23 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
   const moneyTitle = moneyHidden ? "Show amounts" : "Hide amounts";
   const blur = (on: boolean) => (on ? " money-blur" : "");
 
+  /* Owner request 2026-08-14 — money KPI by workspace:
+       OWNER  → "Client MRR" = SUM of what every client account pays per month
+                (the sales cockpit figure for selling the CRM).
+       MEMBER → their OWN business's money: "Sales this month" (invoices dated
+                this calendar month) or "Subscriptions" (their clients'
+                recurring monthly amounts), per the org's revenue model. */
+  const isSubscription = data.revenueModel === "subscription";
+  const moneyKpiLabel = isSubscription ? "Subscriptions" : "Sales this month";
+  const moneyKpiValue = isSubscription ? data.subscriptionsTotal : data.salesThisMonth;
+  const moneyKpiNote = isSubscription
+    ? data.subscriptionsTotal === 0
+      ? "No subscriptions yet — set a monthly amount per client"
+      : "Sum of your clients' monthly recurring amounts"
+    : data.salesThisMonth === 0
+      ? "No invoices this month yet"
+      : "Invoices dated this month";
+
   return (
     <div className="page">
       <div className="page-head">
@@ -139,6 +161,21 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
             {data.archivedClients > 0 && ` · ${data.archivedClients} archived`}
           </p>
         </div>
+        {/* Owner request 2026-08-14 — the owner's dashboard carries the
+            "+ New client" affordance (provision a client ACCOUNT → Admin tab)
+            with the client-account count underneath. */}
+        {ownerOrg && (
+          <div className="page-actions page-actions-col">
+            {onNewClient && (
+              <button className="btn btn-primary" onClick={onNewClient}>
+                + New client
+              </button>
+            )}
+            <span className="page-actions-sub">
+              {data.orgCount ?? 0} client account{(data.orgCount ?? 0) === 1 ? "" : "s"}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 3g-3 — owner-only: sold-lead auto-provisioning notices (dismissed on
@@ -146,6 +183,46 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       {ownerOrg && <ProvisionNotices />}
 
       <div className="kpi-row">
+        {/* Owner request 2026-08-14 — workspace money KPI: owner sees Client
+            MRR (across every client account); members see their own business's
+            money per their revenue model. Both respect the privacy eye. */}
+        {ownerOrg ? (
+          <div className="card kpi">
+            <span className="kpi-label kpi-label-row">
+              Client MRR
+              <button
+                type="button"
+                className="eye-btn"
+                onClick={() => setMoneyHidden((v) => !v)}
+                aria-label={moneyTitle}
+                aria-pressed={moneyHidden}
+                title={moneyTitle}
+              >
+                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
+            <span className="kpi-note">Monthly subscription revenue from all client accounts</span>
+          </div>
+        ) : (
+          <div className="card kpi">
+            <span className="kpi-label kpi-label-row">
+              {moneyKpiLabel}
+              <button
+                type="button"
+                className="eye-btn"
+                onClick={() => setMoneyHidden((v) => !v)}
+                aria-label={moneyTitle}
+                aria-pressed={moneyHidden}
+                title={moneyTitle}
+              >
+                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(moneyKpiValue)}</span>
+            <span className="kpi-note">{moneyKpiNote}</span>
+          </div>
+        )}
         <div className="card kpi">
           <span className="kpi-label kpi-label-row">
             Projected pipeline

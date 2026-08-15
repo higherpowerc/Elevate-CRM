@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type ClientInput } from "./api";
-import { money, type Client, type CustomFieldDef, type Stage } from "./types";
+import { money, type Client, type CustomFieldDef, type DashboardData, type Stage } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { ServiceChips } from "./bits";
 import ClientModal from "./ClientModal";
@@ -47,6 +47,11 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
     customIntakeGroups: [],
   });
   const [error, setError] = useState<string | null>(null);
+  /* Owner request 2026-08-14 — the owner's Clients tab (sold-customer
+     directory) leads with the Client MRR KPI: sum of what every client
+     account pays per month. The dashboard endpoint returns clientMrr ONLY
+     for admin sessions, so members never fetch it. */
+  const [dash, setDash] = useState<DashboardData | null>(null);
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
   const [deleting, setDeleting] = useState<Client | null>(null);
@@ -77,6 +82,32 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  /* Privacy eye (3m pattern): same localStorage key as the Dashboard so the
+     blur choice carries across tabs. Money visible by default. */
+  const MONEY_HIDDEN_KEY = "crm:money-hidden";
+  const [moneyHidden, setMoneyHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(MONEY_HIDDEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(MONEY_HIDDEN_KEY, moneyHidden ? "1" : "0");
+    } catch {
+      /* storage unavailable — the toggle just won't persist */
+    }
+  }, [moneyHidden]);
+
+  useEffect(() => {
+    if (!ownerOrg) return;
+    api
+      .dashboard()
+      .then(setDash)
+      .catch(() => setDash(null));
+  }, [ownerOrg]);
 
   /* Terminal stage = LAST entry of the org's ordered stages (positional —
      renamed-safe). Only clients in this stage are shown. */
@@ -192,6 +223,32 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
       {error && (
         <div className="alert alert-error" role="alert">
           {error}
+        </div>
+      )}
+
+      {/* Owner request 2026-08-14 — Client MRR on the owner's Clients tab,
+          with the same blur/eye treatment as the dashboard money figures. */}
+      {ownerOrg && (
+        <div className="kpi-row">
+          <div className="card kpi">
+            <span className="kpi-label kpi-label-row">
+              Client MRR
+              <button
+                type="button"
+                className="eye-btn"
+                onClick={() => setMoneyHidden((v) => !v)}
+                aria-label={moneyHidden ? "Show amounts" : "Hide amounts"}
+                aria-pressed={moneyHidden}
+                title={moneyHidden ? "Show amounts" : "Hide amounts"}
+              >
+                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+            <span className={`kpi-value lime${moneyHidden ? " money-blur" : ""}`}>
+              {money(dash?.clientMrr ?? 0)}
+            </span>
+            <span className="kpi-note">Monthly subscription revenue from all client accounts</span>
+          </div>
         </div>
       )}
 
@@ -335,5 +392,23 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
         />
       )}
     </div>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
   );
 }

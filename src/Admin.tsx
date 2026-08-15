@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { fmtDate, type Org } from "./types";
+import { fmtDate, type Org, type RevenueModel } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
@@ -65,6 +65,46 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
 
   /* Delete-tenant confirm */
   const [deleting, setDeleting] = useState<Org | null>(null);
+
+  /* Owner request 2026-08-14 — per-account MRR + revenue model: an inline
+     draft editor per org row, saved to the server via PATCH. */
+  const [billingDraft, setBillingDraft] = useState<
+    Record<number, { amount: string; model: RevenueModel }>
+  >({});
+  const [savingBillingId, setSavingBillingId] = useState<number | null>(null);
+
+  function billingDraftFor(o: Org) {
+    const d = billingDraft[o.id];
+    if (d) return d;
+    return {
+      amount: String(o.monthlySubscriptionAmount ?? 0),
+      model: (o.revenueModel ?? "sales") as RevenueModel,
+    };
+  }
+
+  async function handleSaveBilling(o: Org) {
+    const d = billingDraftFor(o);
+    const amount = Number(d.amount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setError("Monthly subscription amount must be a non-negative number.");
+      return;
+    }
+    setSavingBillingId(o.id);
+    setError(null);
+    try {
+      await api.adminUpdateOrg(o.id, { monthlySubscriptionAmount: amount, revenueModel: d.model });
+      setBillingDraft((prev) => {
+        const next = { ...prev };
+        delete next[o.id];
+        return next;
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSavingBillingId(null);
+    }
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -319,11 +359,12 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
           ) : (
             <table className="table">
               <colgroup>
-                <col style={{ width: "37%" }} />
-                <col style={{ width: "9%" }} />
+                <col style={{ width: "33%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "10%" }} />
                 <col style={{ width: "14%" }} />
-                <col style={{ width: "13%" }} />
-                <col style={{ width: "27%" }} />
+                <col style={{ width: "23%" }} />
               </colgroup>
               <thead>
                 <tr>
@@ -331,6 +372,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                   <th className="num">Members</th>
                   <th className="num">Client records</th>
                   <th>Created</th>
+                  <th>Monthly $ / model</th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
@@ -395,6 +437,54 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
+                      <td data-label="Monthly $ / model">
+                        {isOwner ? (
+                          <span className="cell-muted">—</span>
+                        ) : (
+                          <div className="admin-billing-edit">
+                            <div className="admin-billing-inputs">
+                              <input
+                                type="number"
+                                min={0}
+                                step="any"
+                                className="billing-amount"
+                                value={billingDraftFor(o).amount}
+                                onChange={(e) =>
+                                  setBillingDraft((prev) => ({
+                                    ...prev,
+                                    [o.id]: { ...billingDraftFor(o), amount: e.target.value },
+                                  }))
+                                }
+                                aria-label={`${o.name} monthly subscription amount`}
+                              />
+                              <select
+                                className="billing-model"
+                                value={billingDraftFor(o).model}
+                                onChange={(e) =>
+                                  setBillingDraft((prev) => ({
+                                    ...prev,
+                                    [o.id]: {
+                                      ...billingDraftFor(o),
+                                      model: e.target.value as RevenueModel,
+                                    },
+                                  }))
+                                }
+                                aria-label={`${o.name} revenue model`}
+                              >
+                                <option value="sales">Sales</option>
+                                <option value="subscription">Subscriptions</option>
+                              </select>
+                            </div>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              disabled={savingBillingId !== null || viewingOrgId !== null || resettingOrgId !== null}
+                              onClick={() => handleSaveBilling(o)}
+                            >
+                              {savingBillingId === o.id ? "Saving…" : "Save"}
+                            </button>
+                          </div>
+                        )}
+                      </td>
                       <td data-label="Actions">
                         <div className="row-actions">
                           {isOwner ? (
