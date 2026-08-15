@@ -3381,20 +3381,13 @@ legend.field-label {
 .billing-amount {
   width: 88px;
 }
-.billing-model {
-  width: 110px;
-}
-/* Owner direction 2026-08-15 — Admin billing $ / model controls: white text
-   on a black background (incl. the select's dropdown options). */
-.admin-billing-inputs .billing-amount,
-.admin-billing-inputs .billing-model {
+/* Owner direction 2026-08-15 — Admin billing amount: white text on a black
+   background (the per-account revenue-model select is removed — one product,
+   subscription-based; the billing-amount input stays as Phase 5 prep). */
+.admin-billing-inputs .billing-amount {
   background: #000;
   color: #fff;
   border-color: rgba(255, 255, 255, 0.35);
-}
-.admin-billing-inputs .billing-model option {
-  background: #000;
-  color: #fff;
 }
 @media (max-width: 760px) {
   .admin-billing-edit {

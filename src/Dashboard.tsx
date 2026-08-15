@@ -176,6 +176,33 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       ? "No invoices this month yet"
       : "Invoices dated this month";
 
+  /* Owner direction 2026-08-15 — the per-stage cards (count + View deep-link)
+     are shared by both workspace kinds; only WHERE they render differs:
+     the OWNER's fold INTO the "Pipeline overview" section (under the KPI
+     cards, no standalone heading) while TENANTS keep the standalone "Stage
+     breakdown" card. Stage names stay positional/rename-safe (whatever the
+     workspace's pipeline says). */
+  const stageCards = stages.map((stage, i) => (
+    <div className="card stage-card" key={`${i}-${stage}`}>
+      <div className="stage-top">
+        <StageBadge stage={stage} index={i} />
+        <span className="stage-num">{String(i + 1).padStart(2, "0")}</span>
+      </div>
+      <div className={`stage-count tone-${stageTone(i)}`}>{data.stageCounts[stage] ?? 0}</div>
+      <div className="stage-rule" />
+      <div className="stage-bottom">
+        <span className="stage-caption">{stageCaption}</span>
+        <button
+          className="link-btn"
+          onClick={() => onGoToStage(stage)}
+          aria-label={`View ${stage} in the pipeline`}
+        >
+          View →
+        </button>
+      </div>
+    </div>
+  ));
+
   return (
     <div className="page">
       <div className="page-head">
@@ -297,29 +324,20 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
         )}
       </div>
 
-      <h2 className="section-title">Stage breakdown</h2>
-      <div className="stage-grid">
-        {stages.map((stage, i) => (
-          <div className="card stage-card" key={`${i}-${stage}`}>
-            <div className="stage-top">
-              <StageBadge stage={stage} index={i} />
-              <span className="stage-num">{String(i + 1).padStart(2, "0")}</span>
-            </div>
-            <div className={`stage-count tone-${stageTone(i)}`}>{data.stageCounts[stage] ?? 0}</div>
-            <div className="stage-rule" />
-            <div className="stage-bottom">
-              <span className="stage-caption">{stageCaption}</span>
-              <button
-                className="link-btn"
-                onClick={() => onGoToStage(stage)}
-                aria-label={`View ${stage} in the pipeline`}
-              >
-                View →
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* Owner direction 2026-08-15 — the OWNER workspace's Dashboard has NO
+          standalone "Stage breakdown" card: the per-stage data (each stage's
+          count + its View deep-link, positional/rename-safe) renders INSIDE
+          the "Pipeline overview" section, directly under the KPI cards.
+          TENANT dashboards keep the standalone "Stage breakdown" card exactly
+          as before (same heading, same stage grid). */}
+      {ownerOrg ? (
+        <div className="stage-grid owner-pipeline-stages">{stageCards}</div>
+      ) : (
+        <>
+          <h2 className="section-title">Stage breakdown</h2>
+          <div className="stage-grid">{stageCards}</div>
+        </>
+      )}
 
       {/* Task overview (2026-08-14 owner request) — org-scoped task stats
           plus the next few open tasks with a due date. Compact so the page

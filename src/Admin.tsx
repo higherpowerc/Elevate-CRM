@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { fmtDate, type Org, type RevenueModel } from "./types";
+import { fmtDate, type Org } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
@@ -69,14 +69,14 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   /* Delete-tenant confirm */
   const [deleting, setDeleting] = useState<Org | null>(null);
 
-  /* Owner request 2026-08-14/15 — per-account BILLING amount + revenue model:
-     Phase 5 billing prep (what the owner will charge each client account).
-     It does NOT feed Client MRR (owner direction 2026-08-15 — MRR is the
-     deal value of sold-stage client records). Inline draft editor per org
-     row, saved to the server via PATCH. */
-  const [billingDraft, setBillingDraft] = useState<
-    Record<number, { amount: string; model: RevenueModel }>
-  >({});
+  /* Owner request 2026-08-14/15 — per-account BILLING amount: Phase 5 billing
+     prep (what the owner will charge each client account). It does NOT feed
+     Client MRR (owner direction 2026-08-15 — MRR is the deal value of
+     sold-stage client records). Owner direction 2026-08-15 — the per-account
+     revenue-model select is REMOVED (one product, subscription-based); only
+     the billing-amount input remains. Inline draft editor per org row, saved
+     to the server via PATCH. */
+  const [billingDraft, setBillingDraft] = useState<Record<number, { amount: string }>>({});
   const [savingBillingId, setSavingBillingId] = useState<number | null>(null);
 
   function billingDraftFor(o: Org) {
@@ -84,7 +84,6 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
     if (d) return d;
     return {
       amount: String(o.monthlySubscriptionAmount ?? 0),
-      model: (o.revenueModel ?? "sales") as RevenueModel,
     };
   }
 
@@ -98,7 +97,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
     setSavingBillingId(o.id);
     setError(null);
     try {
-      await api.adminUpdateOrg(o.id, { monthlySubscriptionAmount: amount, revenueModel: d.model });
+      await api.adminUpdateOrg(o.id, { monthlySubscriptionAmount: amount });
       setBillingDraft((prev) => {
         const next = { ...prev };
         delete next[o.id];
@@ -125,6 +124,13 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+
+  /* Owner direction 2026-08-15 — the Admin client-account list is for CLIENT
+     workspaces: the owner's OWN workspace is filtered out of the table rows,
+     the "N workspaces" count, and (with the row gone) its View-account /
+     delete / edit affordances. The server API /api/admin/orgs is UNCHANGED —
+     it still returns the full list; this is a UI-side filter only. */
+  const visibleOrgs = orgs ? orgs.filter((o) => o.id !== ownerOrgId) : null;
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -352,12 +358,12 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
           <div className="admin-card-head">
             <h2 className="admin-card-title">Clients</h2>
             <p className="admin-card-sub">
-              {orgs ? `${orgs.length} workspace${orgs.length === 1 ? "" : "s"}` : "Loading…"}
+              {visibleOrgs ? `${visibleOrgs.length} workspace${visibleOrgs.length === 1 ? "" : "s"}` : "Loading…"}
             </p>
           </div>
-          {!orgs ? (
+          {!visibleOrgs ? (
             <div className="skeleton-block" aria-label="Loading clients" />
-          ) : orgs.length === 0 ? (
+          ) : visibleOrgs.length === 0 ? (
             <div className="empty">
               <p className="empty-title">No clients yet</p>
               <p className="empty-sub">Create the first client account to provision a workspace.</p>
@@ -384,13 +390,12 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                   <th className="num">Members</th>
                   <th className="num">Client records</th>
                   <th>Created</th>
-                  <th>Billing $ / model</th>
+                  <th>Billing $</th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {orgs.map((o) => {
-                  const isOwner = o.id === ownerOrgId;
+                {visibleOrgs.map((o) => {
                   return (
                     <tr key={o.id}>
                       <td className="cell-strong" data-label="Clients">
@@ -398,7 +403,6 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                           <span className={`cell-name${blurPii(pii)}`} title={o.name}>
                             {o.name}
                           </span>
-                          {isOwner && <span className="chip chip-owner">owner</span>}
                           {o.provisionedFromClient && (
                             <span
                               className="chip chip-provisioned"
@@ -449,94 +453,62 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
-                      <td data-label="Billing $ / model">
-                        {isOwner ? (
-                          <span className="cell-muted">—</span>
-                        ) : (
-                          <div className="admin-billing-edit">
-                            <div className="admin-billing-inputs">
-                              <input
-                                type="number"
-                                min={0}
-                                step="any"
-                                className="billing-amount"
-                                value={billingDraftFor(o).amount}
-                                onChange={(e) =>
-                                  setBillingDraft((prev) => ({
-                                    ...prev,
-                                    [o.id]: { ...billingDraftFor(o), amount: e.target.value },
-                                  }))
-                                }
-                                aria-label={`${o.name} monthly billing amount (Phase 5)`}
-                              />
-                              <select
-                                className="billing-model"
-                                value={billingDraftFor(o).model}
-                                onChange={(e) =>
-                                  setBillingDraft((prev) => ({
-                                    ...prev,
-                                    [o.id]: {
-                                      ...billingDraftFor(o),
-                                      model: e.target.value as RevenueModel,
-                                    },
-                                  }))
-                                }
-                                aria-label={`${o.name} revenue model`}
-                              >
-                                <option value="sales">Sales</option>
-                                <option value="subscription">Subscriptions</option>
-                              </select>
-                            </div>
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              disabled={savingBillingId !== null || viewingOrgId !== null || resettingOrgId !== null}
-                              onClick={() => handleSaveBilling(o)}
-                            >
-                              {savingBillingId === o.id ? "Saving…" : "Save"}
-                            </button>
+                      <td data-label="Billing $">
+                        <div className="admin-billing-edit">
+                          <div className="admin-billing-inputs">
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              className="billing-amount"
+                              value={billingDraftFor(o).amount}
+                              onChange={(e) =>
+                                setBillingDraft((prev) => ({
+                                  ...prev,
+                                  [o.id]: { amount: e.target.value },
+                                }))
+                              }
+                              aria-label={`${o.name} monthly billing amount (Phase 5)`}
+                            />
                           </div>
-                        )}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            disabled={savingBillingId !== null || viewingOrgId !== null || resettingOrgId !== null}
+                            onClick={() => handleSaveBilling(o)}
+                          >
+                            {savingBillingId === o.id ? "Saving…" : "Save"}
+                          </button>
+                        </div>
                       </td>
                       <td data-label="Actions">
                         <div className="row-actions">
-                          {isOwner ? (
-                            <span
-                              className="cell-muted"
-                              title="The owner workspace cannot be deleted"
-                            >
-                              —
-                            </span>
-                          ) : (
-                            <>
-                              <button
-                                className="btn btn-primary btn-sm"
-                                title="Open this workspace as the client sees it"
-                                aria-label={`View ${o.name} account`}
-                                disabled={viewingOrgId !== null || resettingOrgId !== null}
-                                onClick={() => handleViewAccount(o)}
-                              >
-                                {viewingOrgId === o.id ? "Opening…" : "View account"}
-                              </button>
-                              <button
-                                className="btn btn-ghost btn-sm"
-                                title="Generate a new temporary password for this client"
-                                aria-label={`Reset ${o.name} password`}
-                                disabled={viewingOrgId !== null || resettingOrgId !== null}
-                                onClick={() => handleResetPassword(o)}
-                              >
-                                {resettingOrgId === o.id ? "Resetting…" : "Reset password"}
-                              </button>
-                              <button
-                                className="icon-btn danger"
-                                title="Delete this client account"
-                                aria-label={`Delete ${o.name}`}
-                                disabled={viewingOrgId !== null || resettingOrgId !== null}
-                                onClick={() => setDeleting(o)}
-                              >
-                                Delete
-                              </button>
-                            </>
-                          )}
+                          <button
+                            className="btn btn-primary btn-sm"
+                            title="Open this workspace as the client sees it"
+                            aria-label={`View ${o.name} account`}
+                            disabled={viewingOrgId !== null || resettingOrgId !== null}
+                            onClick={() => handleViewAccount(o)}
+                          >
+                            {viewingOrgId === o.id ? "Opening…" : "View account"}
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            title="Generate a new temporary password for this client"
+                            aria-label={`Reset ${o.name} password`}
+                            disabled={viewingOrgId !== null || resettingOrgId !== null}
+                            onClick={() => handleResetPassword(o)}
+                          >
+                            {resettingOrgId === o.id ? "Resetting…" : "Reset password"}
+                          </button>
+                          <button
+                            className="icon-btn danger"
+                            title="Delete this client account"
+                            aria-label={`Delete ${o.name}`}
+                            disabled={viewingOrgId !== null || resettingOrgId !== null}
+                            onClick={() => setDeleting(o)}
+                          >
+                            Delete
+                          </button>
                         </div>
                       </td>
                     </tr>
