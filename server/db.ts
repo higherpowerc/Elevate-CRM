@@ -192,6 +192,53 @@ export function isInvoiceStatus(v: unknown): v is InvoiceStatus {
  *  Phase 2 — for now admin behaves like member inside their own org). */
 export type Role = "admin" | "member";
 
+/* ── Team users per client account (owner request 2026-08-14) ────────────
+ * A client account (tenant org) has an org admin — the account's original
+ * owner login (every existing single-user account automatically treats its
+ * user as admin; no stored-role migration) plus any role='admin' team
+ * member — and can add/remove TEAM MEMBERS. A restricted member (role=
+ * 'member') is granted PER-TAB access: which tenant tabs they can open, and
+ * per tab a mode (view-only vs can-edit). The Dashboard is always visible to
+ * every member (it is their own org's money overview); tenants never see
+ * "Leads" (owner-only).
+ *
+ * users.permissions stores a JSON object keyed by tenant tab → {edit: bool}.
+ * A member whose tab is ABSENT from the object has no access to that tab;
+ * {edit:false} = view-only; {edit:true} = can edit. Org admins (role='admin'
+ * and the org's original owner login) bypass permissions entirely. */
+export const TENANT_TABS = ["clients", "tasks", "finance", "settings", "support"] as const;
+export type TenantTab = (typeof TENANT_TABS)[number];
+
+export interface TabPermission {
+  edit: boolean;
+}
+export type TabPermissions = Partial<Record<TenantTab, TabPermission>>;
+
+export function isTenantTab(v: unknown): v is TenantTab {
+  return typeof v === "string" && (TENANT_TABS as readonly string[]).includes(v);
+}
+
+/** Parse a user's stored permissions JSON → clean object. Defensive: drops
+ *  unknown tabs and malformed entries, falls back to {} on anything unusable
+ *  ('' and '{}' both mean "no tab access" for a restricted member). */
+export function parsePermissions(raw: string | null | undefined): TabPermissions {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: TabPermissions = {};
+    for (const tab of TENANT_TABS) {
+      const p = (parsed as Record<string, unknown>)[tab];
+      if (p === null || typeof p !== "object" || Array.isArray(p)) continue;
+      const edit = (p as Record<string, unknown>).edit;
+      if (typeof edit === "boolean") out[tab] = { edit };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export const DEFAULT_ORG_NAME = "Elevate Studio";
 
 /** The custom-field value types a tenant can define (Phase 3b; 3f-1 adds
@@ -281,6 +328,7 @@ db.exec(`
     password_hash  TEXT NOT NULL,
     org_id         INTEGER NOT NULL REFERENCES orgs(id),
     role           TEXT NOT NULL DEFAULT 'member',
+    permissions    TEXT NOT NULL DEFAULT '{}',
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
     first_login_at TEXT
   );
@@ -383,6 +431,25 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_tickets_org_status ON tickets(org_id, status);
 `);
+
+/**
+ * Team-users migration (owner request 2026-08-14). Idempotent — safe on every
+ * boot.
+ *
+ * users.permissions stores the per-tab access grants for a RESTRICTED member
+ * (role='member') as a JSON object keyed by tenant tab → {edit: bool}
+ * (clients | tasks | finance | settings | support). Absent tab = no access;
+ * {edit:false} = view-only. Admins (role='admin' and the org's original owner
+ * login) bypass permissions entirely, so the '{}' default is exactly right for
+ * them. Plain TEXT with a DEFAULT, so existing rows backfill cleanly and no FK
+ * games are needed (the same pattern the Phase 3e migration uses).
+ */
+{
+  const cols = db.query("PRAGMA table_info(users)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "permissions")) {
+    db.exec("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'");
+  }
+}
 
 // Simple migration for databases created before custom_fields existed:
 // add the column if it's missing (SQLite has no ADD COLUMN IF NOT EXISTS).
@@ -839,15 +906,17 @@ function positionalStage(oldIndex: number, oldCount: number, newStages: readonly
 /**
  * Migrate the owner org's pipeline to Leads → Onboarding → Sold and remap its
  * clients positionally. No-op for every other org (tenants, and any owner org
- * whose stages were already customized away from the legacy list). Called at
- * boot (db.ts import) AND right after the admin is ensured (auth.ts), so both
- * an existing database (admin already present) and a fresh one (admin created
- * after the import-time pass) converge on the 3-stage owner pipeline.
+ * whose stages were already customized away from the legacy list). The owner
+ * org is identified by NAME ("Elevate Studio", the default org — getOwnerOrgId),
+ * NOT by users.role: since the team-users feature (owner request 2026-08-14)
+ * gives client-account org admins role='admin' too, a role-based lookup would
+ * wrongly treat tenant orgs as owner orgs. Called at boot (db.ts import) AND
+ * right after the admin is ensured (auth.ts), so both an existing database
+ * (admin already present) and a fresh one (admin created after the import-time
+ * pass) converge on the 3-stage owner pipeline.
  */
 export function migrateOwnerPipeline(): void {
-  const adminOrgs = db
-    .query("SELECT DISTINCT org_id FROM users WHERE role = 'admin'")
-    .all() as { org_id: number }[];
+  const adminOrgs = [{ org_id: getOwnerOrgId() }];
   for (const { org_id } of adminOrgs) {
     const org = getOrg(org_id);
     if (!org) continue;
@@ -909,6 +978,25 @@ export function ensureDefaultOrg(): number {
     .get(DEFAULT_ORG_NAME) as { id: number } | null;
   if (orgRow) return orgRow.id;
   return Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(DEFAULT_ORG_NAME).lastInsertRowid);
+}
+
+/**
+ * The platform owner's workspace org — the org named "Elevate Studio" (the
+ * default org, created first — always id 1 in practice). Name-based lookup so
+ * tenant renames of their own org can never matter, and so tenant org admins
+ * (role='admin' users in client accounts, team-users feature) are never
+ * mistaken for the owner. Never assumed to be id 1 — the name is the stable
+ * identifier every existing migration/seed uses.
+ */
+export function getOwnerOrgId(): number {
+  const orgRow = db
+    .query("SELECT id FROM orgs WHERE name = ? ORDER BY id LIMIT 1")
+    .get(DEFAULT_ORG_NAME) as { id: number } | null;
+  return orgRow ? orgRow.id : ensureDefaultOrg();
+}
+
+export function isOwnerOrg(orgId: number): boolean {
+  return orgId === getOwnerOrgId();
 }
 
 /** Full org row (branding + pipeline + custom-field settings). Every settings

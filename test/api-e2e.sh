@@ -4410,6 +4410,234 @@ code -b "$JAR42" -X DELETE "$BASE/api/admin/orgs/$TICKET_B_ORG" > /dev/null
 rm -f "$JAR42" "$JAR42A" "$JAR42B"
 echo "  ✓ 42: support tickets verified (owner Tickets tab + tenant Support tab, row isolation, owner-only status changes)"
 
+echo "== 43. Team users per client account (owner request 2026-08-14): org admins + restricted members with per-tab permissions =="
+echo "-- 43a. Provision two member tenants + fresh sessions =="
+JAR43=$(mktemp)     # fresh owner session for this section
+JAR43A=$(mktemp)    # tenant A first user (the account's original owner login)
+JAR43B=$(mktemp)    # tenant A member BOB (restricted, role=member)
+JAR43C=$(mktemp)    # tenant A member CAROL (role=admin)
+JAR43D=$(mktemp)    # tenant B first user (cross-org isolation target)
+S=$(code -c "$JAR43" -b "$JAR43" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "43a: owner login" 200 "$S"
+grep -q '"role":"admin"' /tmp/body.json && grep -q '"permissions":{}' /tmp/body.json && \
+  echo "  ✓ owner me/login carries role admin + empty permissions (owner unaffected)" || echo "  ✗ owner me shape: $(cat /tmp/body.json)"
+S=$(code -b "$JAR43" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Member Co A","email":"membera43@example.com","password":"membera43pass"}' "$BASE/api/admin/orgs")
+check "43a: provision tenant A" 201 "$S"
+TENANT_A_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR43" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Member Co B","email":"memberb43@example.com","password":"memberb43pass"}' "$BASE/api/admin/orgs")
+check "43a: provision tenant B" 201 "$S"
+TENANT_B_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+echo "    (tenant A org=$TENANT_A_ORG, tenant B org=$TENANT_B_ORG)"
+S=$(code -c "$JAR43A" -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"membera43@example.com","password":"membera43pass"}' "$BASE/api/auth/login")
+check "43a: tenant A first user login" 200 "$S"
+S=$(code -c "$JAR43D" -b "$JAR43D" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"memberb43@example.com","password":"memberb43pass"}' "$BASE/api/auth/login")
+check "43a: tenant B first user login" 200 "$S"
+
+echo "-- 43b. The account's original owner login IS the org admin (no stored-role migration) =="
+S=$(code -b "$JAR43A" "$BASE/api/org/members")
+check "43b: tenant A first user GET members → 200 (org admin)" 200 "$S"
+grep -q '"members":' /tmp/body.json && grep -q 'membera43@example.com' /tmp/body.json && echo "  ✓ list contains the account owner login" || echo "  ✗ members list: $(cat /tmp/body.json)"
+grep -qv '"password' /tmp/body.json && grep -qv '"password_hash' /tmp/body.json && echo "  ✓ no password material in the member list" || echo "  ✗ password material leaked in member list"
+FIRST_A_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['members'][0]['id'])")
+echo "    (tenant A first user id=$FIRST_A_ID)"
+S=$(code -b "$JAR43A" "$BASE/api/auth/me")
+check "43b: tenant A me → 200" 200 "$S"
+grep -q '"role":"member"' /tmp/body.json && grep -q '"permissions":{}' /tmp/body.json && echo "  ✓ me carries role member + permissions {} (stored role untouched, enforcement is structural)" || echo "  ✗ me shape: $(cat /tmp/body.json)"
+S=$(code -b "$JAR43A" "$BASE/api/clients")
+check "43b: org admin has full data access (clients read → 200)" 200 "$S"
+
+echo "-- 43c. Create a restricted member (role=member, default all tabs view-only) =="
+S=$(code -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bob43@membera.example","password":"bobpass123","role":"member"}' "$BASE/api/org/members")
+check "43c: tenant A creates bob (role member) → 201" 201 "$S"
+BOB_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['member']['id'])")
+grep -q '"role":"member"' /tmp/body.json && grep -q '"permissions":{' /tmp/body.json && echo "  ✓ response carries role + permissions" || echo "  ✗ create response: $(cat /tmp/body.json)"
+python3 -c "
+import json
+m = json.load(open('/tmp/body.json'))['member']
+tabs = m['permissions']
+expect = {'clients','tasks','finance','settings','support'}
+assert set(tabs) == expect, tabs
+assert all(not v['edit'] for v in tabs.values()), tabs
+print('  ✓ new member default = ALL five tabs view-only (admin adjusts)')
+" || echo "  ✗ default permissions wrong: $(cat /tmp/body.json)"
+grep -qv '"password' /tmp/body.json && echo "  ✓ create response carries no password material" || echo "  ✗ create response leaked password"
+check "43c: duplicate email → 400" 400 $(code -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bob43@membera.example","password":"bobpass123","role":"member"}' "$BASE/api/org/members")
+check "43c: bad role → 400" 400 $(code -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"x43@membera.example","password":"xpass1234","role":"superuser"}' "$BASE/api/org/members")
+check "43c: short password → 400" 400 $(code -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"y43@membera.example","password":"short","role":"member"}' "$BASE/api/org/members")
+check "43c: bad email → 400" 400 $(code -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"not-an-email","password":"xpass1234","role":"member"}' "$BASE/api/org/members")
+
+echo "-- 43d. Restricted member: view-only read works, writes 403, management 403, dashboard always visible =="
+S=$(code -c "$JAR43B" -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bob43@membera.example","password":"bobpass123"}' "$BASE/api/auth/login")
+check "43d: bob login → 200" 200 "$S"
+S=$(code -b "$JAR43B" "$BASE/api/auth/me")
+grep -q '"role":"member"' /tmp/body.json && grep -q '"permissions":' /tmp/body.json && echo "  ✓ /api/auth/me includes role + permissions for the member" || echo "  ✗ me shape: $(cat /tmp/body.json)"
+check "43d: bob reads clients (view-only) → 200" 200 $(code -b "$JAR43B" "$BASE/api/clients")
+check "43d: bob writes client (view-only) → 403" 403 $(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bobco","clientType":"commercial"}' "$BASE/api/clients")
+check "43d: bob reads tasks (view-only) → 200" 200 $(code -b "$JAR43B" "$BASE/api/tasks")
+check "43d: bob toggles task (view-only) → 403" 403 $(code -b "$JAR43B" -X POST "$BASE/api/tasks/1/toggle")
+check "43d: bob reads invoices (view-only) → 200" 200 $(code -b "$JAR43B" "$BASE/api/invoices")
+check "43d: bob reads settings (view-only) → 200" 200 $(code -b "$JAR43B" "$BASE/api/settings")
+check "43d: bob PUT settings (view-only) → 403" 403 $(code -b "$JAR43B" -X PUT -H 'Content-Type: application/json' \
+  -d '{"orgName":"Hacked"}' "$BASE/api/settings")
+check "43d: bob reads tickets (view-only) → 200" 200 $(code -b "$JAR43B" "$BASE/api/tickets")
+check "43d: bob creates ticket (view-only) → 403" 403 $(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"x","message":"y"}' "$BASE/api/tickets")
+check "43d: bob GET members (restricted member) → 403" 403 $(code -b "$JAR43B" "$BASE/api/org/members")
+check "43d: bob POST member → 403" 403 $(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"nope43@membera.example","password":"nopepass123","role":"member"}' "$BASE/api/org/members")
+check "43d: bob dashboard (always visible) → 200" 200 $(code -b "$JAR43B" "$BASE/api/dashboard")
+
+echo "-- 43e. PATCH permissions: absent tab = no access; edit flag gates writes =="
+S=$(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{}}' "$BASE/api/org/members/$BOB_ID")
+check "43e: admin strips ALL tabs → 200" 200 "$S"
+check "43e: bob reads clients (no clients tab) → 403" 403 $(code -b "$JAR43B" "$BASE/api/clients")
+check "43e: bob reads tasks (no tab) → 403" 403 $(code -b "$JAR43B" "$BASE/api/tasks")
+check "43e: bob reads invoices (no tab) → 403" 403 $(code -b "$JAR43B" "$BASE/api/invoices")
+check "43e: bob reads settings (no tab) → 403" 403 $(code -b "$JAR43B" "$BASE/api/settings")
+check "43e: bob reads tickets (no tab) → 403" 403 $(code -b "$JAR43B" "$BASE/api/tickets")
+check "43e: bob dashboard (always visible even with no tabs) → 200" 200 $(code -b "$JAR43B" "$BASE/api/dashboard")
+S=$(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{"clients":{"edit":true}}}' "$BASE/api/org/members/$BOB_ID")
+check "43e: admin grants clients edit → 200" 200 "$S"
+check "43e: bob reads clients (granted) → 200" 200 $(code -b "$JAR43B" "$BASE/api/clients")
+S=$(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bobco LLC","clientType":"commercial"}' "$BASE/api/clients")
+check "43e: bob writes client (edit granted) → 201" 201 "$S"
+check "43e: bob still blocked on tasks write → 403" 403 $(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Sneak"}' "$BASE/api/tasks")
+check "43e: bob still blocked on invoices write → 403" 403 $(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":100}' "$BASE/api/invoices")
+check "43e: admin PATCH unknown tab → 400" 400 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{"leads":{"edit":true}}}' "$BASE/api/org/members/$BOB_ID")
+check "43e: admin PATCH malformed permission → 400" 400 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{"clients":{"edit":"yes"}}}' "$BASE/api/org/members/$BOB_ID")
+check "43e: admin PATCH missing member → 404" 404 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{}}' "$BASE/api/org/members/999999")
+check "43e: admin PATCH empty body → 400" 400 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{}' "$BASE/api/org/members/$BOB_ID")
+
+echo "-- 43f. Member password flows: PATCH password + change-password (3k) =="
+S=$(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"password":"bobnewpass123"}' "$BASE/api/org/members/$BOB_ID")
+check "43f: admin PATCH bob password → 200" 200 "$S"
+S=$(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bob43@membera.example","password":"bobnewpass123"}' "$BASE/api/auth/login")
+check "43f: bob login with new password → 200" 200 "$S"
+S=$(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"currentPassword":"bobnewpass123","newPassword":"bobchanged456"}' "$BASE/api/auth/change-password")
+check "43f: bob change-password → 200" 200 "$S"
+S=$(code -b "$JAR43B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bob43@membera.example","password":"bobchanged456"}' "$BASE/api/auth/login")
+check "43f: bob login with changed password → 200" 200 "$S"
+
+echo "-- 43g. Admin member (role=admin): full access + manages members =="
+S=$(code -b "$JAR43A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"carol43@membera.example","password":"carolpass123","role":"admin"}' "$BASE/api/org/members")
+check "43g: tenant A creates carol (role admin) → 201" 201 "$S"
+CAROL_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['member']['id'])")
+S=$(code -c "$JAR43C" -b "$JAR43C" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"carol43@membera.example","password":"carolpass123"}' "$BASE/api/auth/login")
+check "43g: carol login → 200" 200 "$S"
+grep -q '"role":"admin"' /tmp/body.json && echo "  ✓ carol me carries role admin" || echo "  ✗ carol role: $(cat /tmp/body.json)"
+check "43g: carol GET members → 200" 200 $(code -b "$JAR43C" "$BASE/api/org/members")
+check "43g: carol writes client (admin bypasses) → 201" 201 $(code -b "$JAR43C" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"CarolCo","clientType":"commercial"}' "$BASE/api/clients")
+S=$(code -b "$JAR43C" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"dave43@membera.example","password":"davepass123","role":"member"}' "$BASE/api/org/members")
+check "43g: carol creates dave → 201" 201 "$S"
+DAVE_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['member']['id'])")
+check "43g: carol PATCH dave role → 200" 200 $(code -b "$JAR43C" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"admin"}' "$BASE/api/org/members/$DAVE_ID")
+check "43g: carol DELETE dave → 200" 200 $(code -b "$JAR43C" -X DELETE "$BASE/api/org/members/$DAVE_ID")
+check "43g: carol PATCH deleted dave → 404" 404 $(code -b "$JAR43C" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"member"}' "$BASE/api/org/members/$DAVE_ID")
+
+echo "-- 43h. Last-admin protection: cannot demote/remove the only admin =="
+S=$(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"admin"}' "$BASE/api/org/members/$FIRST_A_ID")
+check "43h: first user promotes self to stored admin → 200" 200 "$S"
+check "43h: first user demotes carol (second admin exists) → 200" 200 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"member"}' "$BASE/api/org/members/$CAROL_ID")
+check "43h: demoted carol GET members → 403" 403 $(code -b "$JAR43C" "$BASE/api/org/members")
+check "43h: first user demotes SELF (last admin) → 400" 400 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"member"}' "$BASE/api/org/members/$FIRST_A_ID")
+check "43h: first user deletes SELF (last admin) → 400" 400 $(code -b "$JAR43A" -X DELETE "$BASE/api/org/members/$FIRST_A_ID")
+S=$(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"admin"}' "$BASE/api/org/members/$CAROL_ID")
+check "43h: first user restores carol to admin → 200" 200 "$S"
+check "43h: first user demotes self (second admin present) → 200" 200 $(code -b "$JAR43A" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"member"}' "$BASE/api/org/members/$FIRST_A_ID")
+check "43h: first user deletes carol (another admin remains) → 200" 200 $(code -b "$JAR43A" -X DELETE "$BASE/api/org/members/$CAROL_ID")
+
+echo "-- 43i. Cross-org isolation: an admin can never touch another account's members =="
+check "43i: tenant B PATCH tenant A's member → 404" 404 $(code -b "$JAR43D" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"admin"}' "$BASE/api/org/members/$BOB_ID")
+check "43i: tenant B DELETE tenant A's member → 404" 404 $(code -b "$JAR43D" -X DELETE "$BASE/api/org/members/$BOB_ID")
+S=$(code -b "$JAR43D" "$BASE/api/org/members")
+check "43i: tenant B GET own members → 200" 200 "$S"
+grep -q 'memberb43@example.com' /tmp/body.json && grep -qv 'bob43@membera.example' /tmp/body.json && echo "  ✓ tenant B sees ONLY its own users" || echo "  ✗ tenant B member list leaked: $(cat /tmp/body.json)"
+S=$(code -b "$JAR43D" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"eve43@memberb.example","password":"evepass1234","role":"member","orgId":2}' "$BASE/api/org/members")
+check "43i: tenant B POST member with tampered orgId body → 201 (org always from session)" 201 "$S"
+S=$(code -b "$JAR43D" "$BASE/api/org/members")
+grep -q 'eve43@memberb.example' /tmp/body.json && grep -qv 'bob43' /tmp/body.json && echo "  ✓ tampered orgId ignored — member landed in tenant B's own org" || echo "  ✗ tamper result: $(cat /tmp/body.json)"
+check "43i: tenant B deletes own FIRST user (its only admin) → 400" 400 $(code -b "$JAR43D" -X DELETE "$BASE/api/org/members/$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['members'][0]['id'])")")
+
+echo "-- 43j. Owner workspace unaffected: owner still full admin; owner org membership untouched =="
+check "43j: owner admin/orgs → 200" 200 $(code -b "$JAR43" "$BASE/api/admin/orgs")
+S=$(code -b "$JAR43" "$BASE/api/org/members")
+check "43j: owner GET own org members → 200" 200 "$S"
+grep -q "$ADMIN_EMAIL" /tmp/body.json && echo "  ✓ owner sees own org's members (itself)" || echo "  ✗ owner member list: $(cat /tmp/body.json)"
+S=$(code -b "$JAR43" "$BASE/api/auth/me")
+grep -q '"role":"admin"' /tmp/body.json && grep -q '"permissions":{}' /tmp/body.json && echo "  ✓ owner me still role admin + empty permissions (full admin)" || echo "  ✗ owner me: $(cat /tmp/body.json)"
+check "43j: owner still reads all-org tickets (owner behavior intact) → 200" 200 $(code -b "$JAR43" "$BASE/api/tickets")
+
+echo "-- 43k. Source markers: schema + enforcement + routes shipped =="
+if grep -Fq 'permissions    TEXT NOT NULL DEFAULT' server/db.ts && grep -Fq 'ADD COLUMN permissions TEXT NOT NULL DEFAULT' server/db.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: users.permissions column (CREATE + idempotent migration)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: users.permissions column missing"
+fi
+if grep -Fq 'TENANT_TABS = ["clients", "tasks", "finance", "settings", "support"]' server/db.ts && grep -Fq 'parsePermissions' server/auth.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: tenant-tab union + permissions parse wired into the session user"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: tenant-tab/permissions missing"
+fi
+if grep -Fq 'denyTabRead(auth, "clients")' server/api.ts && grep -Fq 'denyTabWrite(auth, "finance")' server/api.ts && grep -Fq 'denyTabRead(auth, "support")' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: per-tab read/write gates on clients / finance / support routes"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: tab gates missing"
+fi
+if grep -Fq 'pathname === "/api/org/members"' server/api.ts && grep -Fq 'requireOrgAdmin(auth)' server/api.ts && grep -Fq 'Cannot demote the org' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: /api/org/members routes + org-admin gate + last-admin protection"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: member routes missing"
+fi
+if grep -Fq 'isOwnerOrg(auth.orgId)' server/api.ts && grep -Fq 'isOwnerSession(auth)' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner workspace keyed off the owner ORG (not role alone — tenant admins stay tenants)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-org detection missing"
+fi
+
+echo "-- 43l. Cleanup: delete member tenants =="
+code -b "$JAR43" -X DELETE "$BASE/api/admin/orgs/$TENANT_A_ORG" > /dev/null
+code -b "$JAR43" -X DELETE "$BASE/api/admin/orgs/$TENANT_B_ORG" > /dev/null
+rm -f "$JAR43" "$JAR43A" "$JAR43B" "$JAR43C" "$JAR43D"
+echo "  ✓ 43: team users per client account verified (org admin = original owner login, restricted members per-tab enforced server-side, last-admin protection, cross-org isolation, owner unaffected)"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

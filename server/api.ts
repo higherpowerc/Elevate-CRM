@@ -6,6 +6,12 @@ import {
   parseIntakeOpts,
   parseCustomIntakeGroups,
   getOrg,
+  getOwnerOrgId,
+  isOwnerOrg,
+  TENANT_TABS,
+  isTenantTab,
+  parsePermissions,
+  type TenantTab,
   INVOICE_STATUSES,
   isInvoiceStatus,
   TICKET_STATUSES,
@@ -37,6 +43,7 @@ import {
   type TicketRow,
   type TicketStatus,
   type TicketPriority,
+  type TabPermissions,
 } from "./db";
 import {
   GENERAL_VERTICAL,
@@ -121,26 +128,104 @@ function requireAuth(req: Request): AuthContext | Response {
   return { userId: user.id, orgId: user.orgId, role: user.role };
 }
 
-/** requireAuth + the user must be an `admin` (owner). Members get 403. */
+/** requireAuth + the user must be the platform OWNER — the Elevate Studio
+ *  workspace org AND role='admin'. Tenant org admins (role='admin' users in
+ *  client accounts, team-users feature) are NOT the owner: every /api/admin
+ *  route and the tickets PATCH stay owner-only, exactly as before. */
 function requireAdmin(req: Request): AuthContext | Response {
   const auth = requireAuth(req);
   if (auth instanceof Response) return auth;
-  if (auth.role !== "admin") return err("Forbidden.", 403);
+  if (auth.role !== "admin" || !isOwnerOrg(auth.orgId)) return err("Forbidden.", 403);
   return auth;
+}
+
+/** True when the session user is the platform owner's own session: the owner
+ *  org AND role='admin'. During an owner impersonation the session is the
+ *  tenant's user, so this is false — matching the pre-feature behavior where
+ *  owner behavior (client MRR, agreement status, all-org tickets, owner KPI
+ *  shapes) keyed off role='admin'. A tenant org admin (role='admin' in a
+ *  client account) is also false — owner workspace only. */
+function isOwnerSession(auth: AuthContext): boolean {
+  return auth.role === "admin" && isOwnerOrg(auth.orgId);
+}
+
+/** True when the session user is an org admin of their OWN account: stored
+ *  role='admin' (the owner, or an admin team member) OR the org's original
+ *  owner login (its first user — every existing single-user account
+ *  automatically treats its user as admin; no stored-role migration). Org
+ *  admins bypass all tab permissions and manage the org's team members. */
+function isOrgAdmin(auth: AuthContext): boolean {
+  if (auth.role === "admin") return true;
+  const first = db
+    .query("SELECT MIN(id) AS id FROM users WHERE org_id = ?")
+    .get(auth.orgId) as { id: number | null } | null;
+  return first?.id === auth.userId;
+}
+
+/** Number of org admins in an account: stored role='admin' users, plus the
+ *  org's original owner login once (it is a structural admin even when its
+ *  stored role is 'member' — the "no migration" rule). Used by the
+ *  last-admin protection on member demote/remove. */
+function orgAdminCount(orgId: number): number {
+  const stored = db
+    .query("SELECT COUNT(*) AS c FROM users WHERE org_id = ? AND role = 'admin'")
+    .get(orgId) as { c: number };
+  const first = db
+    .query("SELECT MIN(id) AS id, role FROM users WHERE org_id = ?")
+    .get(orgId) as { id: number | null; role: Role | null } | null;
+  let count = stored.c;
+  if (first && first.id !== null && first.role !== "admin") count += 1;
+  return count;
+}
+
+/** The session user's stored per-tab permissions (restricted members only —
+ *  org admins bypass and never consult this). */
+function orgPermissions(userId: number): TabPermissions {
+  const row = db.query("SELECT permissions FROM users WHERE id = ?").get(userId) as
+    | { permissions: string | null }
+    | null;
+  return parsePermissions(row?.permissions ?? null);
+}
+
+function canReadTab(auth: AuthContext, tab: TenantTab): boolean {
+  if (isOrgAdmin(auth)) return true;
+  return orgPermissions(auth.userId)[tab] !== undefined;
+}
+function canEditTab(auth: AuthContext, tab: TenantTab): boolean {
+  if (isOrgAdmin(auth)) return true;
+  return orgPermissions(auth.userId)[tab]?.edit === true;
+}
+
+/** Per-tab read/write gates — return a 403 Response when a RESTRICTED member
+ *  lacks the tab (absent = no access) or has it view-only. Org admins and the
+ *  owner always pass. Dashboard is deliberately NOT gated (always visible —
+ *  it is the member's own org's money overview). */
+function denyTabRead(auth: AuthContext, tab: TenantTab): Response | null {
+  return canReadTab(auth, tab) ? null : err("Forbidden.", 403);
+}
+function denyTabWrite(auth: AuthContext, tab: TenantTab): Response | null {
+  return canEditTab(auth, tab) ? null : err("Forbidden.", 403);
+}
+
+/** requireAuth + the user must be an org admin of their OWN account (owner or
+ *  tenant org admin) — the gate for the /api/org/members management routes. */
+function requireOrgAdmin(auth: AuthContext): Response | null {
+  return isOrgAdmin(auth) ? null : err("Forbidden.", 403);
 }
 
 /**
  * Phase 3d — owner impersonation. If the current session is an impersonation,
  * returns the admin user id who started it — but only when that user still
- * exists and is still an admin. Any other session returns null. The `imp`
- * field lives inside the HMAC-signed session payload, so a client can neither
- * forge an impersonation nor attach one to a normal session.
+ * exists and is still the platform owner (owner org + role admin). Any other
+ * session returns null. The `imp` field lives inside the HMAC-signed session
+ * payload, so a client can neither forge an impersonation nor attach one to a
+ * normal session.
  */
 function impersonationFrom(req: Request): number | null {
   const payload = verifySessionPayload(getCookie(req, SESSION_COOKIE));
   if (!payload || typeof payload.imp !== "number") return null;
   const admin = getUserById(payload.imp);
-  if (!admin || admin.role !== "admin") return null;
+  if (!admin || admin.role !== "admin" || !isOwnerOrg(admin.orgId)) return null;
   return payload.imp;
 }
 
@@ -1088,6 +1173,69 @@ function parseTicketFields(
   return { ok: true, value: out };
 }
 
+/* ── Team users per client account (owner request 2026-08-14) ────────────
+ * A client account (tenant org) has an org admin — the account's original
+ * owner login (every existing single-user account automatically treats its
+ * user as admin) plus any role='admin' team member — and can add/remove TEAM
+ * MEMBERS. Restricted members get PER-TAB access stored on users.permissions
+ * (JSON keyed by tenant tab → {edit: bool}); absent tab = no access. The
+ * routes live under /api/org/members and are ALWAYS scoped to the session
+ * org — there is no cross-org addressing (a body orgId is ignored), so an
+ * admin can never list or alter another account's members. */
+
+/** Row shape for the member list/management responses. NEVER includes any
+ *  password material — only the org-scoped identity + role + permissions. */
+interface OrgMemberRow {
+  id: number;
+  email: string;
+  role: Role;
+  permissions: string;
+  created_at: string;
+}
+
+/** Member row → API shape: stored role + parsed per-tab permissions + created
+ *  date. Password hashes never leave the server. */
+function toOrgMember(row: OrgMemberRow) {
+  return {
+    id: row.id,
+    email: row.email,
+    role: row.role,
+    permissions: parsePermissions(row.permissions),
+    createdAt: row.created_at,
+  };
+}
+
+const MEMBER_SELECT = "id, email, role, permissions, created_at FROM users";
+
+/** Validates a proposed permissions object: keys must be exactly the known
+ *  tenant tabs (clients | tasks | finance | settings | support), each value an
+ *  object with a boolean edit flag. A tab ABSENT from the object means the
+ *  member has no access to that tab (the PATCH replaces the whole grant). */
+function validatePermissions(
+  v: unknown,
+): { ok: true; value: TabPermissions } | { ok: false; error: string } {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) {
+    return { ok: false, error: "Permissions must be an object keyed by tab." };
+  }
+  const obj = v as Record<string, unknown>;
+  const out: TabPermissions = {};
+  for (const key of Object.keys(obj)) {
+    if (!isTenantTab(key)) {
+      return { ok: false, error: `Unknown tab: ${key} — allowed: ${TENANT_TABS.join(", ")}.` };
+    }
+    const p = obj[key];
+    if (p === null || typeof p !== "object" || Array.isArray(p)) {
+      return { ok: false, error: `"${key}" permissions must be an object with an edit flag.` };
+    }
+    const edit = (p as Record<string, unknown>).edit;
+    if (typeof edit !== "boolean") {
+      return { ok: false, error: `"${key}" must include edit: true or false.` };
+    }
+    out[key as TenantTab] = { edit };
+  }
+  return { ok: true, value: out };
+}
+
 /* ── Admin (owner-only) org provisioning ───────────────────── */
 
 interface OrgRow {
@@ -1245,14 +1393,13 @@ function insertOrgWithMember(input: {
 
 /* ── 3g-3: sold-lead auto-provisioning ─────────────────────── */
 
-/** The owner orgs = the orgs of admin-role users (the same flag that gates
- *  the Admin tab). Name-based lookup is NOT safe here — tenants (and the
- *  owner) can rename their org in Settings. */
+/** The owner orgs = exactly the platform owner's workspace (Elevate Studio,
+ *  identified by the default org's name). NOT role-based: since the team-users
+ *  feature (owner request 2026-08-14) gives client-account org admins
+ *  role='admin' too, a role-based lookup would wrongly treat tenant orgs as
+ *  owner orgs and auto-provision from them. */
 function ownerOrgIds(): number[] {
-  const rows = db.query("SELECT DISTINCT org_id FROM users WHERE role = 'admin'").all() as {
-    org_id: number;
-  }[];
-  return rows.map((r) => r.org_id);
+  return [getOwnerOrgId()];
 }
 
 /** True when the client's stage is the FINAL stage of this org's pipeline
@@ -1812,7 +1959,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const adminId = impersonationFrom(req);
     if (adminId === null) return err("Not impersonating.", 400);
     const admin = getUserById(adminId);
-    if (!admin || admin.role !== "admin") {
+    if (!admin || admin.role !== "admin" || !isOwnerOrg(admin.orgId)) {
       return err("Original admin session is no longer valid.", 403);
     }
     const token = createSession(admin.id);
@@ -2156,7 +2303,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
        (role=member) keep their own all-stage sum — for them projectedPipeline
        is their whole book's money, unchanged. */
     let projected = value.v;
-    if (auth.role === "admin") {
+    if (isOwnerSession(auth)) {
       const firstStage = orgStages.length > 0 ? orgStages[0] : "";
       projected = firstStage
         ? (db
@@ -2172,7 +2319,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db
         .query("SELECT * FROM clients WHERE org_id = ? AND archived = 0 ORDER BY updated_at DESC, id DESC LIMIT 5")
         .all(orgId) as ClientRow[]
-    ).map((r) => toClient(r, auth.role === "admin"));
+    ).map((r) => toClient(r, isOwnerSession(auth)));
 
     /* Task overview (2026-08-14 owner request): open / overdue / due soon /
        done counts plus the next few open tasks with a due date. Every query
@@ -2272,7 +2419,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     // excluding lost and archived records — "total for paying clients sold".
     // The per-account billing amount (orgs.monthly_subscription_amount) no
     // longer feeds MRR (Phase 5 billing prep only).
-    if (auth.role === "admin") {
+    if (isOwnerSession(auth)) {
       const mrrOrg = getOrg(orgId);
       const mrrStages = mrrOrg ? parseStages(mrrOrg.stages) : [...DEFAULT_STAGES];
       const terminalStage = mrrStages.length > 0 ? mrrStages[mrrStages.length - 1] : "";
@@ -2297,6 +2444,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
      (it is their CRM). The org always comes from the session — a body org_id
      is ignored, so there is no cross-org write path. */
   if (pathname === "/api/settings" && method === "GET") {
+    const deniedRead = denyTabRead(auth, "settings");
+    if (deniedRead) return deniedRead;
     const org = getOrg(orgId);
     if (!org) return err("Org not found.", 404);
     return json({
@@ -2325,6 +2474,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   }
 
   if (pathname === "/api/settings" && method === "PUT") {
+    const deniedWrite = denyTabWrite(auth, "settings");
+    if (deniedWrite) return deniedWrite;
     const org = getOrg(orgId);
     if (!org) return err("Org not found.", 404);
     const body = await readBody(req);
@@ -2563,6 +2714,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   /* Clients collection */
   if (pathname === "/api/clients" && method === "GET") {
+    const deniedRead = denyTabRead(auth, "clients");
+    if (deniedRead) return deniedRead;
     const includeArchived = url.searchParams.get("archived") === "1";
     const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
     let rows: ClientRow[];
@@ -2596,10 +2749,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
     // Owner cockpit B — the OWNER org (role=admin) receives agreementStatus
     // on every client; tenant orgs get the exact pre-change shape.
-    return json({ clients: rows.map((r) => toClient(r, auth.role === "admin")) });
+    return json({ clients: rows.map((r) => toClient(r, isOwnerSession(auth))) });
   }
 
   if (pathname === "/api/clients" && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "clients");
+    if (deniedWrite) return deniedWrite;
     const body = await readBody(req);
     if (!body) return err("Invalid JSON body.", 400);
     const org = getOrg(orgId);
@@ -2608,7 +2763,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       org ? parseStages(org.stages) : [...DEFAULT_STAGES],
       org ? parseCustomFields(org.custom_fields) : [],
       org ? parseCustomIntakeGroups(org.custom_intake_groups) : [],
-      auth.role === "admin", // owner cockpit B — agreement status is owner-only
+      isOwnerSession(auth), // owner cockpit B — agreement status is owner-only
     );
     if (!v.ok) return err(v.error, 400);
     const c = v.value;
@@ -2630,7 +2785,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         c.agreementStatus ?? "not_sent",
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
-    return json({ client: toClient(row, auth.role === "admin") }, 201);
+    return json({ client: toClient(row, isOwnerSession(auth)) }, 201);
   }
 
   /* Client item */
@@ -2640,12 +2795,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const find = () => db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
 
     if (method === "GET") {
+      const deniedRead = denyTabRead(auth, "clients");
+      if (deniedRead) return deniedRead;
       const row = find();
       if (!row) return err("Client not found.", 404);
-      return json({ client: toClient(row, auth.role === "admin") });
+      return json({ client: toClient(row, isOwnerSession(auth)) });
     }
 
     if (method === "PUT") {
+      const deniedWrite = denyTabWrite(auth, "clients");
+      if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Client not found.", 404);
       const body = await readBody(req);
@@ -2656,7 +2815,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         org ? parseStages(org.stages) : [...DEFAULT_STAGES],
         org ? parseCustomFields(org.custom_fields) : [],
         org ? parseCustomIntakeGroups(org.custom_intake_groups) : [],
-        auth.role === "admin", // owner cockpit B — agreement status is owner-only
+        isOwnerSession(auth), // owner cockpit B — agreement status is owner-only
       );
       if (!v.ok) return err(v.error, 400);
       const c = v.value;
@@ -2717,7 +2876,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       // status: persisted ONLY for the owner org (role=admin) and only when
       // present in the body. Tenant payloads never write it; partial updates
       // never clobber an absent value (the lost/DNC rule).
-      if (auth.role === "admin" && rec.agreementStatus !== undefined) {
+      if (isOwnerSession(auth) && rec.agreementStatus !== undefined) {
         sets.push("agreement_status = ?");
         params.push(rec.agreementStatus as string);
       }
@@ -2732,10 +2891,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       // The idempotency check inside also makes this the retry path for a
       // sold client whose earlier provision failed.
       await maybeAutoProvisionSoldClient(orgId, updated, req);
-      return json({ client: toClient(updated, auth.role === "admin") });
+      return json({ client: toClient(updated, isOwnerSession(auth)) });
     }
 
     if (method === "DELETE") {
+      const deniedWrite = denyTabWrite(auth, "clients");
+      if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Client not found.", 404);
       db.query("DELETE FROM clients WHERE id = ? AND org_id = ?").run(id, orgId);
@@ -2747,6 +2908,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   /* Tasks collection */
   if (pathname === "/api/tasks" && method === "GET") {
+    const deniedRead = denyTabRead(auth, "tasks");
+    if (deniedRead) return deniedRead;
     const doneParam = url.searchParams.get("done");
     const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
     const clauses: string[] = ["t.org_id = ?"];
@@ -2769,6 +2932,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   }
 
   if (pathname === "/api/tasks" && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "tasks");
+    if (deniedWrite) return deniedWrite;
     const body = await readBody(req);
     if (!body) return err("Invalid JSON body.", 400);
     const v = parseTaskFields(body);
@@ -2801,6 +2966,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   const taskToggleMatch = pathname.match(/^\/api\/tasks\/(\d+)\/toggle$/);
 
   if (taskToggleMatch && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "tasks");
+    if (deniedWrite) return deniedWrite;
     const id = Number(taskToggleMatch[1]);
     const row = db.query("SELECT * FROM tasks WHERE id = ? AND org_id = ?").get(id, orgId) as TaskRow | null;
     if (!row) return err("Task not found.", 404);
@@ -2817,6 +2984,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const find = () => db.query("SELECT * FROM tasks WHERE id = ? AND org_id = ?").get(id, orgId) as TaskRow | null;
 
     if (method === "PUT") {
+      const deniedWrite = denyTabWrite(auth, "tasks");
+      if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Task not found.", 404);
       const body = await readBody(req);
@@ -2846,6 +3015,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
 
     if (method === "DELETE") {
+      const deniedWrite = denyTabWrite(auth, "tasks");
+      if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Task not found.", 404);
       db.query("DELETE FROM tasks WHERE id = ? AND org_id = ?").run(id, orgId);
@@ -2857,6 +3028,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   /* Invoices collection */
   if (pathname === "/api/invoices" && method === "GET") {
+    const deniedRead = denyTabRead(auth, "finance");
+    if (deniedRead) return deniedRead;
     const statusParam = url.searchParams.get("status");
     const clientParam = url.searchParams.get("clientId");
     const clauses: string[] = ["i.org_id = ?"];
@@ -2890,6 +3063,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   }
 
   if (pathname === "/api/invoices" && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "finance");
+    if (deniedWrite) return deniedWrite;
     const body = await readBody(req);
     if (!body) return err("Invalid JSON body.", 400);
     const v = parseInvoiceFields(body);
@@ -2925,6 +3100,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const find = () => db.query("SELECT * FROM invoices WHERE id = ? AND org_id = ?").get(id, orgId) as InvoiceRow | null;
 
     if (method === "PUT") {
+      const deniedWrite = denyTabWrite(auth, "finance");
+      if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Invoice not found.", 404);
       const body = await readBody(req);
@@ -2954,6 +3131,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
 
     if (method === "DELETE") {
+      const deniedWrite = denyTabWrite(auth, "finance");
+      if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Invoice not found.", 404);
       db.query("DELETE FROM invoices WHERE id = ? AND org_id = ?").run(id, orgId);
@@ -2969,7 +3148,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
      PATCH is OWNER-only: tenants are rejected server-side (403), so a client
      can never change their own ticket's status/priority or anyone else's. */
   if (pathname === "/api/tickets" && method === "GET") {
-    if (auth.role === "admin") {
+    const deniedRead = denyTabRead(auth, "support");
+    if (deniedRead) return deniedRead;
+    if (isOwnerSession(auth)) {
       /* Owner: every org's tickets, newest first, with the org name joined. */
       const rows = db
         .query(
@@ -3000,6 +3181,8 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   }
 
   if (pathname === "/api/tickets" && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "support");
+    if (deniedWrite) return deniedWrite;
     const body = await readBody(req);
     if (!body) return err("Invalid JSON body.", 400);
     const v = parseTicketFields(body);
@@ -3020,7 +3203,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     const row = db
       .query(`${TICKET_SELECT} WHERE t.id = ? AND t.org_id = ?`)
       .get(Number(info.lastInsertRowid), orgId) as TicketRowJoined;
-    return json({ ticket: toTicket(row, auth.role === "admin") }, 201);
+    return json({ ticket: toTicket(row, isOwnerSession(auth)) }, 201);
   }
 
   const ticketMatch = pathname.match(/^\/api\/tickets\/(\d+)$/);
@@ -3049,6 +3232,134 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     );
     const updated = db.query(`${TICKET_SELECT} WHERE t.id = ?`).get(id) as TicketRowJoined | null;
     return json({ ticket: toTicket(updated as TicketRowJoined, true) });
+  }
+
+  /* Team users per client account (owner request 2026-08-14) — org-scoped
+     member management. ALL FOUR routes are admin-only (requireOrgAdmin: the
+     account's original owner login or a role='admin' team member); a
+     restricted member gets 403. The org ALWAYS comes from the session — a
+     body orgId is ignored, so there is no cross-org addressing. Password
+     material is write-only: it is accepted on create/PATCH and hashed, never
+     returned. */
+  if (pathname === "/api/org/members" && method === "GET") {
+    const deniedOrgAdmin = requireOrgAdmin(auth);
+    if (deniedOrgAdmin) return deniedOrgAdmin;
+    const rows = db
+      .query(`SELECT ${MEMBER_SELECT} WHERE org_id = ? ORDER BY id ASC`)
+      .all(auth.orgId) as OrgMemberRow[];
+    return json({ members: rows.map(toOrgMember) });
+  }
+
+  if (pathname === "/api/org/members" && method === "POST") {
+    const deniedOrgAdmin = requireOrgAdmin(auth);
+    if (deniedOrgAdmin) return deniedOrgAdmin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const role = body.role;
+    if (!email) return err("Member email is required.", 400);
+    if (email.length > 254) return err("Email must be under 254 characters.", 400);
+    if (!EMAIL_RE.test(email)) return err("Enter a valid email address.", 400);
+    if (!password) return err("Password is required.", 400);
+    if (password.length < 8) return err("Password must be at least 8 characters.", 400);
+    if (role !== "admin" && role !== "member") return err("Role must be admin or member.", 400);
+    const taken = db.query("SELECT id FROM users WHERE email = ?").get(email);
+    if (taken) return err("An account with this email already exists.", 400);
+    const hash = await hashPassword(password);
+    // Default for a NEW restricted member: every tab present, all view-only
+    // (the admin adjusts via PATCH). New admins bypass permissions (stored {}).
+    const permissions =
+      role === "member"
+        ? JSON.stringify({
+            clients: { edit: false },
+            tasks: { edit: false },
+            finance: { edit: false },
+            settings: { edit: false },
+            support: { edit: false },
+          })
+        : "{}";
+    const info = db
+      .query(`INSERT INTO users (email, password_hash, org_id, role, permissions) VALUES (?, ?, ?, ?, ?)`)
+      .run(email, hash, auth.orgId, role as Role, permissions);
+    const row = db
+      .query(`SELECT ${MEMBER_SELECT} WHERE id = ?`)
+      .get(Number(info.lastInsertRowid)) as OrgMemberRow;
+    return json({ member: toOrgMember(row) }, 201);
+  }
+
+  const memberMatch = pathname.match(/^\/api\/org\/members\/(\d+)$/);
+  if (memberMatch) {
+    const id = Number(memberMatch[1]);
+    const find = () =>
+      db
+        .query(`SELECT ${MEMBER_SELECT} WHERE id = ? AND org_id = ?`)
+        .get(id, auth.orgId) as OrgMemberRow | null;
+
+    if (method === "PATCH") {
+      const deniedOrgAdmin = requireOrgAdmin(auth);
+      if (deniedOrgAdmin) return deniedOrgAdmin;
+      const row = find();
+      if (!row) return err("Member not found.", 404);
+      const body = await readBody(req);
+      if (!body) return err("Invalid JSON body.", 400);
+      const sets: string[] = [];
+      const params: (string | number)[] = [];
+
+      if (body.password !== undefined) {
+        const p = typeof body.password === "string" ? body.password : "";
+        if (!p) return err("Password is required.", 400);
+        if (p.length < 8) return err("Password must be at least 8 characters.", 400);
+        const hash = await hashPassword(p);
+        sets.push("password_hash = ?");
+        params.push(hash);
+      }
+
+      if (body.role !== undefined) {
+        if (body.role !== "admin" && body.role !== "member") {
+          return err("Role must be admin or member.", 400);
+        }
+        // Last-admin protection: the org's only admin cannot be demoted.
+        if (body.role === "member" && row.role === "admin" && orgAdminCount(auth.orgId) <= 1) {
+          return err("Cannot demote the org's last admin.", 400);
+        }
+        sets.push("role = ?");
+        params.push(body.role);
+      }
+
+      if (body.permissions !== undefined) {
+        const v = validatePermissions(body.permissions);
+        if (!v.ok) return err(v.error, 400);
+        sets.push("permissions = ?");
+        params.push(JSON.stringify(v.value));
+      }
+
+      if (sets.length === 0) return err("Nothing to update.", 400);
+      params.push(id, auth.orgId);
+      db.query(`UPDATE users SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
+      const updated = find();
+      return json({ member: toOrgMember(updated as OrgMemberRow) });
+    }
+
+    if (method === "DELETE") {
+      const deniedOrgAdmin = requireOrgAdmin(auth);
+      if (deniedOrgAdmin) return deniedOrgAdmin;
+      const row = find();
+      if (!row) return err("Member not found.", 404);
+      // Last-admin protection: the org's only admin cannot be removed.
+      const targetIsAdmin =
+        row.role === "admin" || (isOrgAdmin({ userId: row.id, orgId: auth.orgId, role: row.role }));
+      if (targetIsAdmin && orgAdminCount(auth.orgId) <= 1) {
+        return err("Cannot remove the org's last admin.", 400);
+      }
+      db.transaction(() => {
+        db.query("DELETE FROM password_resets WHERE user_id = ?").run(id);
+        db.query("DELETE FROM users WHERE id = ? AND org_id = ?").run(id, auth.orgId);
+      })();
+      return json({ ok: true });
+    }
+
+    return err("Method not allowed.", 405);
   }
 
   return err("Not found.", 404);

@@ -3,10 +3,12 @@ import {
   ensureDefaultOrg,
   getOrg,
   parseStages,
+  parsePermissions,
   DEFAULT_STAGES,
   DEFAULT_ACCENT,
   migrateOwnerPipeline,
   type Role,
+  type TabPermissions,
 } from "./db";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -100,6 +102,13 @@ export interface User {
   email: string;
   orgId: number;
   role: Role;
+  /** Team-users (owner request 2026-08-14): the session user's PER-TAB access
+   *  grants (clients | tasks | finance | settings | support → {edit: bool}).
+   *  Absent tab = no access; {edit:false} = view-only. Org admins (role=
+   *  'admin' and the org's original owner login) bypass permissions entirely
+   *  and always see {}. Added to /api/auth/me (and login) so the UI can
+   *  render tabs per member later. */
+  permissions: TabPermissions;
   orgName: string;
   /** The tenant's ordered pipeline stages (Phase 3a) — the client stage
    *  dropdown and dashboard breakdown are driven by this list. */
@@ -114,6 +123,7 @@ interface UserRow {
   email: string;
   org_id: number;
   role: Role;
+  permissions: string;
   created_at: string;
 }
 
@@ -126,6 +136,7 @@ export function toUser(row: UserRow): User {
     email: row.email,
     orgId: row.org_id,
     role: row.role,
+    permissions: parsePermissions(row.permissions),
     orgName: org?.name ?? "",
     stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
     accentColor: org?.accent_color ?? DEFAULT_ACCENT,
@@ -135,14 +146,14 @@ export function toUser(row: UserRow): User {
 
 export function getUserById(id: number): User | null {
   const row = db
-    .query("SELECT id, email, org_id, role, created_at FROM users WHERE id = ?")
+    .query("SELECT id, email, org_id, role, permissions, created_at FROM users WHERE id = ?")
     .get(id) as UserRow | null;
   return row ? toUser(row) : null;
 }
 
 export function getUserByEmail(email: string): (UserRow & { password_hash: string }) | null {
   const row = db
-    .query("SELECT id, email, org_id, role, password_hash, created_at FROM users WHERE email = ?")
+    .query("SELECT id, email, org_id, role, permissions, password_hash, created_at FROM users WHERE email = ?")
     .get(email) as (UserRow & { password_hash: string }) | null;
   return row;
 }

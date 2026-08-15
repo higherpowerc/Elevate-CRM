@@ -275,6 +275,13 @@ export interface User {
   orgId: number;
   /** Phase 1: `admin` behaves like `member` inside their own org. */
   role: "admin" | "member";
+  /** Team users (owner request 2026-08-14) — the session user's per-tab
+   *  access grants (clients | tasks | finance | settings | support →
+   *  {edit: bool}). Absent tab = no access; {edit:false} = view-only. Org
+   *  admins (role='admin' and the account's original owner login) bypass
+   *  permissions entirely and always receive {}. New key on /api/auth/me +
+   *  login (additive — the UI ignores it until the team-users UI ships). */
+  permissions?: TabPermissions;
   /** Tenant display name (e.g. "Elevate Studio") — shown next to the email in the nav. */
   orgName?: string;
   /** The tenant's ordered pipeline stages (Phase 3a). */
@@ -282,6 +289,30 @@ export interface User {
   /** The tenant's brand accent (hex). */
   accentColor?: string;
   created_at?: string;
+}
+
+/* ── Team users per client account (owner request 2026-08-14) ─────────────
+ * The five tenant tabs a restricted member can be granted (the Dashboard is
+ * always visible; tenants never see "Leads" — owner-only). Server-enforced:
+ * reads of a tab the member lacks → 403; writes on a tab they have view-only
+ * → 403. Org admins bypass everything. */
+export const TENANT_TABS = ["clients", "tasks", "finance", "settings", "support"] as const;
+export type TenantTab = (typeof TENANT_TABS)[number];
+
+export interface TabPermission {
+  edit: boolean;
+}
+export type TabPermissions = Partial<Record<TenantTab, TabPermission>>;
+
+/** One row of the org member list / management responses
+ *  (GET /api/org/members, POST/PATCH responses). Never contains password
+ *  material — hashes stay server-side. */
+export interface OrgMember {
+  id: number;
+  email: string;
+  role: "admin" | "member";
+  permissions: TabPermissions;
+  createdAt: string;
 }
 
 /** A tenant (org) as listed in the owner's Admin view. */
