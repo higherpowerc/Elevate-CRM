@@ -181,8 +181,8 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
      per-stage cards (count + View deep-link, positional/rename-safe) are now
      TENANT-ONLY: they feed the standalone "Stage breakdown" card that client
      accounts keep exactly as before. The OWNER no longer renders them at all
-     — the consolidated five-row "Pipeline overview" card (below) carries
-     every pipeline figure the owner sees. */
+     — the five-card "Pipeline overview" KPI row (below) carries every
+     pipeline figure the owner sees. */
   const stageCards = stages.map((stage, i) => (
     <div className="card stage-card" key={`${i}-${stage}`}>
       <div className="stage-top">
@@ -222,20 +222,19 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
           view; the Admin tab carries the full credentials). */}
       {ownerOrg && <ProvisionNotices />}
 
-      {/* Owner direction 2026-08-15 (refined during live test) — the OWNER's
-          Dashboard shows the pipeline exactly ONCE: a single "Pipeline
-          overview" card with exactly five rows (Projected pipeline + Sold MRR
-          money figures with the privacy-eye toggle, then the three bucket
-          counts — Active leads with a Leads deep-link, Onboarding with an
-          Onboarding deep-link, Sold). The old duplicate KPI cards (Projected
-          pipeline / Sold MRR / Active leads / Onboarding) and the per-stage
-          grid are GONE — no pipeline figure appears twice anywhere on the
-          owner's page. TENANT dashboards keep their KPI row (own money card,
-          Projected pipeline, Active clients, In final stage) and their
+      {/* Owner direction 2026-08-15 (refined again during live test) — the
+          OWNER's Dashboard shows the pipeline exactly ONCE: a five-card KPI
+          row (Projected pipeline + Sold MRR money figures with the
+          privacy-eye toggle, then the three bucket counts — Active leads with
+          a Leads deep-link, Onboarding with an Onboarding deep-link, Sold).
+          The old duplicate KPI cards, the five-row single card, and the
+          per-stage grid are GONE — no pipeline figure appears twice anywhere
+          on the owner's page. TENANT dashboards keep their KPI row (own money
+          card, Projected pipeline, Active clients, In final stage) and their
           standalone "Stage breakdown" card exactly as before. */}
       {ownerOrg ? (
-        <div className="card pipeline-overview">
-          <div className="pipeline-row">
+        <div className="kpi-row">
+          <div className="card kpi">
             <span className="kpi-label kpi-label-row">
               Projected pipeline
               <button
@@ -249,10 +248,10 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
                 {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </span>
-            <span className={`pipeline-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
-            <span className="pipeline-note">{pipelineNote}</span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
+            <span className="kpi-note">{pipelineNote}</span>
           </div>
-          <div className="pipeline-row">
+          <div className="card kpi">
             <span className="kpi-label kpi-label-row">
               Sold MRR
               <button
@@ -266,12 +265,13 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
                 {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </span>
-            <span className={`pipeline-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
-            <span className="pipeline-note">Deal value of sold clients — records in your last pipeline stage</span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
+            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
           </div>
-          <div className="pipeline-row">
+          <div className="card kpi">
             <span className="kpi-label">{activeKpi}</span>
-            <span className="pipeline-value">{activeClients}</span>
+            <span className="kpi-value">{activeClients}</span>
+            <span className="kpi-note">Non-archived, non-lost leads in your first stage</span>
             {firstStage && (
               <button
                 className="link-btn"
@@ -281,11 +281,11 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
                 View →
               </button>
             )}
-            <span className="pipeline-note">Non-archived, non-lost leads in your first stage</span>
           </div>
-          <div className="pipeline-row">
+          <div className="card kpi">
             <span className="kpi-label">Onboarding</span>
-            <span className="pipeline-value">{midStage ? data.stageCounts[midStage] ?? 0 : 0}</span>
+            <span className="kpi-value">{midStage ? data.stageCounts[midStage] ?? 0 : 0}</span>
+            <span className="kpi-note">{onboardingNote}</span>
             {midStage && (
               <button
                 className="link-btn"
@@ -295,12 +295,11 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
                 View →
               </button>
             )}
-            <span className="pipeline-note">{onboardingNote}</span>
           </div>
-          <div className="pipeline-row">
+          <div className="card kpi">
             <span className="kpi-label">Sold</span>
-            <span className="pipeline-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
-            <span className="pipeline-note">{lastStageNote}</span>
+            <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
+            <span className="kpi-note">{lastStageNote}</span>
           </div>
         </div>
       ) : (
@@ -355,9 +354,9 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       )}
 
       {/* Owner direction 2026-08-15 (refined during live test) — the OWNER
-          renders no standalone stage grid: the five-row Pipeline overview card
-          above carries every pipeline figure (it replaces the per-stage
-          cards). TENANT dashboards keep the standalone "Stage breakdown" card
+          renders no standalone stage grid: the five-card KPI row above
+          carries every pipeline figure (it replaces the per-stage cards).
+          TENANT dashboards keep the standalone "Stage breakdown" card
           exactly as before (same heading, same grid). */}
       {ownerOrg ? null : (
         <>
