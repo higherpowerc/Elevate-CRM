@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type ClientInput } from "./api";
-import { money, fmtDate, type Client, type CustomFieldDef, type Stage, type AgreementStatus } from "./types";
+import { money, fmtDate, type AgreementEnvelope, type Client, type CustomFieldDef, type Stage, type AgreementStatus } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
@@ -402,23 +402,44 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     }
   }
 
-  /** Owner cockpit B (owner direction 2026-08-15; PR #53) — OWNER Onboarding
-   *  tab only: DocuSign agreement status quick actions. The "Send Agreements"
-   *  button sets "sent"; the Agreement-column select moves any status
-   *  (including back to "not_sent" or forward to "delivered" / "signed" /
-   *  "declined"). The SAME update path as the stage picker (api.updateClient)
-   *  with a refetch to keep the row in sync. Real DocuSign envelope sending
-   *  is wired LATER — today the owner tracks the status manually. */
-  async function handleAgreementStatus(c: Client, status: AgreementStatus) {
+  /* Native e-signature (owner direction 2026-08-15; replaces the PR #53
+     manual tracker) — OWNER Onboarding tab only. "Send Agreements" calls the
+     REAL internal signer: the server renders the owner's template with the
+     client's details, generates the PDF, mints the unique sign token and
+     emails the client the /sign/<token> link. The tracker (Not sent → Sent →
+     Delivered → Signed/Declined) advances automatically from server state. */
+  const [sendNotice, setSendNotice] = useState<string | null>(null);
+  const [audit, setAudit] = useState<AgreementEnvelope | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  async function handleSendAgreement(c: Client) {
     setBusy(true);
     setError(null);
+    setSendNotice(null);
     try {
-      await api.updateClient(c.id, { ...c, agreementStatus: status });
+      const r = await api.sendAgreement(c.id);
+      setSendNotice(`Agreement sent to ${r.emailTo} — the sign link is valid for 30 days.`);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Agreement status update failed.");
+      setError(e instanceof Error ? e.message : "Agreement send failed.");
     } finally {
       setBusy(false);
+    }
+  }
+  /** Native e-signature — the owner's agreement audit view: status, signer
+   *  name, timestamp, IP address, consent, expiry and the PDF copy. */
+  async function openAudit(c: Client) {
+    setAuditError(null);
+    setAudit(null);
+    try {
+      const { agreements } = await api.agreements();
+      const env = agreements.find((a) => a.clientId === c.id);
+      if (!env) {
+        setAuditError("No agreement has been sent to this client yet.");
+        return;
+      }
+      setAudit(env);
+    } catch (e) {
+      setAuditError(e instanceof Error ? e.message : "Could not load the agreement record.");
     }
   }
 
@@ -833,19 +854,18 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
                             {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
                           </span>
-                          <select
-                            className="stage-select"
-                            value={c.agreementStatus ?? "not_sent"}
-                            aria-label={`Agreement status for ${c.companyName}`}
-                            onChange={(e) => handleAgreementStatus(c, e.target.value as AgreementStatus)}
-                            disabled={busy}
-                          >
-                            <option value="not_sent">Not sent</option>
-                            <option value="sent">Sent</option>
-                            <option value="delivered">Delivered</option>
-                            <option value="signed">Signed</option>
-                            <option value="declined">Declined</option>
-                          </select>
+                          {(c.agreementStatus ?? "not_sent") !== "not_sent" && (
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title="View agreement details — status, signer, timestamp, IP, PDF"
+                              aria-label={`Agreement details for ${c.companyName}`}
+                              onClick={() => openAudit(c)}
+                              disabled={busy}
+                            >
+                              Audit
+                            </button>
+                          )}
                         </div>
                       </td>
                     ) : (
@@ -925,16 +945,16 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             updates immediately via the refetch). Manual for
                             now — real DocuSign envelope sending is wired
                             LATER once the owner connects a DocuSign account. */}
-                        {ownerOnboardingTab && (
+                        {ownerOnboardingTab && c.agreementStatus !== "signed" && (
                           <button
                             type="button"
                             className="send-agreements-btn"
-                            title={`Send agreements — mark ${c.companyName}'s DocuSign agreement as sent`}
-                            aria-label={`Send agreements to ${c.companyName}`}
-                            onClick={() => handleAgreementStatus(c, "sent")}
+                            title={`Send ${c.companyName} the agreement — the client gets a unique email link to review and sign`}
+                            aria-label={`Send agreement to ${c.companyName}`}
+                            onClick={() => handleSendAgreement(c)}
                             disabled={busy}
                           >
-                            Send Agreements
+                            {(c.agreementStatus ?? "not_sent") !== "not_sent" ? "Re-send" : "Send Agreements"}
                           </button>
                         )}
                       </div>
@@ -1035,6 +1055,43 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   load();
                 }}
               />
+            </div>
+          </div>
+        </div>
+      )}
+      {sendNotice && (
+        <div className="alert alert-success" role="status">
+          {sendNotice}
+        </div>
+      )}
+      {(audit || auditError) && (
+        <div className="modal-overlay" onClick={() => { setAudit(null); setAuditError(null); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Agreement details">
+            <div className="modal-head">
+              <h3>
+                Agreement <em className="serif">details</em>
+              </h3>
+            </div>
+            <div className="modal-body">
+              {auditError ? (
+                <p className="cell-muted">{auditError}</p>
+              ) : audit ? (
+                <div className="audit-grid">
+                  <p><span>Client</span>{audit.clientName}</p>
+                  <p><span>Status</span>{AGREEMENT_META[audit.status].label}</p>
+                  {audit.signerName && <p><span>Signed by</span>{audit.signerName}</p>}
+                  {audit.signedAt && <p><span>Signed at</span>{new Date(audit.signedAt).toLocaleString()}</p>}
+                  {audit.ipAddress && <p><span>IP address</span>{audit.ipAddress}</p>}
+                  <p><span>Consent</span>{audit.consent ? "Explicit consent recorded" : "No consent recorded"}</p>
+                  <p><span>Link expires</span>{new Date(audit.expiresAt).toLocaleString()}</p>
+                  <p><span>PDF</span><a href={`/agreement-pdf/${audit.pdfId}`} target="_blank" rel="noreferrer">Open agreement PDF</a></p>
+                </div>
+              ) : null}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => { setAudit(null); setAuditError(null); }}>
+                Close
+              </button>
             </div>
           </div>
         </div>

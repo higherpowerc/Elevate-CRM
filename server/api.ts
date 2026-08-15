@@ -65,7 +65,15 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, appUrlFrom } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, appUrlFrom } from "./email";
+import {
+  AGREEMENT_TOKEN_TTL_MS,
+  hashAgreementToken,
+  getEnvelopeForClient,
+  getEnvelopeByTokenHash,
+  sendAgreement,
+  resolveAgreement,
+} from "./agreements";
 import { randomBytes } from "node:crypto";
 
 export const SESSION_COOKIE = "elevate_session";
@@ -107,6 +115,21 @@ async function readBody(req: Request): Promise<Record<string, unknown> | null> {
   } catch {
     return null;
   }
+}
+/** Best-effort client IP for the e-signature audit trail: X-Forwarded-For
+ *  first (the app runs behind Render's proxy in production), else the socket
+ *  address via Bun's server.requestIP (the index.ts fetch handler passes the
+ *  server through handleApi). Empty string when neither is available. */
+function clientIp(req: Request, server?: { requestIP(req: Request): { address: string } | null } | null): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff && xff.trim() !== "") return xff.split(",")[0].trim();
+  try {
+    const ip = server?.requestIP(req);
+    if (ip?.address) return ip.address;
+  } catch {
+    /* ignore */
+  }
+  return "";
 }
 
 /** Authenticated session context: who the user is AND which org they belong
@@ -1800,7 +1823,7 @@ function validateCustomIntakeGroups(
 
 /* ── Routes ─────────────────────────────────────────────────────────── */
 
-async function handleApi(req: Request, url: URL): Promise<Response> {
+async function handleApi(req: Request, url: URL, server?: { requestIP(req: Request): { address: string } | null } | null): Promise<Response> {
   const { pathname } = url;
   const method = req.method;
 
@@ -1970,10 +1993,112 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     );
   }
 
+  /* Native e-signature (owner direction 2026-08-15) — PUBLIC sign/decline
+     action. The emailed /sign/<token> link is the credential: no session is
+     required, deliberately (the signer is a client, not a CRM user). One-time
+     use — a signed/declined envelope rejects further actions — and the token
+     is validated against expiry server-side. Accepts both JSON (the sign
+     page's fetch) and form-encoded (no-JS fallback). */
+  if (pathname.startsWith("/api/sign/") && method === "POST") {
+    const token = decodeURIComponent(pathname.slice("/api/sign/".length)).trim();
+    let action = "";
+    let name = "";
+    let consent = false;
+    const ct = (req.headers.get("content-type") ?? "").toLowerCase();
+    const body = await readBody(req);
+    if (body) {
+      action = typeof body.action === "string" ? body.action : "";
+      name = typeof body.name === "string" ? body.name : "";
+      consent = body.consent === true || body.consent === "true" || body.consent === "on";
+    } else if (ct.includes("application/x-www-form-urlencoded")) {
+      const params = new URLSearchParams(await req.text().catch(() => ""));
+      action = params.get("action") ?? "";
+      name = params.get("name") ?? "";
+      consent = params.get("consent") === "on" || params.get("consent") === "true";
+    }
+    if (action !== "sign" && action !== "decline") {
+      return err("Action must be sign or decline.", 400);
+    }
+    if (action === "sign" && (name.trim() === "" || !consent)) {
+      return err("Signing requires your typed name and explicit consent.", 400);
+    }
+    const result = resolveAgreement(token, action, name, consent, clientIp(req, server));
+    if (!result.ok) return err(result.error, 400);
+    return json({ ok: true, status: result.status });
+  }
+
   /* Everything below requires auth */
   const auth = requireAuth(req);
   if (auth instanceof Response) return auth;
   const orgId = auth.orgId;
+
+  /* Native e-signature (owner direction 2026-08-15) — OWNER-WORKSPACE ONLY.
+     Send: renders the owner's agreement template with the client's details,
+     generates + stores the PDF, mints the sign token (hash stored), emails the
+     client the unique /sign/<token> link, and advances the tracker to Sent.
+     Tenants get 403 on every agreement route (requireAdmin below). */
+  if (pathname === "/api/agreements/send" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const clientId = typeof body.clientId === "number" ? body.clientId : NaN;
+    if (!Number.isInteger(clientId) || clientId <= 0) return err("clientId is required.", 400);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(clientId, orgId) as ClientRow | null;
+    if (!client) return err("Client not found.", 404);
+    if (client.email.trim() === "") {
+      return err(`${client.company_name} has no email address — add one before sending the agreement.`, 400);
+    }
+    const ownerOrg = getOrg(orgId);
+    const template = ownerOrg?.agreement_template ?? "";
+    const { token, envelope } = await sendAgreement(client, template);
+    void sendAgreementEmail({
+      to: client.email,
+      clientName: client.contact_name || client.company_name,
+      appUrl: appUrlFrom(req),
+      token,
+    });
+    return json({
+      ok: true,
+      clientId: client.id,
+      status: envelope.status,
+      expiresAt: envelope.expires_at,
+      emailTo: client.email,
+    });
+  }
+  /* Owner-only audit list: every envelope for the owner org's OWN clients
+     (joined for client name/email), newest first. Tenants 403. */
+  if (pathname === "/api/agreements" && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const rows = db
+      .query(
+        `SELECT e.id, e.client_id, e.status, e.expires_at, e.pdf_id, e.signer_name, e.signed_at,
+                e.ip_address, e.consent, e.created_at,
+                c.company_name AS client_name, c.email AS client_email
+         FROM agreement_envelopes e
+         JOIN clients c ON c.id = e.client_id
+         WHERE e.org_id = ?
+         ORDER BY e.id DESC`,
+      )
+      .all(orgId) as Record<string, unknown>[];
+    return json({
+      agreements: rows.map((r) => ({
+        id: Number(r.id),
+        clientId: Number(r.client_id),
+        status: isAgreementStatus(r.status) ? r.status : "sent",
+        expiresAt: Number(r.expires_at),
+        pdfId: String(r.pdf_id),
+        signerName: String(r.signer_name ?? ""),
+        signedAt: r.signed_at == null ? null : String(r.signed_at),
+        ipAddress: String(r.ip_address ?? ""),
+        consent: Number(r.consent ?? 0) === 1,
+        createdAt: String(r.created_at),
+        clientName: String(r.client_name ?? ""),
+        clientEmail: String(r.client_email ?? ""),
+      })),
+    });
+  }
 
   /* Admin (owner-only): tenant provisioning */
   if (pathname === "/api/admin/orgs" && method === "GET") {
@@ -2472,6 +2597,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         // owner-set (Admin) — the tenant sees it here but cannot change it.
         revenueModel: isRevenueModel(org.revenue_model) ? org.revenue_model : "sales",
         monthlySubscriptionAmount: org.monthly_subscription_amount ?? 0,
+        // Native e-signature — the OWNER org's editable agreement template.
+        // Deliberately absent from tenant responses (owner-workspace only).
+        ...(isOwnerSession(auth) ? { agreementTemplate: org.agreement_template ?? "" } : {}),
       },
     });
   }
@@ -2691,6 +2819,19 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       params.push(JSON.stringify(v.value));
     }
 
+    /* Native e-signature — the OWNER org edits its agreement template here
+       (Settings → "Agreement template"). Owner-session only: a tenant body
+       key is ignored entirely, so there is no cross-org write path. */
+    if (isOwnerSession(auth) && body.agreementTemplate !== undefined) {
+      if (typeof body.agreementTemplate !== "string") {
+        return err("Agreement template must be text.", 400);
+      }
+      if (body.agreementTemplate.length > 20000) {
+        return err("Agreement template is too long (20,000 character limit).", 400);
+      }
+      sets.push("agreement_template = ?");
+      params.push(body.agreementTemplate);
+    }
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(orgId);
     db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);

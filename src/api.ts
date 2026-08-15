@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
+import type { AgreementEnvelope, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -226,9 +226,23 @@ export const api = {
      *  (how their business makes money: sales vs subscription). The monthly
      *  subscription amount they pay is owner-set (Admin) — not writable here. */
     revenueModel?: RevenueModel;
+    /** Native e-signature — the OWNER org's agreement template (owner-only;
+     *  tenant writes are ignored server-side). */
+    agreementTemplate?: string;
   }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+
+  /* Native e-signature (owner direction 2026-08-15) — owner-only: send the
+     agreement (renders the template + client details, generates the PDF,
+     mints the unique sign token, emails the client the /sign/<token> link)
+     and fetch the owner's agreement audit records. Tenants get 403. */
+  sendAgreement: (clientId: number) =>
+    request<{ ok: true; clientId: number; status: string; expiresAt: number; emailTo: string }>(
+      "/api/agreements/send",
+      { method: "POST", body: JSON.stringify({ clientId }) },
+    ),
+  agreements: () => request<{ agreements: AgreementEnvelope[] }>("/api/agreements"),
 };

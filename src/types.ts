@@ -417,6 +417,26 @@ export interface OrgSettings {
   /** Owner request 2026-08-14 — what this org pays the owner per month (USD,
    *  owner-set in Admin; the tenant can see it here but not change it). */
   monthlySubscriptionAmount: number;
+  /** Native e-signature (owner direction 2026-08-15) — the OWNER org's
+   *  editable agreement template. Absent from tenant settings responses. */
+  agreementTemplate?: string;
+}
+/** Native e-signature — one agreement envelope (audit record) per sent
+ *  agreement, owner-workspace only. status flows sent → delivered →
+ *  signed | declined; the audit fields are populated by the public sign page. */
+export interface AgreementEnvelope {
+  id: number;
+  clientId: number;
+  clientName: string;
+  clientEmail: string;
+  status: AgreementStatus;
+  expiresAt: number;
+  pdfId: string;
+  signerName: string;
+  signedAt: string | null;
+  ipAddress: string;
+  consent: boolean;
+  createdAt: string;
 }
 
 /** Stored invoice status → badge tone. "Overdue" is not stored — it is

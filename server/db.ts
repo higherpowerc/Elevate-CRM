@@ -305,8 +305,10 @@ export function parseCustomFields(raw: string | null | undefined): CustomFieldDe
   }
 }
 
-/** Data dir: $DATA_DIR env, else ./data next to the server directory. */
-const dataDir = process.env.DATA_DIR ?? join(import.meta.dir, "..", "data");
+/** Data dir: $DATA_DIR env, else ./data next to the server directory.
+ *  Exported so the native e-signature module (server/agreements.ts) can store
+ *  generated agreement PDFs alongside the DB in the same persistent volume. */
+export const dataDir = process.env.DATA_DIR ?? join(import.meta.dir, "..", "data");
 mkdirSync(dataDir, { recursive: true });
 
 export const db = new Database(join(dataDir, "crm.db"));
@@ -430,6 +432,35 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_tickets_org_status ON tickets(org_id, status);
+  -- Native in-app e-signature (owner direction 2026-08-15; backlog dd37c973) —
+  -- replaces the manual agreement-status tracker with a real internal signer.
+  -- One row per sent agreement (re-sending REPLACES the client's envelope).
+  -- Only the RAW token hash is ever stored (SHA-256, like password_resets);
+  -- the raw token exists only in the emailed sign link. status flows
+  -- sent → delivered (sign page first opened) → signed | declined (one-time
+  -- action on the public page). expires_at is epoch-ms (Date.now()).
+  -- signer_name / signed_at / ip_address / consent are the audit trail the
+  -- owner views from the Onboarding tab. pdf_id names the generated PDF file
+  -- in <data dir>/agreements/ (unguessable random id); agreement_text is the
+  -- fully-rendered template text the sign page + PDF were built from.
+  CREATE TABLE IF NOT EXISTS agreement_envelopes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id      INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    org_id         INTEGER NOT NULL REFERENCES orgs(id),
+    token_hash     TEXT NOT NULL UNIQUE,
+    expires_at     INTEGER NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'sent',
+    pdf_id         TEXT NOT NULL,
+    agreement_text TEXT NOT NULL DEFAULT '',
+    signer_name    TEXT NOT NULL DEFAULT '',
+    signed_at      TEXT,
+    ip_address     TEXT NOT NULL DEFAULT '',
+    consent        INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_agreement_envelopes_client ON agreement_envelopes(client_id);
+  CREATE INDEX IF NOT EXISTS idx_agreement_envelopes_token ON agreement_envelopes(token_hash);
 `);
 
 /**
@@ -829,6 +860,19 @@ db.exec(`
     db.exec("ALTER TABLE clients ADD COLUMN agreement_status TEXT NOT NULL DEFAULT 'not_sent'");
   }
 }
+/**
+ * Native e-signature (owner direction 2026-08-15) — the owner's editable
+ * agreement template lives on the OWNER org row (orgs.agreement_template).
+ * Plain TEXT with a DEFAULT so existing rows backfill cleanly. The field is
+ * owner-org only: tenants never receive it in settings responses and cannot
+ * write it (the API only exposes the key for the owner org).
+ */
+{
+  const cols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "agreement_template")) {
+    db.exec("ALTER TABLE orgs ADD COLUMN agreement_template TEXT NOT NULL DEFAULT ''");
+  }
+}
 
 /**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
@@ -1027,13 +1071,18 @@ export interface OrgRow {
    *  vertical at account creation; editable by the tenant in Settings (and by
    *  the owner in Admin). */
   revenue_model: string;
+  /** Native e-signature (owner direction 2026-08-15) — the OWNER org's
+   *  editable agreement template with placeholders ({{company}}, {{client_name}},
+   *  {{date}}, {{price}}). '' = use the built-in default. Owner-only in the
+   *  API; tenants never see or write it. */
+  agreement_template: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }

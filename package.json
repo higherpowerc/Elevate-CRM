@@ -13,6 +13,7 @@
     "db:reset": "rm -f data/crm.db data/crm.db-shm data/crm.db-wal"
   },
   "dependencies": {
+    "pdf-lib": "^1.17.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

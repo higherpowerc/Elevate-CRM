@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
+import { renderSignPage, readAgreementPdf } from "./agreements";
 
 /**
  * Elevate CRM — single Bun server: serves the built React frontend from
@@ -27,7 +28,23 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".pdf": "application/pdf",
 };
+
+/** Best-effort client IP for the e-signature delivery stamp: X-Forwarded-For
+ *  first (the app runs behind Render's proxy in production), else Bun's
+ *  server.requestIP (the fetch handler's second argument is the Server). */
+function clientIp(req: Request, server: { requestIP(req: Request): { address: string } | null }): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff && xff.trim() !== "") return xff.split(",")[0].trim();
+  try {
+    const ip = server.requestIP(req);
+    if (ip?.address) return ip.address;
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
 
 function serveStatic(pathname: string): Response {
   let rel = pathname === "/" ? "/index.html" : pathname;
@@ -67,10 +84,32 @@ if (!existsSync(join(DIST_DIR, "index.html"))) {
 const server = serve({
   port: PORT,
   hostname: "0.0.0.0",
-  fetch(req) {
+  fetch(req, srv) {
     const url = new URL(req.url);
     if (url.pathname.startsWith("/api/")) {
-      return handleApi(req, url);
+      return handleApi(req, url, srv);
+    }
+    /* Native e-signature — PUBLIC routes (the emailed link is the credential).
+       /sign/<token> renders the sign/decline page (recording delivery on
+       first open); /agreement-pdf/<pdfId> serves the generated PDF (the id is
+       an unguessable random, and the page links it for the signer). These
+       must be checked BEFORE the SPA fallback. */
+    if (req.method === "GET" && url.pathname.startsWith("/sign/")) {
+      const token = decodeURIComponent(url.pathname.slice("/sign/".length));
+      return renderSignPage(token, clientIp(req, srv));
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/agreement-pdf/")) {
+      const pdfId = url.pathname.slice("/agreement-pdf/".length);
+      const bytes = readAgreementPdf(pdfId);
+      if (!bytes) return new Response("Not found", { status: 404 });
+      return new Response(bytes as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type": MIME[".pdf"],
+          "Cache-Control": "private, max-age=3600",
+          "Content-Disposition": `inline; filename="agreement-${pdfId}.pdf"`,
+        },
+      });
     }
     return serveStatic(url.pathname);
   },

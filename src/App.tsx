@@ -509,6 +509,7 @@ export default function App() {
             canEdit={canEditTab("settings")}
             isOrgAdmin={user.isOrgAdmin === true}
             currentUserId={user.id}
+            isOwnerOrg={isOwnerOrg}
           />
         )}
       </main>
