@@ -1631,10 +1631,10 @@ legend.field-label {
    stack action as the Leads tab's "Start Onboarding", blue accent for the
    DocuSign flow). */
 .send-agreements-btn {
-  background: rgba(111, 179, 255, 0.08);
-  border: 1px solid rgba(111, 179, 255, 0.35);
+  background: rgba(124, 227, 139, 0.08);
+  border: 1px solid rgba(124, 227, 139, 0.35);
   border-radius: 7px;
-  color: var(--blue);
+  color: var(--green);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
@@ -1644,8 +1644,8 @@ legend.field-label {
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .send-agreements-btn:hover {
-  background: rgba(111, 179, 255, 0.16);
-  border-color: var(--blue);
+  background: rgba(124, 227, 139, 0.16);
+  border-color: var(--green);
 }
 .send-agreements-btn:disabled {
   opacity: 0.55;
@@ -3383,6 +3383,18 @@ legend.field-label {
 }
 .billing-model {
   width: 110px;
+}
+/* Owner direction 2026-08-15 — Admin billing $ / model controls: white text
+   on a black background (incl. the select's dropdown options). */
+.admin-billing-inputs .billing-amount,
+.admin-billing-inputs .billing-model {
+  background: #000;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.admin-billing-inputs .billing-model option {
+  background: #000;
+  color: #fff;
 }
 @media (max-width: 760px) {
   .admin-billing-edit {

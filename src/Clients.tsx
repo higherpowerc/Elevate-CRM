@@ -665,14 +665,32 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               {/* Owner cockpit A — the owner's Leads tab rebalances the fixed
                   columns: a touch more room for the (unwrapped) business-name
                   column, the Next-action stack and the extra Lost/DNC actions
-                  while the 3i table-fit rule still holds (100% total). */}
-              <col style={{ width: ownerOrg ? "19%" : "21%" }} />
-              <col style={{ width: ownerOrg ? "14%" : "15%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "8%" }} />
-              <col style={{ width: "15%" }} />
-              <col style={{ width: ownerOrg ? "15%" : "12%" }} />
-              <col style={{ width: ownerOrg ? "18%" : "18%" }} />
+                  while the 3i table-fit rule still holds (100% total). Owner
+                  bug report 2026-08-15 — the owner's LEADS tab drops the
+                  Stage column entirely: 6 columns (Business name / Contact /
+                  Services / Deal / Next action / Actions = 21/16/12/9/20/22).
+                  The owner's Onboarding tab and every tenant view keep the
+                  7-column layout with Stage. */}
+              {ownerLeadsTab ? (
+                <>
+                  <col style={{ width: "21%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "20%" }} />
+                  <col style={{ width: "22%" }} />
+                </>
+              ) : (
+                <>
+                  <col style={{ width: ownerOrg ? "19%" : "21%" }} />
+                  <col style={{ width: ownerOrg ? "14%" : "15%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: ownerOrg ? "15%" : "12%" }} />
+                  <col style={{ width: ownerOrg ? "18%" : "18%" }} />
+                </>
+              )}
             </colgroup>
             <thead>
               <tr>
@@ -683,7 +701,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     accounts and the owner Leads tab keep "Services". */}
                 <th>{ownerOnboardingTab ? "Agreement" : "Services"}</th>
                 <th className="num">Deal</th>
-                <th>Stage</th>
+                {!ownerLeadsTab && <th>Stage</th>}
                 <th>Next action</th>
                 <th className="actions-th">Actions</th>
               </tr>
@@ -773,24 +791,26 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     <td className="num cell-strong" data-label="Deal">
                       {money(c.dealValue)}
                     </td>
-                    <td data-label="Stage">
-                      <div className="stage-cell">
-                        <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
-                        <select
-                          className="stage-select"
-                          value={c.stage}
-                          aria-label={`Move ${c.companyName} to stage`}
-                          onChange={(e) => handleStageMove(c, e.target.value as Stage)}
-                          disabled={busy}
-                        >
-                          {orgStages.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </td>
+                    {!ownerLeadsTab && (
+                      <td data-label="Stage">
+                        <div className="stage-cell">
+                          <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
+                          <select
+                            className="stage-select"
+                            value={c.stage}
+                            aria-label={`Move ${c.companyName} to stage`}
+                            onChange={(e) => handleStageMove(c, e.target.value as Stage)}
+                            disabled={busy}
+                          >
+                            {orgStages.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </td>
+                    )}
                     <td data-label="Next action">
                       {/* Owner cockpit A — the Next-action cell becomes a
                           small stack: the (possibly wrapped) next-action
@@ -802,10 +822,12 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         {/* Owner bug report 2026-08-15 — the owner's Leads tab
                             shows ONLY the "Start Onboarding" quick action under
                             Next action: the next-action text span is hidden
-                            there (ownerLeadsTab) so the cell reads clean. Client
-                            accounts and the owner's Onboarding tab keep the
-                            text span exactly as before. */}
-                        {!ownerLeadsTab && (
+                            there (ownerLeadsTab) so the cell reads clean. Owner
+                            direction 2026-08-15 — the owner's ONBOARDING tab
+                            shows ONLY the "Send Agreements" quick action too
+                            (span hidden when ownerOnboardingTab). Client
+                            accounts keep the text span exactly as before. */}
+                        {!ownerLeadsTab && !ownerOnboardingTab && (
                           <span className="cell-muted cell-next" title={c.nextAction || undefined}>
                             {c.nextAction || "—"}
                           </span>
