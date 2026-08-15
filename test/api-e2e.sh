@@ -3983,43 +3983,73 @@ fi
 echo "-- 39c. Done =="
 echo "  ✓ 39: owner Onboarding Next-action = Send Agreements only; owner Leads Stage column removed (tenant views untouched)"
 
-echo "== 40. Owner cockpit refinements 3 (owner directions 2026-08-15): Dashboard stage fold + Admin owner-row filter + billing-model removal =="
-echo "-- 40a. Owner Dashboard: stage data folded INTO Pipeline overview (standalone Stage breakdown card removed) =="
-# Owner direction 2026-08-15 — the OWNER workspace's Dashboard has NO
-# standalone "Stage breakdown" card: the per-stage data (each stage's count +
-# its View deep-link, positional/rename-safe) renders INSIDE the "Pipeline
-# overview" section, directly under the KPI cards (KPI cards unchanged: Active
-# leads, Projected pipeline, Sold MRR, Onboarding). TENANT dashboards keep the
-# standalone "Stage breakdown" card exactly as before (same heading, same grid).
+echo "== 40. Owner cockpit refinements 3 (owner directions 2026-08-15): Dashboard Pipeline overview consolidation + Admin owner-row filter + billing-model removal =="
+echo "-- 40a. Owner Dashboard: ONE consolidated Pipeline overview card (five rows, no duplicate figures) =="
+# Owner direction 2026-08-15 (refined during live test) — the OWNER's
+# Dashboard shows the pipeline exactly ONCE: a single "Pipeline overview" card
+# with five rows (Projected pipeline + Sold MRR money figures with the
+# privacy-eye toggle, then the Active leads / Onboarding / Sold bucket counts).
+# The old duplicate KPI cards (Projected pipeline / Sold MRR / Active leads /
+# Onboarding) and the per-stage grid (owner-pipeline-stages) are GONE — no
+# pipeline figure appears twice on the owner's page. TENANT dashboards keep
+# the KPI row (own money card, Projected pipeline, Active clients, In final
+# stage) + the standalone "Stage breakdown" card exactly as before (same
+# heading, same grid).
 bun run build >/dev/null 2>&1
 NEWEST_JS40=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS40" ]; then
-  if grep -Fq 'owner-pipeline-stages' "$NEWEST_JS40"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: owner stage cards render inside Pipeline overview (owner-pipeline-stages marker present)"
+  if ! grep -Fq 'owner-pipeline-stages' "$NEWEST_JS40" && grep -Fq 'pipeline-overview' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner per-stage grid GONE; consolidated pipeline-overview card present"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: owner-pipeline-stages missing from $NEWEST_JS40"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: owner stage grid still present or pipeline-overview missing from $NEWEST_JS40"
   fi
   if grep -Fq 'Stage breakdown' "$NEWEST_JS40" && grep -Fq 'in the pipeline' "$NEWEST_JS40"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: tenant Stage breakdown card + per-stage View deep-links intact"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant stage-breakdown card or View deep-link missing from $NEWEST_JS40"
   fi
+  # The five rows of the owner's single card — the row labels (and the Sold
+  # row's unique note) all ship in the bundle, along with the count-row
+  # deep-links the card carries.
+  for ROW40 in "Projected pipeline" "Sold MRR" "Active leads" "Onboarding" "your last pipeline stage"; do
+    if grep -Fq "$ROW40" "$NEWEST_JS40"; then PASS=$((PASS+1)); echo "  ✓ bundle: owner row \"$ROW40\" present"
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle: owner row \"$ROW40\" missing from $NEWEST_JS40"; fi
+  done
+  if grep -Fq 'in the Onboarding pipeline' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner Onboarding row keeps its View → deep-link"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: owner Onboarding View → deep-link missing from $NEWEST_JS40"
+  fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 40a bundle check"
 fi
-if grep -Fq '{ownerOrg ? (' src/Dashboard.tsx && grep -Fq 'owner-pipeline-stages' src/Dashboard.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: Dashboard owner/tenant stage-card branch present (owner folds under the KPI cards)"
+if grep -Fq '{ownerOrg ? (' src/Dashboard.tsx && grep -Fq 'pipeline-overview' src/Dashboard.tsx && ! grep -Fq 'owner-pipeline-stages' src/Dashboard.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Dashboard owner/tenant branch present (owner = five-row pipeline-overview card, no per-stage grid)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: Dashboard owner/tenant stage branch missing in src/Dashboard.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: Dashboard owner/tenant branch wrong in src/Dashboard.tsx"
 fi
 if python3 - <<'PY' 2>"$PASS_TMP"
 src = open('src/Dashboard.tsx').read()
-i = src.index('owner-pipeline-stages')
+i = src.index('pipeline-overview')
 start = src.rindex('{ownerOrg ? (', 0, i)
 end = src.index(') : (', i)
 owner_branch = src[start:end]
-assert 'owner-pipeline-stages' in owner_branch
-assert 'Stage breakdown' not in owner_branch, 'owner branch must NOT render the standalone Stage breakdown heading'
+# Exactly five rows in the owner's card — no more, no fewer.
+assert owner_branch.count('className="pipeline-row"') == 5, 'owner card must have exactly five pipeline rows'
+for label in ('Projected pipeline', 'Sold MRR', 'Onboarding', 'Sold'):
+    assert label in owner_branch, 'owner card missing row label: %s' % label
+# The Active Leads row renders the activeKpi label (the owner branch of that
+# const resolves to the literal "Active leads", defined with the workspace
+# wording above the return — so assert both the usage and the wording).
+assert '{activeKpi}' in owner_branch, 'Active Leads row must render the activeKpi label'
+assert 'Active leads' in src, 'owner "Active leads" wording must exist (activeKpi owner branch)'
+assert 'owner-pipeline-stages' not in owner_branch, 'owner branch must NOT render the old per-stage grid'
+assert 'stage-grid' not in owner_branch, 'owner branch must not render any stage grid'
+assert 'kpi-row' not in owner_branch, 'owner branch must not render the old KPI card row'
+assert 'In final stage' not in owner_branch, 'owner branch must not render the tenant In-final-stage KPI'
+assert owner_branch.count('eye-btn') == 2, 'both money rows keep the privacy-eye toggle'
+assert 'blur(moneyHidden)' in owner_branch and 'money-blur' in src, 'money rows keep the eye blur (blur() fn + usage in the branch)'
+assert 'onGoToStage(firstStage)' in owner_branch and 'onGoToStage(midStage)' in owner_branch, 'count rows keep the View deep-links'
 cards_start = src.index('const stageCards = stages.map')
 cards_end = src.index('\n  return (', cards_start)
 cards_block = src[cards_start:cards_end]
@@ -4027,14 +4057,17 @@ assert 'in the pipeline' in cards_block, 'shared stage cards keep the View deep-
 tenant_start = src.index(') : (', i)
 tenant_end = src.index('Task overview', tenant_start)
 tenant_branch = src[tenant_start:tenant_end]
+assert 'kpi-row' in tenant_branch, 'tenant branch must keep the KPI row'
+assert 'In final stage' in tenant_branch, 'tenant branch must keep the In-final-stage KPI'
 assert 'Stage breakdown' in tenant_branch, 'tenant branch must keep the standalone Stage breakdown heading'
 assert 'stage-grid' in tenant_branch
-print('  ✓ source: owner branch = stage cards under Pipeline overview (no heading); tenant branch keeps Stage breakdown card')
+assert 'pipeline-overview' not in tenant_branch, 'tenant branch must NOT get the owner five-row card'
+print('  ✓ source: owner branch = five-row pipeline-overview card (no KPI row, no stage grid); tenant branch keeps KPI row + Stage breakdown card')
 PY
 then
-  PASS=$((PASS+1)); echo "  ✓ 40a2: stage-card branch structure correct (owner folds, tenant keeps heading)"
+  PASS=$((PASS+1)); echo "  ✓ 40a2: five-row single-card structure correct (owner consolidated, tenant untouched)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ 40a2: stage-card branch structure wrong"; cat "$PASS_TMP"
+  FAIL=$((FAIL+1)); echo "  ✗ 40a2: five-row single-card structure wrong"; cat "$PASS_TMP"
 fi
 echo "-- 40b. Admin tab: the owner's own workspace hidden from the client-account list =="
 # Owner direction 2026-08-15 — the Admin client-account list is for CLIENT
@@ -4137,7 +4170,7 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ source: server revenueModel handling missing from server/api.ts"
 fi
 echo "-- 40e. Done == "
-echo "  ✓ 40: Dashboard stage fold + Admin owner-row filter + billing-model removal verified (owner-workspace only)"
+echo "  ✓ 40: Dashboard Pipeline overview consolidated to ONE five-row card (no duplicate figures); Admin owner-row filter + billing-model removal verified (owner-workspace only)"
 
 echo "== 41. Owner cockpit refinements 4 (2026-08-15): DocuSign lifecycle tracker + Onboarding Stage badge-only (PR #53) =="
 echo "-- 41a. Source: AgreementStatus widened to the full DocuSign lifecycle (client + server in lockstep) =="
