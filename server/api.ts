@@ -170,7 +170,11 @@ const FORGOT_OK = {
 
 /* ── Client row → API shape ─────────────────────────────────────────── */
 
-function toClient(row: ClientRow) {
+/** Owner cockpit B (owner direction 2026-08-15) — `ownerOrg` (the caller's
+ *  role is admin) controls whether the DocuSign agreement status appears in
+ *  the serialized client. Tenant orgs (role=member) get the exact same shape
+ *  as before this change — no agreementStatus key, ever. */
+function toClient(row: ClientRow, ownerOrg = false) {
   let services: string[] = [];
   try {
     const parsed = JSON.parse(row.services);
@@ -258,6 +262,9 @@ function toClient(row: ClientRow) {
     // Owner request 2026-08-14 — the record's monthly amount in the org's own
     // subscription book (used when the org's revenue_model = "subscription").
     monthlyAmount: row.monthly_amount ?? 0,
+    // Owner cockpit B (owner direction 2026-08-15) — OWNER-only DocuSign
+    // agreement status. Absent from tenant responses entirely.
+    ...(ownerOrg ? { agreementStatus: isAgreementStatus(row.agreement_status) ? row.agreement_status : "not_sent" } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -280,6 +287,20 @@ export type RevenueModel = (typeof REVENUE_MODELS)[number];
 
 export function isRevenueModel(v: unknown): v is RevenueModel {
   return typeof v === "string" && (REVENUE_MODELS as readonly string[]).includes(v);
+}
+
+/** Owner cockpit B (owner direction 2026-08-15) — per-client DocuSign
+ *  agreement status: "not_sent" → "sent" → "signed". The owner tracks where
+ *  each onboarding client is in completing forms MANUALLY today; real
+ *  DocuSign envelope sending is wired LATER once the owner connects a
+ *  DocuSign account. OWNER-workspace-only: the value is exposed to and
+ *  writable by the owner org (role=admin) only — tenant orgs never receive
+ *  it in API responses and never write it (their payloads are ignored). */
+export const AGREEMENT_STATUSES = ["not_sent", "sent", "signed"] as const;
+export type AgreementStatus = (typeof AGREEMENT_STATUSES)[number];
+
+export function isAgreementStatus(v: unknown): v is AgreementStatus {
+  return typeof v === "string" && (AGREEMENT_STATUSES as readonly string[]).includes(v);
 }
 
 interface ClientInput {
@@ -345,6 +366,12 @@ interface ClientInput {
    *  "subscription"). Optional: on create absent keys default 0; on update
    *  absent keys leave the stored value untouched. */
   monthlyAmount?: number;
+  /** Owner cockpit B (owner direction 2026-08-15) — DocuSign agreement
+   *  status. OPTIONAL and OWNER-only: the server accepts it only from the
+   *  owner org (role=admin); tenant payloads are ignored. On create, absent
+   *  keys default to "not_sent"; on update, absent keys leave the stored
+   *  value untouched (the same partial-update rule lost/DNC follow). */
+  agreementStatus?: AgreementStatus;
 }
 
 /** Adaptive intake Phase 1: optional TEXT columns — client JSON key → DB
@@ -441,6 +468,10 @@ function validateClient(
   stages: string[],
   defs: CustomFieldDef[],
   intakeGroups: CustomIntakeGroup[] = [],
+  /** Owner cockpit B — true when the caller is the OWNER org (role=admin):
+   *  only then is body.agreementStatus accepted (validated + persisted).
+   *  Tenant payloads ignore the key entirely. */
+  ownerOrg = false,
 ): { ok: true; value: ClientInput } | { ok: false; error: string } {
   const str = (v: unknown, max = 500): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
@@ -710,6 +741,18 @@ function validateClient(
     statusDncDate = r.value;
   }
 
+  // Owner cockpit B — agreement status. Accepted (and validated against the
+  // three allowed values) ONLY from the owner org; tenant payloads are
+  // ignored so a tenant can never write it. Absent → not persisted (create
+  // defaults to "not_sent", update leaves the stored value untouched).
+  let agreementStatus: AgreementStatus | undefined;
+  if (ownerOrg && body.agreementStatus !== undefined && body.agreementStatus !== null) {
+    if (typeof body.agreementStatus !== "string" || !isAgreementStatus(body.agreementStatus.trim())) {
+      return { ok: false, error: "Agreement status must be not_sent, sent, or signed." };
+    }
+    agreementStatus = body.agreementStatus.trim() as AgreementStatus;
+  }
+
   const value: ClientInput = {
     companyName,
     contactName: str(body.contactName, 200),
@@ -765,6 +808,11 @@ function validateClient(
     if (statusDncDate !== undefined) {
       (value as unknown as Record<string, unknown>).dncDate = statusDncDate;
     }
+  }
+  // Owner cockpit B — only present when the owner sent it (partial-update
+  // rule: create defaults it, update leaves an absent value untouched).
+  if (agreementStatus !== undefined) {
+    (value as unknown as Record<string, unknown>).agreementStatus = agreementStatus;
   }
   return { ok: true, value };
 }
@@ -2009,7 +2057,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       db
         .query("SELECT * FROM clients WHERE org_id = ? AND archived = 0 ORDER BY updated_at DESC, id DESC LIMIT 5")
         .all(orgId) as ClientRow[]
-    ).map(toClient);
+    ).map((r) => toClient(r, auth.role === "admin"));
 
     /* Task overview (2026-08-14 owner request): open / overdue / due soon /
        done counts plus the next few open tasks with a due date. Every query
@@ -2431,7 +2479,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         )
         .all(orgId, includeArchived ? 1 : 0) as ClientRow[];
     }
-    return json({ clients: rows.map(toClient) });
+    // Owner cockpit B — the OWNER org (role=admin) receives agreementStatus
+    // on every client; tenant orgs get the exact pre-change shape.
+    return json({ clients: rows.map((r) => toClient(r, auth.role === "admin")) });
   }
 
   if (pathname === "/api/clients" && method === "POST") {
@@ -2443,14 +2493,15 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       org ? parseStages(org.stages) : [...DEFAULT_STAGES],
       org ? parseCustomFields(org.custom_fields) : [],
       org ? parseCustomIntakeGroups(org.custom_intake_groups) : [],
+      auth.role === "admin", // owner cockpit B — agreement status is owner-only
     );
     if (!v.ok) return err(v.error, 400);
     const c = v.value;
     const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")})
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")})`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?)`,
       )
       .run(
         orgId,
@@ -2461,9 +2512,10 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         c.monthlyAmount ?? 0,
         ...intake.values,
         ...statusValues(c),
+        c.agreementStatus ?? "not_sent",
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
-    return json({ client: toClient(row) }, 201);
+    return json({ client: toClient(row, auth.role === "admin") }, 201);
   }
 
   /* Client item */
@@ -2475,7 +2527,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     if (method === "GET") {
       const row = find();
       if (!row) return err("Client not found.", 404);
-      return json({ client: toClient(row) });
+      return json({ client: toClient(row, auth.role === "admin") });
     }
 
     if (method === "PUT") {
@@ -2489,6 +2541,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         org ? parseStages(org.stages) : [...DEFAULT_STAGES],
         org ? parseCustomFields(org.custom_fields) : [],
         org ? parseCustomIntakeGroups(org.custom_intake_groups) : [],
+        auth.role === "admin", // owner cockpit B — agreement status is owner-only
       );
       if (!v.ok) return err(v.error, 400);
       const c = v.value;
@@ -2545,6 +2598,14 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
         sets.push("dnc_date = ?");
         params.push(typeof rec.dncDate === "string" ? rec.dncDate : "");
       }
+      // Owner cockpit B (owner direction 2026-08-15) — DocuSign agreement
+      // status: persisted ONLY for the owner org (role=admin) and only when
+      // present in the body. Tenant payloads never write it; partial updates
+      // never clobber an absent value (the lost/DNC rule).
+      if (auth.role === "admin" && rec.agreementStatus !== undefined) {
+        sets.push("agreement_status = ?");
+        params.push(rec.agreementStatus as string);
+      }
       sets.push("updated_at = datetime('now')");
       params.push(id, orgId);
       db.query(`UPDATE clients SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
@@ -2556,7 +2617,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       // The idempotency check inside also makes this the retry path for a
       // sold client whose earlier provision failed.
       await maybeAutoProvisionSoldClient(orgId, updated, req);
-      return json({ client: toClient(updated) });
+      return json({ client: toClient(updated, auth.role === "admin") });
     }
 
     if (method === "DELETE") {

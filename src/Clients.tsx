@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type ClientInput } from "./api";
-import { money, fmtDate, type Client, type CustomFieldDef, type Stage } from "./types";
+import { money, fmtDate, type Client, type CustomFieldDef, type Stage, type AgreementStatus } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
@@ -64,6 +64,16 @@ function localTodayStr(d: Date = new Date()): string {
   const day = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
 }
+
+/** Owner cockpit B (owner direction 2026-08-15) — the owner's Onboarding tab
+ *  DocuSign agreement status vocabulary: badge label + badge tone + the
+ *  select's option label. not_sent → gray (not started), sent → amber
+ *  (waiting on the client), signed → green (complete). */
+const AGREEMENT_META: Record<AgreementStatus, { label: string; tone: string }> = {
+  not_sent: { label: "Not sent", tone: "tone-gray" },
+  sent: { label: "Sent", tone: "tone-amber" },
+  signed: { label: "Signed", tone: "tone-green" },
+};
 
 export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
@@ -350,6 +360,26 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     }
   }
 
+  /** Owner cockpit B (owner direction 2026-08-15) — OWNER Onboarding tab
+   *  only: DocuSign agreement status quick actions. The "Send Agreements"
+   *  button sets "sent"; the Agreement-column select moves any status
+   *  (including back to "not_sent" or forward to "signed"). The SAME update
+   *  path as the stage picker (api.updateClient) with a refetch to keep the
+   *  row in sync. Real DocuSign envelope sending is wired LATER — today the
+   *  owner tracks the status manually. */
+  async function handleAgreementStatus(c: Client, status: AgreementStatus) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateClient(c.id, { ...c, agreementStatus: status });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Agreement status update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!clients) {
     return error ? (
       <div className="alert alert-error">{error}</div>
@@ -386,6 +416,13 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
   const ownerLeadsTab = ownerOrg && scope === "first";
   const onboardingStage =
     ownerOrg && scope === "first" && orgStages.length > 2 ? orgStages[1] : null;
+  /* Owner cockpit B (owner direction 2026-08-15) — the OWNER's ONBOARDING
+     tab (scope "middle") drops the Services column in favor of the DocuSign
+     Agreement column (status badge + select) and gains the "Send Agreements"
+     quick action in the Next-action stack. Owner-workspace-only: client
+     accounts (role=member) and the owner Leads tab keep their Services
+     column and never see agreement status. */
+  const ownerOnboardingTab = ownerOrg && scope === "middle";
 
   /* Owner request 2026-08-15 — the owner's three-bucket pipeline: the Leads
      tab is the FIRST stage ("prospects"), the Onboarding tab is the MIDDLE
@@ -641,7 +678,10 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               <tr>
                 <th>{ownerOrg ? "Business name" : "Client"}</th>
                 <th>Contact</th>
-                <th>Services</th>
+                {/* Owner cockpit B — the owner's Onboarding tab replaces the
+                    Services column with the DocuSign Agreement column; client
+                    accounts and the owner Leads tab keep "Services". */}
+                <th>{ownerOnboardingTab ? "Agreement" : "Services"}</th>
                 <th className="num">Deal</th>
                 <th>Stage</th>
                 <th>Next action</th>
@@ -700,9 +740,36 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
                       </div>
                     </td>
-                    <td data-label="Services">
-                      <ServiceChips services={c.services} />
-                    </td>
+                    {ownerOnboardingTab ? (
+                      /* Owner cockpit B (owner direction 2026-08-15) — the
+                         owner's Onboarding tab tracks each client's DocuSign
+                         agreement status: a tone badge (Not sent / Sent /
+                         Signed) over a compact select that moves the status
+                         manually (the same stacked layout as the Stage cell).
+                         Real DocuSign sending is wired LATER — manual today. */
+                      <td data-label="Agreement">
+                        <div className="agree-cell">
+                          <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
+                            {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
+                          </span>
+                          <select
+                            className="stage-select"
+                            value={c.agreementStatus ?? "not_sent"}
+                            aria-label={`Agreement status for ${c.companyName}`}
+                            onChange={(e) => handleAgreementStatus(c, e.target.value as AgreementStatus)}
+                            disabled={busy}
+                          >
+                            <option value="not_sent">Not sent</option>
+                            <option value="sent">Sent</option>
+                            <option value="signed">Signed</option>
+                          </select>
+                        </div>
+                      </td>
+                    ) : (
+                      <td data-label="Services">
+                        <ServiceChips services={c.services} />
+                      </td>
+                    )}
                     <td className="num cell-strong" data-label="Deal">
                       {money(c.dealValue)}
                     </td>
@@ -745,6 +812,24 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             disabled={busy}
                           >
                             Start Onboarding
+                          </button>
+                        )}
+                        {/* Owner cockpit B — the owner's Onboarding tab:
+                            "Send Agreements" marks the client's DocuSign
+                            agreement status as Sent (the Agreement column
+                            updates immediately via the refetch). Manual for
+                            now — real DocuSign envelope sending is wired
+                            LATER once the owner connects a DocuSign account. */}
+                        {ownerOnboardingTab && (
+                          <button
+                            type="button"
+                            className="send-agreements-btn"
+                            title={`Send agreements — mark ${c.companyName}'s DocuSign agreement as sent`}
+                            aria-label={`Send agreements to ${c.companyName}`}
+                            onClick={() => handleAgreementStatus(c, "sent")}
+                            disabled={busy}
+                          >
+                            Send Agreements
                           </button>
                         )}
                       </div>

@@ -3479,6 +3479,120 @@ for CID35 in $C1_35 $C2_35 $C3_35; do
 done
 rm -f "$JAR35" "$JART35" /tmp/s35-settings.json /tmp/s35-baseline.json
 echo "  ✓ 35i: cockpit test clients + tenant org removed"
+echo "== 36. Owner cockpit alterations B — DocuSign agreement status + Send Agreements (owner direction 2026-08-15) =="
+echo "-- 36a. Owner create defaults agreement_status to not_sent (the OWNER receives the field) =="
+JAR36=$(mktemp)
+S=$(code -c "$JAR36" -b "$JAR36" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "36a: owner login" 200 "$S"
+code -b "$JAR36" "$BASE/api/settings" > /dev/null
+cp /tmp/body.json /tmp/s36-settings.json
+MID36=$(python3 -c "import json;st=json.load(open('/tmp/s36-settings.json'))['settings']['stages'];print(st[1] if len(st)>2 else '')")
+S=$(code -b "$JAR36" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"nextAction\":\"Send agreement\"}" "$BASE/api/clients")
+check "36b: owner creates a MIDDLE-stage client (the Onboarding bucket) → 201" 201 "$S"
+A36_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+echo "    (created client id=$A36_ID in middle stage \"$MID36\")"
+grep -q '"agreementStatus":"not_sent"' /tmp/body.json && echo "  ✓ owner create response includes agreementStatus \"not_sent\" by default" || echo "  ✗ owner create response missing agreementStatus default: $(cat /tmp/body.json)"
+S=$(code -b "$JAR36" "$BASE/api/clients/$A36_ID")
+check "36b2: owner GET client item → 200" 200 "$S"
+grep -q '"agreementStatus":"not_sent"' /tmp/body.json && echo "  ✓ owner GET item includes agreementStatus not_sent" || echo "  ✗ owner GET item: $(cat /tmp/body.json)"
+S=$(code -b "$JAR36" "$BASE/api/clients?archived=1")
+check "36b3: owner list clients → 200" 200 "$S"
+grep -q '"agreementStatus":"not_sent"' /tmp/body.json && echo "  ✓ owner list includes agreementStatus on the new client" || echo "  ✗ owner list missing agreementStatus: $(cat /tmp/body.json)"
+echo "-- 36c. Send Agreements → sent; manual advance to signed; manual reset to not_sent; invalid → 400 =="
+S=$(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"nextAction\":\"Send agreement\",\"agreementStatus\":\"sent\"}" "$BASE/api/clients/$A36_ID")
+check "36c: owner PUT agreementStatus=sent (the Send Agreements action) → 200" 200 "$S"
+grep -q '"agreementStatus":"sent"' /tmp/body.json && echo "  ✓ response agreementStatus=sent (Send Agreements updates immediately)" || echo "  ✗ sent not applied: $(cat /tmp/body.json)"
+S=$(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"agreementStatus\":\"signed\"}" "$BASE/api/clients/$A36_ID")
+check "36c2: owner PUT agreementStatus=signed (manual advance) → 200" 200 "$S"
+grep -q '"agreementStatus":"signed"' /tmp/body.json && echo "  ✓ response agreementStatus=signed (manual advance works)" || echo "  ✗ signed not applied: $(cat /tmp/body.json)"
+S=$(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"agreementStatus\":\"not_sent\"}" "$BASE/api/clients/$A36_ID")
+check "36c3: owner PUT agreementStatus=not_sent (manual reset) → 200" 200 "$S"
+grep -q '"agreementStatus":"not_sent"' /tmp/body.json && echo "  ✓ response agreementStatus=not_sent (reset works)" || echo "  ✗ reset failed: $(cat /tmp/body.json)"
+check "36c4: owner PUT invalid agreementStatus → 400" 400 $(code -b "$JAR36" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Agreement Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"stage\":\"$MID36\",\"agreementStatus\":\"bogus\"}" "$BASE/api/clients/$A36_ID")
+echo "-- 36d. Isolation: the tenant org never receives agreementStatus and cannot write it =="
+S=$(code -b "$JAR36" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Agreement Tenant Co","email":"agreement-tenant@example.com","password":"agreementtenant123"}' "$BASE/api/admin/orgs")
+check "36d: owner provisions agreement tenant org → 201" 201 "$S"
+T36_ORG=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+JART36=$(mktemp)
+S=$(code -c "$JART36" -b "$JART36" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"agreement-tenant@example.com","password":"agreementtenant123"}' "$BASE/api/auth/login")
+check "36d2: agreement tenant login → 200" 200 "$S"
+S=$(code -b "$JART36" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Client Co","clientType":"commercial","dealValue":10,"stage":"Prospect","services":["Cleaning","Maintenance"]}' "$BASE/api/clients")
+check "36d3: tenant creates client → 201" 201 "$S"
+AT36_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+if grep -q 'agreementStatus' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ tenant create response LEAKED agreementStatus"; cat /tmp/body.json
+else
+  PASS=$((PASS+1)); echo "  ✓ tenant create response has NO agreementStatus"
+fi
+grep -q '"services":\["Cleaning","Maintenance"\]' /tmp/body.json && echo "  ✓ tenant still gets its services field (Services-column data intact)" || echo "  ✗ tenant services missing: $(cat /tmp/body.json)"
+S=$(code -b "$JART36" "$BASE/api/clients")
+check "36d4: tenant list clients → 200" 200 "$S"
+if grep -q 'agreementStatus' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ tenant list LEAKED agreementStatus"
+else
+  PASS=$((PASS+1)); echo "  ✓ tenant list has NO agreementStatus anywhere"
+fi
+S=$(code -b "$JART36" "$BASE/api/clients/$AT36_ID")
+check "36d5: tenant GET client item → 200" 200 "$S"
+if grep -q 'agreementStatus' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ tenant GET item LEAKED agreementStatus"
+else
+  PASS=$((PASS+1)); echo "  ✓ tenant GET item has NO agreementStatus"
+fi
+# A tenant PUT that (only a crafted client could) sends agreementStatus must
+# be IGNORED — no error, no field in the response, tenant shape unchanged.
+S=$(code -b "$JART36" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Client Co","clientType":"commercial","dealValue":10,"stage":"Prospect","services":["Cleaning"],"agreementStatus":"signed"}' "$BASE/api/clients/$AT36_ID")
+check "36d6: tenant PUT with agreementStatus in body → 200 (ignored)" 200 "$S"
+if grep -q 'agreementStatus' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ tenant PUT response LEAKED agreementStatus"
+else
+  PASS=$((PASS+1)); echo "  ✓ tenant PUT response has NO agreementStatus (payload ignored, not leaked)"
+fi
+echo "-- 36e. UI surface: owner Onboarding swaps Services → Agreement; tenant keeps its Services column =="
+bun run build >/dev/null 2>&1
+NEWEST_JS36=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS36=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS36" ]; then
+  # The shared pipeline table swaps the third column per workspace: the
+  # OWNER's Onboarding tab renders "Agreement" (Send Agreements + the
+  # Not sent/Sent/Signed select), while client accounts AND the owner Leads
+  # tab keep "Services" — both branches compile into the bundle, proving the
+  # conditional exists (the tenant path stays untouched).
+  for STR36 in "Send Agreements" "Agreement" "Not sent" "Sent" "Signed"; do
+    if grep -Fq "$STR36" "$NEWEST_JS36"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR36\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR36\""; fi
+  done
+  if grep -Fq "Services" "$NEWEST_JS36"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle keeps \"Services\" (tenant + owner-Leads paths intact — only the owner Onboarding column is swapped)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ \"Services\" missing from $NEWEST_JS36"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 36 bundle surface check"
+fi
+if [ -n "$NEWEST_CSS36" ]; then
+  for STR36C in ".agree-cell" ".send-agreements-btn"; do
+    if grep -Fq "$STR36C" "$NEWEST_CSS36"; then PASS=$((PASS+1)); echo "  ✓ css contains \"$STR36C\""
+    else FAIL=$((FAIL+1)); echo "  ✗ css missing \"$STR36C\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 36 css surface check"
+fi
+echo "-- 36f. Cleanup =="
+code -b "$JAR36" -X DELETE "$BASE/api/admin/orgs/$T36_ORG" > /dev/null
+code -b "$JAR36" -X DELETE "$BASE/api/clients/$A36_ID" > /dev/null
+rm -f "$JAR36" "$JART36" /tmp/s36-settings.json
+echo "  ✓ 36f: agreement test client + tenant org removed"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 rm -f "$JAR" /tmp/body.json "$PASS_TMP"

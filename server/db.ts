@@ -725,6 +725,27 @@ db.exec(`
 }
 
 /**
+ * Owner cockpit B migration (owner direction 2026-08-15). Idempotent — safe
+ * on every boot.
+ *
+ * clients gains the OWNER-only DocuSign agreement-status column:
+ *   agreement_status TEXT NOT NULL DEFAULT 'not_sent'
+ * The owner tracks where each onboarding client is in completing forms
+ * (Not sent → Sent → Signed) manually TODAY; real DocuSign envelope sending
+ * is wired LATER once the owner connects a DocuSign account. Plain TEXT with
+ * a DEFAULT, so existing rows backfill cleanly and no FK games are needed
+ * (the same pattern the lost/DNC migration uses). The value is exposed to
+ * and writable by the OWNER org (role=admin) only — tenant orgs never see
+ * it in API responses and never write it.
+ */
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "agreement_status")) {
+    db.exec("ALTER TABLE clients ADD COLUMN agreement_status TEXT NOT NULL DEFAULT 'not_sent'");
+  }
+}
+
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
@@ -942,6 +963,10 @@ export interface ClientRow {
    *  in the org's OWN subscription book (used when the org's revenue_model =
    *  "subscription"). Default 0. */
   monthly_amount: number;
+  /** Owner cockpit B (owner direction 2026-08-15) — DocuSign agreement
+   *  status: "not_sent" | "sent" | "signed" (default "not_sent"). Tracked
+   *  manually by the OWNER org only; tenant orgs never receive/write it. */
+  agreement_status: string;
 }
 
 export interface TaskRow {
