@@ -2056,7 +2056,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     /* Owner direction 2026-08-15 (clarified twice) — the OWNER's Dashboard
        "Projected pipeline" KPI must show ONLY the FIRST pipeline stage: the
        owner's prospects bucket (their Leads stage). The old all-stage sum
-       counted Intakes/Onboarding + Sold client deals on top of the Leads
+       counted Onboarding + Sold client deals on top of the Leads
        deals, double-reporting money that "Sold MRR" already shows. This is
        positional + rename-safe: first stage = orgStages[0], never a
        hardcoded "Leads" string (the owner can rename stages). The existing

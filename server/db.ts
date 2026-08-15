@@ -750,7 +750,7 @@ db.exec(`
  * safe on every boot.
  *
  * The owner's workspace tracks leads through exactly three stages:
- *   Leads → Intakes → Sold
+ *   Leads → Onboarding → Sold
  * The owner org (the org of the `admin` user — the same flag that gates the
  * Admin tab) is migrated from the legacy 6-stage default pipeline
  * (Prospect → Intake → Kickoff → Build → Launch|Sold → Retainer): its stored
@@ -758,16 +758,16 @@ db.exec(`
  * client records is migrated positionally. The mapping is computed from the
  * counts, never from stage names: divide the old list into N contiguous bands
  * (N = new stage count) and map each old stage to the new stage at the same
- * relative position — with 6 → 3, old bands [1-2] → Leads, [3-4] → Intakes,
+ * relative position — with 6 → 3, old bands [1-2] → Leads, [3-4] → Onboarding,
  * [5-6] → Sold. Tenant orgs are untouched: the migration only ever considers
  * admin-role orgs whose stored stages match the legacy default list exactly,
  * so a customized owner pipeline would also be left alone. Nothing else
  * happens on "Sold" — auto-provisioning a paying client is a later step
  * (3g-3), not part of this data migration.
  */
-export const OWNER_PIPELINE = ["Leads", "Intakes", "Sold"] as const;
+export const OWNER_PIPELINE = ["Leads", "Onboarding", "Sold"] as const;
 
-// 3g-2: migrate the owner org's pipeline (Leads → Intakes → Sold) at boot.
+// 3g-2: migrate the owner org's pipeline (Leads → Onboarding → Sold) at boot.
 // Runs after every schema migration above so the stages column + users table
 // exist. On an existing database the admin user is already present, so this
 // import-time pass performs the migration immediately; on a fresh database the
@@ -796,6 +796,18 @@ function isLegacyOwnerPipeline(stages: string[]): boolean {
   return true;
 }
 
+/** True when the org's stages are exactly the legacy 3-stage OWNER pipeline
+ *  with the pre-2026-08-15 middle-stage name "Intakes" (case-insensitive) —
+ *  i.e. ["Leads","Intakes","Sold"]. This identifies the owner org mid-rename:
+ *  the 6→3 pass landed on "Intakes" for any database created before the
+ *  rename, and production is exactly there (8 owner clients in "Intakes").
+ *  Anything else — tenant orgs (role=member, vertical stages) and owner
+ *  stages already renamed/customized — is left untouched. */
+function isLegacyOwnerRenamePipeline(stages: string[]): boolean {
+  if (stages.length !== OWNER_PIPELINE.length) return false;
+  const lower = stages.map((s) => s.trim().toLowerCase());
+  return lower[0] === "leads" && lower[1] === "intakes" && lower[2] === "sold";
+}
 /** Positional band mapping: old stage at `oldIndex` → the new stage at the
  *  same relative position (proportional bands; generic over any counts). */
 function positionalStage(oldIndex: number, oldCount: number, newStages: readonly string[]): string {
@@ -807,7 +819,7 @@ function positionalStage(oldIndex: number, oldCount: number, newStages: readonly
 }
 
 /**
- * Migrate the owner org's pipeline to Leads → Intakes → Sold and remap its
+ * Migrate the owner org's pipeline to Leads → Onboarding → Sold and remap its
  * clients positionally. No-op for every other org (tenants, and any owner org
  * whose stages were already customized away from the legacy list). Called at
  * boot (db.ts import) AND right after the admin is ensured (auth.ts), so both
@@ -841,6 +853,30 @@ export function migrateOwnerPipeline(): void {
     tx();
     console.log(
       `[db] owner pipeline migrated (org ${org_id}): ${prev.join(" → ")} → ${next.join(" → ")} (${rows.length} client records remapped positionally)`,
+    );
+  }
+  // Owner direction 2026-08-15 — rename the owner's middle stage:
+  // "Intakes" → "Onboarding" (the Dashboard KPI already reads Onboarding,
+  // cockpit A). Idempotent: only an org whose stored stages are exactly the
+  // legacy 3-stage owner list ["Leads","Intakes","Sold"] is remapped, with the
+  // new name at the SAME position; that org's clients still sitting in
+  // "Intakes" follow (case-insensitive). Runs after the 6→3 pass above, so a
+  // database created before the rename converges in one boot; a second boot
+  // sees ["Leads","Onboarding","Sold"] and no-ops. Tenant orgs are never
+  // considered (role=member), and the owner's own renamed stages are left
+  // alone — pure owner-pipeline rename.
+  for (const { org_id } of adminOrgs) {
+    const org = getOrg(org_id);
+    if (!org) continue;
+    const prev = parseStages(org.stages);
+    if (!isLegacyOwnerRenamePipeline(prev)) continue;
+    const next = [...OWNER_PIPELINE];
+    const renamed = db
+      .query("UPDATE clients SET stage = ? WHERE org_id = ? AND lower(stage) = ?")
+      .run(next[1], org_id, "intakes");
+    db.query("UPDATE orgs SET stages = ? WHERE id = ?").run(JSON.stringify(next), org_id);
+    console.log(
+      `[db] owner middle stage renamed (org ${org_id}): ${prev.join(" → ")} → ${next.join(" → ")} (${renamed.changes} client records "Intakes" → "Onboarding")`,
     );
   }
 }
