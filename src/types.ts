@@ -282,6 +282,11 @@ export interface User {
    *  permissions entirely and always receive {}. New key on /api/auth/me +
    *  login (additive — the UI ignores it until the team-users UI ships). */
   permissions?: TabPermissions;
+  /** Team-users UI (owner request 2026-08-14) — effective org admin: stored
+   *  role='admin' OR the org's original owner login (first user by MIN id).
+   *  Additive key on /api/auth/me + login; drives the Settings "Team members"
+   *  section and admin-bypass rendering. */
+  isOrgAdmin?: boolean;
   /** Tenant display name (e.g. "Elevate Studio") — shown next to the email in the nav. */
   orgName?: string;
   /** The tenant's ordered pipeline stages (Phase 3a). */

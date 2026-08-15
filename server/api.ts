@@ -2209,13 +2209,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       | null;
     if (!org) return err("Org not found.", 404);
     if (org.id === admin.orgId) return err("Cannot impersonate your own org.", 400);
-    // Prefer the org's member login; fall back to any of its users (the owner
-    // may provision an org whose only user is an admin in the future).
-    const member = db
-      .query("SELECT id FROM users WHERE org_id = ? AND role = 'member' ORDER BY id ASC LIMIT 1")
+    // Team-users UI (owner request 2026-08-14) — the owner always lands on
+    // the account's ADMINISTRATOR: prefer the first user with a stored
+    // role='admin'; otherwise fall back to the org's first user by id (every
+    // single-user account's original owner login is its effective org admin,
+    // even with a stored role of 'member' — the "no migration" rule).
+    const adminUser = db
+      .query("SELECT id FROM users WHERE org_id = ? AND role = 'admin' ORDER BY id ASC LIMIT 1")
       .get(org.id) as { id: number } | null;
     const target =
-      member ??
+      adminUser ??
       (db.query("SELECT id FROM users WHERE org_id = ? ORDER BY id ASC LIMIT 1").get(org.id) as
         | { id: number }
         | null);

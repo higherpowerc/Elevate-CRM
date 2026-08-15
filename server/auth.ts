@@ -109,6 +109,11 @@ export interface User {
    *  and always see {}. Added to /api/auth/me (and login) so the UI can
    *  render tabs per member later. */
   permissions: TabPermissions;
+  /** Team-users UI (owner request 2026-08-14): effective org admin — stored
+   *  role='admin' OR the org's original owner login (its first user by MIN id).
+   *  Additive key on /api/auth/me + login (and every user payload); drives the
+   *  Settings "Team members" section and admin-bypass rendering. */
+  isOrgAdmin: boolean;
   orgName: string;
   /** The tenant's ordered pipeline stages (Phase 3a) — the client stage
    *  dropdown and dashboard breakdown are driven by this list. */
@@ -127,6 +132,18 @@ interface UserRow {
   created_at: string;
 }
 
+/** Effective org admin — stored role='admin' OR the org's original owner
+ *  login (its first user by MIN id). Mirrors the api.ts isOrgAdmin() gate so
+ *  the UI can show admin controls (team members section) exactly for the users
+ *  the server lets manage members. */
+function isOrgAdminUser(userId: number, orgId: number, role: Role): boolean {
+  if (role === "admin") return true;
+  const first = db
+    .query("SELECT MIN(id) AS id FROM users WHERE org_id = ?")
+    .get(orgId) as { id: number | null } | null;
+  return first?.id === userId;
+}
+
 /** Map a users row to the API shape; orgName/stages/accentColor let the shell
  *  show the signed-in tenant's own branding once authenticated. */
 export function toUser(row: UserRow): User {
@@ -137,6 +154,7 @@ export function toUser(row: UserRow): User {
     orgId: row.org_id,
     role: row.role,
     permissions: parsePermissions(row.permissions),
+    isOrgAdmin: isOrgAdminUser(row.id, row.org_id, row.role),
     orgName: org?.name ?? "",
     stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
     accentColor: org?.accent_color ?? DEFAULT_ACCENT,

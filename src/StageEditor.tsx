@@ -19,10 +19,15 @@ export default function StageEditor({
   initialStages,
   stageCounts,
   onSaved,
+  canEdit = true,
 }: {
   initialStages: string[];
   stageCounts: Record<string, number>;
   onSaved?: (stages: string[]) => void;
+  /** Team-users UI (owner request 2026-08-14) — false for a restricted member
+   *  with view-only "settings" access: rename/add/remove/save are disabled
+   *  (the server still rejects the write). Owner and org admins always true. */
+  canEdit?: boolean;
 }) {
   const [stages, setStages] = useState<string[]>(initialStages);
   const [busy, setBusy] = useState(false);
@@ -105,6 +110,7 @@ export default function StageEditor({
                 maxLength={60}
                 placeholder={`Stage ${i + 1} name`}
                 aria-label={`Stage ${i + 1} name`}
+                disabled={!canEdit}
               />
               <span
                 className={`stage-count-chip${count > 0 ? " has" : ""}`}
@@ -115,7 +121,7 @@ export default function StageEditor({
               <button
                 type="button"
                 className="icon-btn danger"
-                disabled={busy || count > 0}
+                disabled={busy || count > 0 || !canEdit}
                 title={
                   count > 0
                     ? `Move or archive its ${count} client${count === 1 ? "" : "s"} first`
@@ -130,13 +136,17 @@ export default function StageEditor({
           );
         })}
       </div>
-      <button type="button" className="btn btn-ghost btn-sm stage-add" onClick={addStage}>
-        + Add stage
-      </button>
-      <div className="stage-save">
-        <button className="btn btn-primary" disabled={busy} type="submit">
-          {busy ? "Saving…" : "Save stages"}
+      {canEdit && (
+        <button type="button" className="btn btn-ghost btn-sm stage-add" onClick={addStage}>
+          + Add stage
         </button>
+      )}
+      <div className="stage-save">
+        {canEdit && (
+          <button className="btn btn-primary" disabled={busy} type="submit">
+            {busy ? "Saving…" : "Save stages"}
+          </button>
+        )}
       </div>
       {confirming !== null && (
         <ConfirmDeleteModal

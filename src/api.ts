@@ -1,4 +1,4 @@
-import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgSettings, ProvisionEvent, RevenueModel, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
+import type { Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -113,6 +113,34 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+
+  /* Team users per client account (owner request 2026-08-14) — org-scoped
+     member management, admin-only (the account's original owner login or a
+     role='admin' team member; restricted members get 403 server-side).
+     Passwords are WRITE-ONLY: accepted on create/PATCH, hashed, never
+     returned — the admin shares a new temp password with the member
+     out-of-band. */
+  orgMembers: () => request<{ members: OrgMember[] }>("/api/org/members"),
+  createOrgMember: (data: {
+    email: string;
+    password: string;
+    role: "admin" | "member";
+    permissions?: TabPermissions;
+  }) =>
+    request<{ member: OrgMember }>("/api/org/members", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateOrgMember: (
+    id: number,
+    data: { role?: "admin" | "member"; permissions?: TabPermissions; password?: string },
+  ) =>
+    request<{ member: OrgMember }>(`/api/org/members/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteOrgMember: (id: number) =>
+    request<{ ok: true }>(`/api/org/members/${id}`, { method: "DELETE" }),
 
   /* Owner-only admin endpoints (Phase 2 — tenant provisioning). A member
      calling these gets a 403 from the server. */

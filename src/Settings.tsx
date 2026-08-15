@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import {
   CUSTOM_FIELD_TYPES,
+  TENANT_TABS,
   type CustomFieldDef,
   type CustomFieldType,
   type CustomIntakeGroup,
   type CustomIntakeField,
   type IntakeGroupAppliesTo,
   type IntakeGroupFieldKind,
+  type OrgMember,
   type OrgSettings,
+  type TabPermissions,
+  type TenantTab,
   money,
 } from "./types";
 import StageEditor from "./StageEditor";
@@ -47,7 +51,23 @@ function slugify(s: string): string {
  * client). Any signed-in member of the org can edit these — it is their CRM.
  * All writes are session-org scoped server-side.
  */
-export default function Settings() {
+export default function Settings({
+  canEdit = true,
+  isOrgAdmin = false,
+  currentUserId,
+}: {
+  /** Team-users UI (owner request 2026-08-14) — false for a restricted member
+   *  with view-only "settings" access: every save/apply affordance is hidden
+   *  (the server still 403s the write). Owner and org admins always true. */
+  canEdit?: boolean;
+  /** Effective org admin (stored role='admin' OR the account's original owner
+   *  login — the server reports this on /api/auth/me). Only org admins see
+   *  and manage the Team members section; the server 403s the routes for
+   *  everyone else. */
+  isOrgAdmin?: boolean;
+  /** The session user's id — marks "you" on the member list. */
+  currentUserId?: number;
+}) {
   const [settings, setSettings] = useState<OrgSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -120,6 +140,201 @@ export default function Settings() {
       setPwError(err instanceof Error ? err.message : "Change failed.");
     } finally {
       setPwBusy(false);
+    }
+  }
+
+  /* ── Team members (owner request 2026-08-14) ──────────────────────
+     Org-admin only (isOrgAdmin — the account's original owner login or a
+     stored role='admin' member; the server 403s the routes otherwise).
+     Passwords are write-only: the admin types a temp password at create/
+     reset; the API hashes it and never returns it, so the admin passes it
+     to the member themselves. */
+  const MEMBER_TAB_LABELS: { tab: TenantTab; label: string }[] = [
+    { tab: "clients", label: "Clients" },
+    { tab: "tasks", label: "Tasks" },
+    { tab: "finance", label: "Finance" },
+    { tab: "settings", label: "Settings" },
+    { tab: "support", label: "Support" },
+  ];
+  type PermChoice = "view" | "edit" | "none";
+  const PERM_OPTIONS: { value: PermChoice; label: string }[] = [
+    { value: "view", label: "View only" },
+    { value: "edit", label: "Can edit" },
+    { value: "none", label: "No access" },
+  ];
+  function allViewChoices(): Record<TenantTab, PermChoice> {
+    return Object.fromEntries(TENANT_TABS.map((t) => [t, "view" as PermChoice])) as Record<
+      TenantTab,
+      PermChoice
+    >;
+  }
+  function permToChoice(p: TabPermissions, tab: TenantTab): PermChoice {
+    if (p[tab] === undefined) return "none";
+    return p[tab]!.edit ? "edit" : "view";
+  }
+  function choicesToPerm(c: Record<TenantTab, PermChoice>): TabPermissions {
+    const out: TabPermissions = {};
+    for (const t of TENANT_TABS) {
+      if (c[t] === "none") continue;
+      out[t] = { edit: c[t] === "edit" };
+    }
+    return out;
+  }
+  function permSummary(p: TabPermissions): { tab: TenantTab; label: string; choice: PermChoice }[] {
+    return MEMBER_TAB_LABELS.map(({ tab, label }) => ({ tab, label, choice: permToChoice(p, tab) }));
+  }
+
+  const [members, setMembers] = useState<OrgMember[] | null>(null);
+  const [membersError, setMembersError] = useState<string | null>(null);
+  const [membersSaved, setMembersSaved] = useState<string | null>(null);
+  const [membersBusy, setMembersBusy] = useState(false);
+
+  /* Add-member form */
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<"member" | "admin">("member");
+  const [newChoices, setNewChoices] = useState<Record<TenantTab, PermChoice>>(() => allViewChoices());
+
+  /* Edit-member inline panel (role + per-tab access) */
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editRole, setEditRole] = useState<"member" | "admin">("member");
+  const [editChoices, setEditChoices] = useState<Record<TenantTab, PermChoice>>(() => allViewChoices());
+
+  /* Reset-password inline form (a small form, never a visible password in the list) */
+  const [resetForId, setResetForId] = useState<number | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState("");
+
+  /* Typed-confirm removal */
+  const [deletingMember, setDeletingMember] = useState<OrgMember | null>(null);
+
+  const loadMembers = useCallback(async () => {
+    setMembersError(null);
+    try {
+      const { members: list } = await api.orgMembers();
+      setMembers(list);
+    } catch (e) {
+      setMembersError(e instanceof Error ? e.message : "Failed to load team members.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOrgAdmin) loadMembers();
+  }, [isOrgAdmin, loadMembers]);
+
+  function beginEdit(m: OrgMember) {
+    setMembersError(null);
+    setMembersSaved(null);
+    setResetForId(null);
+    setResetPasswordValue("");
+    setEditingId(m.id);
+    setEditRole(m.role);
+    setEditChoices({
+      clients: permToChoice(m.permissions, "clients"),
+      tasks: permToChoice(m.permissions, "tasks"),
+      finance: permToChoice(m.permissions, "finance"),
+      settings: permToChoice(m.permissions, "settings"),
+      support: permToChoice(m.permissions, "support"),
+    });
+  }
+
+  function beginReset(m: OrgMember) {
+    setMembersError(null);
+    setMembersSaved(null);
+    setEditingId(null);
+    setResetPasswordValue("");
+    setResetForId(m.id);
+  }
+
+  async function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    setMembersError(null);
+    setMembersSaved(null);
+    const email = newEmail.trim();
+    if (!email) {
+      setMembersError("Member email is required.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setMembersError("Temporary password must be at least 8 characters.");
+      return;
+    }
+    setMembersBusy(true);
+    try {
+      await api.createOrgMember({
+        email,
+        password: newPassword,
+        role: newRole,
+        ...(newRole === "member" ? { permissions: choicesToPerm(newChoices) } : {}),
+      });
+      setMembersSaved("Member added — share the temporary password with them (it is only shown to you, once).");
+      setNewEmail("");
+      setNewPassword("");
+      setNewRole("member");
+      setNewChoices(allViewChoices());
+      await loadMembers();
+    } catch (err) {
+      setMembersError(err instanceof Error ? err.message : "Add failed.");
+    } finally {
+      setMembersBusy(false);
+    }
+  }
+
+  async function handleSaveMember() {
+    if (editingId === null) return;
+    setMembersError(null);
+    setMembersSaved(null);
+    setMembersBusy(true);
+    try {
+      await api.updateOrgMember(editingId, {
+        role: editRole,
+        ...(editRole === "member" ? { permissions: choicesToPerm(editChoices) } : {}),
+      });
+      setMembersSaved("Member updated.");
+      setEditingId(null);
+      await loadMembers();
+    } catch (err) {
+      setMembersError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setMembersBusy(false);
+    }
+  }
+
+  async function handleResetPassword() {
+    if (resetForId === null) return;
+    setMembersError(null);
+    setMembersSaved(null);
+    if (resetPasswordValue.length < 8) {
+      setMembersError("New password must be at least 8 characters.");
+      return;
+    }
+    setMembersBusy(true);
+    try {
+      await api.updateOrgMember(resetForId, { password: resetPasswordValue });
+      setMembersSaved("Password reset — share the new temporary password with the member.");
+      setResetForId(null);
+      setResetPasswordValue("");
+    } catch (err) {
+      setMembersError(err instanceof Error ? err.message : "Reset failed.");
+    } finally {
+      setMembersBusy(false);
+    }
+  }
+
+  async function handleRemoveMember() {
+    if (!deletingMember) return;
+    setMembersError(null);
+    setMembersSaved(null);
+    setMembersBusy(true);
+    try {
+      await api.deleteOrgMember(deletingMember.id);
+      setMembersSaved("Member removed.");
+      setDeletingMember(null);
+      await loadMembers();
+    } catch (err) {
+      /* The server's last-admin protection (400) surfaces here verbatim. */
+      setMembersError(err instanceof Error ? err.message : "Remove failed.");
+    } finally {
+      setMembersBusy(false);
     }
   }
 
@@ -618,6 +833,11 @@ export default function Settings() {
           {saved}
         </div>
       )}
+      {!canEdit && (
+        <div className="alert" role="status">
+          You have view-only access to settings — changes are disabled.
+        </div>
+      )}
 
       <div className="admin-grid">
         <div className="card admin-form">
@@ -637,6 +857,7 @@ export default function Settings() {
                 maxLength={200}
                 placeholder="Acme Landscaping"
                 required
+                disabled={!canEdit}
               />
               <span className="field-hint">Shown in the app header and document title.</span>
             </label>
@@ -649,6 +870,7 @@ export default function Settings() {
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
                   aria-label="Accent color"
+                  disabled={!canEdit}
                 />
                 <input
                   className="accent-hex"
@@ -657,12 +879,15 @@ export default function Settings() {
                   maxLength={7}
                   placeholder="#d6ff3f"
                   aria-label="Accent color hex"
+                  disabled={!canEdit}
                 />
               </div>
             </div>
-            <button className="btn btn-primary" disabled={busy} type="submit">
-              {busy ? "Saving…" : "Save branding"}
-            </button>
+            {canEdit && (
+              <button className="btn btn-primary" disabled={busy} type="submit">
+                {busy ? "Saving…" : "Save branding"}
+              </button>
+            )}
           </form>
         </div>
 
@@ -708,9 +933,11 @@ export default function Settings() {
               </span>
             </div>
             <div className="stage-save">
-              <button className="btn btn-primary" disabled={busy} onClick={applyVerticalTemplate}>
-                {busy ? "Applying…" : "Apply template"}
-              </button>
+              {canEdit && (
+                <button className="btn btn-primary" disabled={busy} onClick={applyVerticalTemplate}>
+                  {busy ? "Applying…" : "Apply template"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -761,9 +988,11 @@ export default function Settings() {
               </div>
             </div>
             <div className="stage-save">
-              <button className="btn btn-primary" disabled={busy} onClick={saveRevenueModel}>
-                {busy ? "Saving…" : "Save revenue model"}
-              </button>
+              {canEdit && (
+                <button className="btn btn-primary" disabled={busy} onClick={saveRevenueModel}>
+                  {busy ? "Saving…" : "Save revenue model"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -870,9 +1099,11 @@ export default function Settings() {
               </span>
             </div>
             <div className="stage-save">
-              <button className="btn btn-primary" disabled={busy} onClick={saveIntakeSetup}>
-                {busy ? "Saving…" : "Save account setup"}
-              </button>
+              {canEdit && (
+                <button className="btn btn-primary" disabled={busy} onClick={saveIntakeSetup}>
+                  {busy ? "Saving…" : "Save account setup"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1016,12 +1247,16 @@ export default function Settings() {
             </div>
           )}
           <div className="cg-footer">
-            <button type="button" className="btn btn-ghost btn-sm" onClick={addIntakeGroup} disabled={busy}>
-              + Add group
-            </button>
-            <button className="btn btn-primary" disabled={busy} onClick={saveIntakeGroups}>
-              {busy ? "Saving…" : "Save custom intake groups"}
-            </button>
+            {canEdit && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={addIntakeGroup} disabled={busy}>
+                + Add group
+              </button>
+            )}
+            {canEdit && (
+              <button className="btn btn-primary" disabled={busy} onClick={saveIntakeGroups}>
+                {busy ? "Saving…" : "Save custom intake groups"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -1033,7 +1268,7 @@ export default function Settings() {
               its clients; removing one is blocked while clients are still in it.
             </p>
           </div>
-          <StageEditor initialStages={settings.stages} stageCounts={settings.stageCounts} />
+          <StageEditor initialStages={settings.stages} stageCounts={settings.stageCounts} canEdit={canEdit} />
         </div>
 
         <div className="card admin-table cfdef-card">
@@ -1155,9 +1390,11 @@ export default function Settings() {
             </div>
           )}
           <div className="stage-save">
-            <button className="btn btn-primary" disabled={busy} onClick={saveCustomFields}>
-              {busy ? "Saving…" : "Save custom fields"}
-            </button>
+            {canEdit && (
+              <button className="btn btn-primary" disabled={busy} onClick={saveCustomFields}>
+                {busy ? "Saving…" : "Save custom fields"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -1222,6 +1459,372 @@ export default function Settings() {
           </form>
         </div>
       </div>
+
+      {/* Team users per client account (owner request 2026-08-14) — the
+          member-management UI. ORG ADMIN ONLY (isOrgAdmin: the account's
+          original owner login or a stored role='admin' member; the server
+          403s the routes for everyone else, so a non-admin never sees this
+          section and cannot read the member list). Passwords are write-only:
+          the admin types a temp password at create/reset; the API hashes it
+          and never returns it — the admin passes it to the member directly. */}
+      {isOrgAdmin && (
+        <>
+          <div className="card admin-form members-add-card">
+            <div className="admin-card-head">
+              <h2 className="admin-card-title">Add a team member</h2>
+              <p className="admin-card-sub">
+                A teammate signs in with their own email and a temporary password you set — it is
+                hashed and never shown again, so share it with them yourself.
+              </p>
+            </div>
+            {membersError && (
+              <div className="alert alert-error" role="alert">
+                {membersError}
+              </div>
+            )}
+            {membersSaved && (
+              <div className="alert alert-success" role="status">
+                {membersSaved}
+              </div>
+            )}
+            <form onSubmit={handleAddMember} className="form">
+              <div className="member-form-grid">
+                <label className="field">
+                  <span className="field-label">Email</span>
+                  <input
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="teammate@yourcompany.com"
+                    maxLength={254}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Temporary password</span>
+                  <input
+                    type="text"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    minLength={8}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                  />
+                  <span className="field-hint">
+                    Shown to you only at this moment — the member signs in with it and you can
+                    reset it any time.
+                  </span>
+                </label>
+                <div className="field">
+                  <span className="field-label">Role</span>
+                  <div className="seg intake-seg" role="radiogroup" aria-label="Member role">
+                    {(
+                      [
+                        ["member", "Member"],
+                        ["admin", "Admin"],
+                      ] as const
+                    ).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        role="radio"
+                        aria-checked={newRole === val}
+                        className={newRole === val ? "seg-btn active" : "seg-btn"}
+                        onClick={() => {
+                          setMembersError(null);
+                          setMembersSaved(null);
+                          setNewRole(val);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="field-hint">
+                    {newRole === "admin"
+                      ? "Admins have full access to every tab and manage team members."
+                      : "Members get per-tab access — pick it below."}
+                  </span>
+                </div>
+              </div>
+              {newRole === "member" && (
+                <div className="field">
+                  <span className="field-label">Tab access</span>
+                  <div className="perm-grid">
+                    {MEMBER_TAB_LABELS.map(({ tab, label }) => (
+                      <label className="perm-picker" key={tab}>
+                        <span className="perm-picker-label">{label}</span>
+                        <select
+                          value={newChoices[tab]}
+                          onChange={(e) =>
+                            setNewChoices((c) => ({ ...c, [tab]: e.target.value as PermChoice }))
+                          }
+                          aria-label={`${label} access`}
+                        >
+                          {PERM_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                  <span className="field-hint">
+                    "View only" lets them open the tab; "Can edit" lets them change data; "No
+                    access" hides the tab. Default: all tabs view-only.
+                  </span>
+                </div>
+              )}
+              <div className="stage-save">
+                <button className="btn btn-primary" disabled={membersBusy} type="submit">
+                  {membersBusy ? "Adding…" : "Add member"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="card admin-table members-card">
+            <div className="admin-card-head">
+              <h2 className="admin-card-title">Team members</h2>
+              <p className="admin-card-sub">
+                Everyone who can sign in to this workspace. Role and per-tab access are
+                enforced server-side on every route.
+              </p>
+            </div>
+            {members === null ? (
+              <div className="skeleton-block" aria-label="Loading team members" />
+            ) : members.length === 0 ? (
+              <p className="field-hint cfdef-empty">No team members yet — add one above.</p>
+            ) : (
+              <div className="members-list">
+                {members.map((m) => {
+                  const summary = permSummary(m.permissions);
+                  const isMe = m.id === currentUserId;
+                  return (
+                    <div className="member-row" key={m.id}>
+                      <div className="member-main">
+                        <div className="member-email">
+                          <span className="cell-name">{m.email}</span>
+                          {isMe && <span className="chip chip-archived">you</span>}
+                        </div>
+                        <div className="member-meta">
+                          <span
+                            className={`badge ${m.role === "admin" ? "tone-lime" : "tone-gray"}`}
+                          >
+                            {m.role === "admin" ? "Admin" : "Member"}
+                          </span>
+                          <span className="member-added">
+                            Added {m.createdAt ? m.createdAt.slice(0, 10) : "—"}
+                          </span>
+                        </div>
+                        <div className="member-access" aria-label="Tab access">
+                          {summary.map(({ tab, label, choice }) => (
+                            <span
+                              key={tab}
+                              className={`badge ${
+                                choice === "edit"
+                                  ? "tone-lime"
+                                  : choice === "view"
+                                    ? "tone-blue"
+                                    : "tone-gray"
+                              }`}
+                              title={`${label}: ${
+                                choice === "edit"
+                                  ? "Can edit"
+                                  : choice === "view"
+                                    ? "View only"
+                                    : "No access"
+                              }`}
+                            >
+                              {label}:{" "}
+                              {choice === "edit" ? "Edit" : choice === "view" ? "View" : "—"}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="member-actions">
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => beginEdit(m)}
+                          disabled={membersBusy}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => beginReset(m)}
+                          disabled={membersBusy}
+                        >
+                          Reset password
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm danger"
+                          onClick={() => setDeletingMember(m)}
+                          disabled={membersBusy}
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      {editingId === m.id && (
+                        <div className="member-inline-edit">
+                          <div className="member-inline-head">
+                            <strong>Edit {m.email}</strong>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              onClick={() => setEditingId(null)}
+                              aria-label="Close member editor"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <div className="field">
+                            <span className="field-label">Role</span>
+                            <div className="seg intake-seg" role="radiogroup" aria-label="Edit role">
+                              {(
+                                [
+                                  ["member", "Member"],
+                                  ["admin", "Admin"],
+                                ] as const
+                              ).map(([val, label]) => (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={editRole === val}
+                                  className={editRole === val ? "seg-btn active" : "seg-btn"}
+                                  onClick={() => {
+                                    setMembersError(null);
+                                    setMembersSaved(null);
+                                    setEditRole(val);
+                                  }}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            <span className="field-hint">
+                              {editRole === "admin"
+                                ? "Admins have full access to every tab and manage team members."
+                                : "Members get per-tab access — pick it below."}
+                            </span>
+                          </div>
+                          {editRole === "member" && (
+                            <div className="field">
+                              <span className="field-label">Tab access</span>
+                              <div className="perm-grid">
+                                {MEMBER_TAB_LABELS.map(({ tab, label }) => (
+                                  <label className="perm-picker" key={tab}>
+                                    <span className="perm-picker-label">{label}</span>
+                                    <select
+                                      value={editChoices[tab]}
+                                      onChange={(e) =>
+                                        setEditChoices((c) => ({
+                                          ...c,
+                                          [tab]: e.target.value as PermChoice,
+                                        }))
+                                      }
+                                      aria-label={`Edit ${label} access`}
+                                    >
+                                      {PERM_OPTIONS.map((o) => (
+                                        <option key={o.value} value={o.value}>
+                                          {o.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="member-inline-actions">
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              onClick={handleSaveMember}
+                              disabled={membersBusy}
+                            >
+                              {membersBusy ? "Saving…" : "Save changes"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setEditingId(null)}
+                              disabled={membersBusy}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {resetForId === m.id && (
+                        <div className="member-inline-reset">
+                          <span className="field-label">New temporary password</span>
+                          <div className="member-reset-row">
+                            <input
+                              type="text"
+                              value={resetPasswordValue}
+                              onChange={(e) => setResetPasswordValue(e.target.value)}
+                              placeholder="At least 8 characters"
+                              minLength={8}
+                              autoComplete="off"
+                              spellCheck={false}
+                              aria-label="New temporary password"
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-sm"
+                              onClick={handleResetPassword}
+                              disabled={membersBusy || resetPasswordValue.length < 8}
+                            >
+                              {membersBusy ? "Setting…" : "Set password"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setResetForId(null)}
+                              disabled={membersBusy}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          <span className="field-hint">
+                            The member signs in with this next time — share it with them directly.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {deletingMember && (
+        <ConfirmDeleteModal
+          title="Remove team member?"
+          entity={deletingMember.email}
+          note={
+            <p className="confirm-delete-note">
+              They immediately lose access to this workspace. The account's last admin cannot be
+              removed.
+            </p>
+          }
+          confirmLabel="Remove member"
+          busy={membersBusy}
+          onCancel={() => setDeletingMember(null)}
+          onConfirm={handleRemoveMember}
+        />
+      )}
       {confirmRemoveField !== null && (
         <ConfirmDeleteModal
           title="Remove custom field?"

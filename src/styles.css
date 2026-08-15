@@ -3516,3 +3516,132 @@ legend.field-label {
   margin-top: 3px;
   font-size: 0.78rem;
 }
+
+/* ── Team members (owner request 2026-08-14) — Settings members UI ──────── */
+.member-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 18px;
+}
+.member-form-grid .field:last-child {
+  grid-column: 1 / -1;
+}
+@media (max-width: 640px) {
+  .member-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .member-form-grid .field:last-child {
+    grid-column: auto;
+  }
+}
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+  margin: 6px 0 4px;
+}
+.perm-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.perm-picker-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted-1, #c9c9c2);
+  white-space: nowrap;
+}
+.perm-picker select {
+  min-width: 110px;
+  padding: 5px 8px;
+  font-size: 0.8rem;
+}
+.members-card .member-row {
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  padding: 14px 2px;
+}
+.members-card .member-row:first-child {
+  border-top: none;
+}
+.member-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 14px;
+}
+.member-email {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  min-width: 220px;
+}
+.member-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.member-added {
+  font-size: 0.78rem;
+  color: var(--muted-2, #8a8a84);
+}
+.member-access {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex-basis: 100%;
+  margin-top: 8px;
+}
+.member-access .badge {
+  font-size: 0.72rem;
+}
+.member-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.member-actions .btn-ghost.danger {
+  color: var(--red, #f0625f);
+}
+.member-actions .btn-ghost.danger:not(:disabled):hover {
+  background: var(--red, #f0625f);
+  color: #fff;
+}
+.member-inline-edit,
+.member-inline-reset {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border-radius: 12px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+}
+.member-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.member-inline-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.member-reset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 4px 0 6px;
+}
+.member-reset-row input {
+  min-width: 220px;
+  flex: 1;
+}

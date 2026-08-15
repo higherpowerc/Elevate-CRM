@@ -19,6 +19,10 @@ interface Props {
    *  tickets (org name per row) with a status control; false = a CLIENT
    *  workspace: "Support" tab showing only its own tickets + submit form. */
   ownerOrg: boolean;
+  /** Team-users UI (owner request 2026-08-14) — false for a restricted member
+   *  with view-only "support" access: the submit-ticket affordances are hidden
+   *  (the server still 403s the create). Owner and org admins always true. */
+  canEdit?: boolean;
 }
 
 const TICKET_STATUS_ORDER = [...TICKET_STATUSES];
@@ -27,7 +31,11 @@ const TICKET_STATUS_ORDER = [...TICKET_STATUSES];
  *  reflected on the client's Support tab without a manual refresh. */
 const TENANT_POLL_MS = 20_000;
 
-export default function Tickets({ ownerOrg }: Props) {
+export default function Tickets({ ownerOrg, canEdit = true }: Props) {
+  /* Team-users UI (owner request 2026-08-14) — false for a restricted member
+     with view-only "support" access: the submit-ticket affordances are hidden
+     (the server still 403s the create). The owner and org admins always pass
+     true; the owner's status control is owner-only and untouched. */
   const pii = usePii();
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,9 +129,11 @@ export default function Tickets({ ownerOrg }: Props) {
             )}
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-          {ownerOrg ? "New ticket" : "Submit a ticket"}
-        </button>
+        {canEdit && (
+          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+            {ownerOrg ? "New ticket" : "Submit a ticket"}
+          </button>
+        )}
       </div>
 
       {error && (
@@ -142,9 +152,11 @@ export default function Tickets({ ownerOrg }: Props) {
               ? "When a client account runs into an issue, its ticket shows up here with the account name."
               : "Something not working? Submit a ticket and our team will take a look."}
           </p>
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-            {ownerOrg ? "New ticket" : "Submit a ticket"}
-          </button>
+          {canEdit && (
+            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+              {ownerOrg ? "New ticket" : "Submit a ticket"}
+            </button>
+          )}
         </div>
       ) : (
         <div className="card table-wrap">
