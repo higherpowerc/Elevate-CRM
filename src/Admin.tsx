@@ -69,8 +69,11 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   /* Delete-tenant confirm */
   const [deleting, setDeleting] = useState<Org | null>(null);
 
-  /* Owner request 2026-08-14 — per-account MRR + revenue model: an inline
-     draft editor per org row, saved to the server via PATCH. */
+  /* Owner request 2026-08-14/15 — per-account BILLING amount + revenue model:
+     Phase 5 billing prep (what the owner will charge each client account).
+     It does NOT feed Client MRR (owner direction 2026-08-15 — MRR is the
+     deal value of sold-stage client records). Inline draft editor per org
+     row, saved to the server via PATCH. */
   const [billingDraft, setBillingDraft] = useState<
     Record<number, { amount: string; model: RevenueModel }>
   >({});
@@ -89,7 +92,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
     const d = billingDraftFor(o);
     const amount = Number(d.amount);
     if (!Number.isFinite(amount) || amount < 0) {
-      setError("Monthly subscription amount must be a non-negative number.");
+      setError("Monthly billing amount must be a non-negative number.");
       return;
     }
     setSavingBillingId(o.id);
@@ -375,7 +378,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                   <th className="num">Members</th>
                   <th className="num">Client records</th>
                   <th>Created</th>
-                  <th>Monthly $ / model</th>
+                  <th>Billing $ / model</th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
@@ -440,7 +443,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
-                      <td data-label="Monthly $ / model">
+                      <td data-label="Billing $ / model">
                         {isOwner ? (
                           <span className="cell-muted">—</span>
                         ) : (
@@ -458,7 +461,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                                     [o.id]: { ...billingDraftFor(o), amount: e.target.value },
                                   }))
                                 }
-                                aria-label={`${o.name} monthly subscription amount`}
+                                aria-label={`${o.name} monthly billing amount (Phase 5)`}
                               />
                               <select
                                 className="billing-model"
