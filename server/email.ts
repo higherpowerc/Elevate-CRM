@@ -4,17 +4,32 @@
  * Sends via Resend's built-in test sender (`onboarding@resend.dev`) — no
  * domain purchase needed; a real domain comes at Phase 5. The app must NEVER
  * crash or fail a request because email is not configured: when
- * RESEND_API_KEY is unset, `sendEmail` logs a skip line and returns.
- * `sendEmail` never throws, so callers can fire-and-forget it from the
+ * RESEND_API_KEY is unset, `sendEmail` logs a skip line and returns a
+ * non-ok result (never throws), so callers can fire-and-forget it from the
  * provisioning/login paths without touching the request that triggered it.
+ *
+ * Live-test finding #1 (2026-08-15): Resend's test mode returns HTTP 422 for
+ * recipients that aren't the account owner's email, and the app still showed
+ * "sent" because the old fire-and-forget `sendEmail` swallowed errors. The
+ * return value now carries the outcome (`{ ok: true }` vs `{ ok: false,
+ * error }`) so the two user-visible flows the owner hit (account
+ * provisioning + agreement send) can surface a real "email failed" state.
  *
  * Reference for the exact Resend call shape (Bearer auth, `from` shape,
  * graceful key-missing handling): /home/team/shared/site/src/lib/contact.ts
  */
 
 const RESEND_API = process.env.RESEND_URL ?? "https://api.resend.com/emails";
-/** The sender shown on every 3g-4 email (Resend's test sender). */
-export const EMAIL_FROM = "Elevate Studio <onboarding@resend.dev>";
+/** The sender shown on every 3g-4 email. The PM flips `EMAIL_FROM` via env
+ *  once the domain verifies — no code change needed later. */
+export const EMAIL_FROM = process.env.EMAIL_FROM ?? "Elevate Studio <onboarding@resend.dev>";
+/** The exact error returned when RESEND_API_KEY is unset — call sites map it
+ *  to the "skipped" emailStatus (deliberate no-op, not a failure). */
+export const RESEND_KEY_MISSING_ERROR = "RESEND_API_KEY not configured";
+/** Outcome of one sendEmail call. Never throws — every failure path returns
+ *  `{ ok: false, error }` so callers can report email failures without
+ *  try/catch of their own. */
+export type SendEmailResult = { ok: true; id?: string } | { ok: false; error: string };
 /** App URL used when the triggering request has no usable origin. */
 export const DEFAULT_APP_URL = "https://elevate-crm-mwp7.onrender.com";
 
@@ -41,16 +56,18 @@ export function appUrlFrom(req?: Request): string {
 
 /**
  * POST a plain-text (optionally HTML) email through Resend. NEVER throws and
- * NEVER rejects: every failure path logs and returns, so callers can fire and
- * forget without try/catch of their own.
+ * NEVER rejects: every failure path returns `{ ok: false, error }` so callers
+ * can fire and forget without try/catch of their own — and, since the
+ * live-test finding, can SEE when a send actually failed (e.g. Resend's 422
+ * test-mode rejection) instead of believing it went out.
  */
-export async function sendEmail(input: SendEmailInput): Promise<void> {
+export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY ?? "";
   if (!apiKey) {
     console.log(
       `[email] RESEND_API_KEY not configured — skipping ${input.subject} to ${input.to}`,
     );
-    return;
+    return { ok: false, error: RESEND_KEY_MISSING_ERROR };
   }
   try {
     const testTo = (process.env.TEST_EMAIL_TO ?? "").trim();
@@ -73,15 +90,29 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
+      // Resend rejects with a JSON body: { message: "..." } (e.g. the 422
+      // test-mode rejection). Surface the message so the UI can show the
+      // owner exactly why the email didn't go out.
       const detail = await res.text().catch(() => "");
-      console.error(`[email] Resend returned ${res.status} for "${input.subject}" to ${to}: ${detail}`);
-      return;
+      let message = detail;
+      try {
+        const parsed = JSON.parse(detail) as { message?: unknown };
+        if (typeof parsed.message === "string" && parsed.message.trim() !== "") {
+          message = parsed.message;
+        }
+      } catch {
+        /* non-JSON body — keep the raw text */
+      }
+      console.error(`[email] Resend returned ${res.status} for "${input.subject}" to ${to}: ${message}`);
+      return { ok: false, error: `Resend returned ${res.status}: ${message}` };
     }
     const data = (await res.json().catch(() => ({}))) as { id?: string };
     console.log(`[email] Sent "${input.subject}" to ${to} (resend id: ${data.id ?? "unknown"})`);
+    return { ok: true, id: data.id };
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     console.error(`[email] Resend request failed for "${input.subject}": ${m}`);
+    return { ok: false, error: m };
   }
 }
 
@@ -93,7 +124,7 @@ export function sendIntakeEmail(opts: {
   loginEmail: string;
   tempPassword: string;
   appUrl: string;
-}): Promise<void> {
+}): Promise<SendEmailResult> {
   const text = [
     "Hi there,",
     "",
@@ -124,7 +155,7 @@ export function sendWelcomeEmail(opts: {
   to: string;
   orgName: string;
   appUrl: string;
-}): Promise<void> {
+}): Promise<SendEmailResult> {
   const text = [
     "Hi there,",
     "",
@@ -154,7 +185,7 @@ export function sendPasswordResetEmail(opts: {
   to: string;
   appUrl: string;
   token: string;
-}): Promise<void> {
+}): Promise<SendEmailResult> {
   const resetUrl = `${opts.appUrl}/#/reset?token=${opts.token}`;
   const text = [
     "Hi there,",
@@ -185,7 +216,7 @@ export function sendAgreementEmail(opts: {
   clientName: string;
   appUrl: string;
   token: string;
-}): Promise<void> {
+}): Promise<SendEmailResult> {
   const signUrl = `${opts.appUrl}/sign/${opts.token}`;
   const text = [
     `Hi ${opts.clientName},`,

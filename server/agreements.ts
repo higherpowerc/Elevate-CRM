@@ -25,7 +25,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { dataDir, db } from "./db";
+import { dataDir, db, getOrg, parseStages } from "./db";
 import type { ClientRow } from "./db";
 
 /** Sign links live 30 days from send. */
@@ -299,6 +299,21 @@ export function markDelivered(token: string, ip: string): void {
  * already signed/declined), records the audit trail (typed name, timestamp,
  * IP, consent) and advances both the envelope and the client. Returns a
  * { ok, error?, status? } result — never throws.
+ *
+ * Owner workflow (live-test finding, 2026-08-15) — on SIGN only (never on
+ * decline), inside the same transaction:
+ *   1. the client record auto-advances to its org's TERMINAL stage (the last
+ *      element of orgs.stages — stages are renamable, so the terminal stage
+ *      is always the array's last element; the owner's terminal stage is
+ *      "Sold", the Clients tab);
+ *   2. a "Create client account" task is raised for the owner (deduped —
+ *      re-sign/re-send never duplicates an OPEN task; a completed task may be
+ *      recreated by a fresh agreement);
+ *   3. the record's Next Action is set to "Create client account" so the
+ *      column shows it immediately.
+ * This only ever applies to owner-org clients by construction: the sign flow
+ * is owner-workspace-only (tenant orgs cannot send agreements), but the code
+ * reads each client's own org stages, so it stays correct generically.
  */
 export function resolveAgreement(
   token: string,
@@ -321,7 +336,39 @@ export function resolveAgreement(
        SET status = ?, signer_name = ?, signed_at = ?, ip_address = ?, consent = ?, updated_at = datetime('now')
        WHERE id = ?`,
     ).run(status, action === "sign" ? name.trim() : "", signedAt, ip || env.ip_address, consent ? 1 : 0, env.id);
-    db.query("UPDATE clients SET agreement_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, env.client_id);
+    if (action === "sign") {
+      const client = db
+        .query("SELECT id, org_id, company_name, stage FROM clients WHERE id = ?")
+        .get(env.client_id) as { id: number; org_id: number; company_name: string; stage: string } | null;
+      if (!client) {
+        // The client row is gone — record the envelope state only (the audit
+        // trail is still correct; there is no record left to advance).
+        db.query("UPDATE clients SET agreement_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, env.client_id);
+        return;
+      }
+      // 1. Terminal-stage auto-advance (Clients tab). No-op when already there.
+      const org = getOrg(client.org_id);
+      const stages = org ? parseStages(org.stages) : [];
+      const terminal = stages.length > 0 ? stages[stages.length - 1] : null;
+      if (terminal && client.stage !== terminal) {
+        db.query("UPDATE clients SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(terminal, client.id);
+      }
+      // 2 + 3. Account-creation task (deduped on OPEN tasks) + Next Action.
+      const dup = db
+        .query("SELECT id FROM tasks WHERE client_id = ? AND title LIKE 'Create client account%' AND done = 0")
+        .get(client.id);
+      if (!dup) {
+        db.query(
+          `INSERT INTO tasks (org_id, title, client_id, due_date, done, notes)
+           VALUES (?, ?, ?, '', 0, 'Auto-created when the agreement was signed.')`,
+        ).run(client.org_id, `Create client account for ${client.company_name}`, client.id);
+      }
+      db.query(
+        "UPDATE clients SET agreement_status = ?, next_action = 'Create client account', updated_at = datetime('now') WHERE id = ?",
+      ).run(status, client.id);
+    } else {
+      db.query("UPDATE clients SET agreement_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, env.client_id);
+    }
   })();
   return { ok: true, status };
 }

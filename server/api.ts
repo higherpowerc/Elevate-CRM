@@ -65,7 +65,7 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, appUrlFrom } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
 import {
   AGREEMENT_TOKEN_TTL_MS,
   hashAgreementToken,
@@ -77,6 +77,13 @@ import {
 import { randomBytes } from "node:crypto";
 
 export const SESSION_COOKIE = "elevate_session";
+/** Map a sendEmail result to the emailStatus vocabulary the UI renders:
+ *  "sent" (delivered), "skipped" (RESEND_API_KEY unset — deliberate no-op),
+ *  or "failed" (Resend/network rejected the send). */
+export function emailStatusOf(r: SendEmailResult): "sent" | "failed" | "skipped" {
+  if (r.ok) return "sent";
+  return r.error === RESEND_KEY_MISSING_ERROR ? "skipped" : "failed";
+}
 
 type JsonValue = unknown;
 
@@ -2052,7 +2059,12 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const ownerOrg = getOrg(orgId);
     const template = ownerOrg?.agreement_template ?? "";
     const { token, envelope } = await sendAgreement(client, template);
-    void sendAgreementEmail({
+    // Live-test finding #1 (2026-08-15): the tracker still advances to Sent,
+    // but the email outcome is surfaced so the owner sees a failed send
+    // (Resend test mode rejects non-owner recipients with HTTP 422) instead
+    // of believing the link went out. The raw token + signUrl ride along so
+    // the owner can copy/open the signing link manually when email failed.
+    const email = await sendAgreementEmail({
       to: client.email,
       clientName: client.contact_name || client.company_name,
       appUrl: appUrlFrom(req),
@@ -2064,6 +2076,10 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       status: envelope.status,
       expiresAt: envelope.expires_at,
       emailTo: client.email,
+      emailStatus: emailStatusOf(email),
+      ...(email.ok ? {} : { emailError: email.error }),
+      signUrl: `${appUrlFrom(req)}/sign/${token}`,
+      token,
     });
   }
   /* Owner-only audit list: every envelope for the owner org's OWN clients
@@ -2194,10 +2210,25 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       name: string;
       created_at: string;
     };
+    // Live-test finding #1 (2026-08-15): the workspace is created regardless,
+    // but the welcome email with credentials is now sent here (same 3g-4
+    // intake email the sold-lead hook sends) and its outcome is surfaced —
+    // when Resend rejects it (test-mode 422, unconfigured key, ...) the UI
+    // tells the owner the email did NOT go out so they share the credentials
+    // manually instead of assuming delivery.
+    const intakeEmail = await sendIntakeEmail({
+      to: v.value.email,
+      orgName: v.value.name,
+      loginEmail: v.value.email,
+      tempPassword: v.value.password,
+      appUrl: appUrlFrom(req),
+    });
     return json(
       {
         org: { id: org.id, name: org.name, createdAt: org.created_at },
         user: { id: userId, email: v.value.email, orgId: newOrgId, role: "member" as Role },
+        emailStatus: emailStatusOf(intakeEmail),
+        ...(intakeEmail.ok ? {} : { emailError: intakeEmail.error }),
       },
       201,
     );

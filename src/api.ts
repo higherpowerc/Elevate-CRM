@@ -146,7 +146,12 @@ export const api = {
      calling these gets a 403 from the server. */
   adminOrgs: () => request<{ orgs: Org[] }>("/api/admin/orgs"),
   adminCreateOrg: (data: { name: string; email: string; password: string; vertical?: string }) =>
-    request<{ org: CreatedOrg; user: CreatedOrgUser }>("/api/admin/orgs", {
+    request<{
+      org: CreatedOrg;
+      user: CreatedOrgUser;
+      emailStatus: "sent" | "failed" | "skipped";
+      emailError?: string;
+    }>("/api/admin/orgs", {
       method: "POST",
       body: JSON.stringify(data),
     }),
@@ -240,9 +245,16 @@ export const api = {
      mints the unique sign token, emails the client the /sign/<token> link)
      and fetch the owner's agreement audit records. Tenants get 403. */
   sendAgreement: (clientId: number) =>
-    request<{ ok: true; clientId: number; status: string; expiresAt: number; emailTo: string }>(
-      "/api/agreements/send",
-      { method: "POST", body: JSON.stringify({ clientId }) },
-    ),
+    request<{
+      ok: true;
+      clientId: number;
+      status: string;
+      expiresAt: number;
+      emailTo: string;
+      emailStatus: "sent" | "failed" | "skipped";
+      emailError?: string;
+      signUrl: string;
+      token: string;
+    }>("/api/agreements/send", { method: "POST", body: JSON.stringify({ clientId }) }),
   agreements: () => request<{ agreements: AgreementEnvelope[] }>("/api/agreements"),
 };
