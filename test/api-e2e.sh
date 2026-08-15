@@ -3745,7 +3745,7 @@ if [ -n "$NEWEST_CSS38" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ css: <=1100 owner nav rules missing from $NEWEST_CSS38"
   fi
-  if grep -Fq ".owner-workspace .tabs{min-width:0;overflow-x:auto}" "$NEWEST_CSS38"; then
+  if grep -Fq ".owner-workspace .tabs{overflow-x:auto;min-width:0}" "$NEWEST_CSS38"; then
     PASS=$((PASS+1)); echo "  ✓ css: owner tabs row is internally scrollable (page can never horizontal-scroll)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ css: owner tabs overflow guard missing from $NEWEST_CSS38"
