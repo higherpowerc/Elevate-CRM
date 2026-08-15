@@ -55,6 +55,7 @@ export default function Settings({
   canEdit = true,
   isOrgAdmin = false,
   currentUserId,
+  isOwnerOrg = false,
 }: {
   /** Team-users UI (owner request 2026-08-14) — false for a restricted member
    *  with view-only "settings" access: every save/apply affordance is hidden
@@ -67,6 +68,10 @@ export default function Settings({
   isOrgAdmin?: boolean;
   /** The session user's id — marks "you" on the member list. */
   currentUserId?: number;
+  /** Native e-signature — true only for the OWNER workspace org: shows the
+   *  editable agreement template card (owner-only; the server ignores tenant
+   *  writes). */
+  isOwnerOrg?: boolean;
 }) {
   const [settings, setSettings] = useState<OrgSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -74,6 +79,9 @@ export default function Settings({
   /* Workspace (branding) */
   const [orgName, setOrgName] = useState("");
   const [accentColor, setAccentColor] = useState("#d6ff3f");
+  /* Native e-signature — the OWNER org's agreement template ('' = built-in
+     default). Shown only in the owner workspace. */
+  const [agreementTemplate, setAgreementTemplate] = useState("");
 
   /* Custom fields (Phase 3b; 3f-1 adds select fields with options) */
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
@@ -345,6 +353,7 @@ export default function Settings({
       setSettings(settings);
       setOrgName(settings.orgName);
       setAccentColor(settings.accentColor);
+      setAgreementTemplate(settings.agreementTemplate ?? "");
       setCustomFields(settings.customFields);
       setServiceModel(settings.serviceModel);
       setDeliveryType(settings.deliveryType);
@@ -363,6 +372,23 @@ export default function Settings({
     load();
   }, [load]);
 
+  /* Native e-signature — the owner saves their agreement template wording.
+     Placeholders ({{company}}, {{client_name}}, {{date}}, {{price}}) are
+     substituted with each client's details when an agreement is sent. */
+  async function saveAgreementTemplate() {
+    setError(null);
+    setSaved(null);
+    setBusy(true);
+    try {
+      await api.updateSettings({ agreementTemplate });
+      setSaved("Agreement template saved — new sends use this wording.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
   async function saveWorkspace(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -891,6 +917,38 @@ export default function Settings({
           </form>
         </div>
 
+        {isOwnerOrg && (
+          <div className="card admin-form">
+            <div className="admin-card-head">
+              <h2 className="admin-card-title">Agreement template</h2>
+              <p className="admin-card-sub">
+                Used by the native e-signature when you send an agreement from the Onboarding
+                tab. Placeholders: {"{{company}}"} (client company), {"{{client_name}}"}, {"{{date}}"}, {"{{price}}"} (deal value).
+                Leave blank to use the built-in default.
+              </p>
+            </div>
+            <div className="form">
+              <label className="field">
+                <span className="field-label">Template</span>
+                <textarea
+                  className="agree-template-input"
+                  value={agreementTemplate}
+                  onChange={(e) => setAgreementTemplate(e.target.value)}
+                  rows={10}
+                  maxLength={20000}
+                  disabled={!canEdit}
+                  placeholder={"CLIENT SERVICES AGREEMENT\n\nThis agreement is between {{company}} and {{client_name}}.\nDate: {{date}}\nMonthly price: {{price}}"}
+                />
+                <span className="field-hint">Owner workspace only — client accounts never see this.</span>
+              </label>
+              {canEdit && (
+                <button className="btn btn-primary" disabled={busy} type="button" onClick={saveAgreementTemplate}>
+                  {busy ? "Saving…" : "Save agreement template"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         <div className="card admin-form">
           <div className="admin-card-head">
             <h2 className="admin-card-title">Business type</h2>

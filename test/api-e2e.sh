@@ -4216,17 +4216,17 @@ if grep -Fq '<AgreementTracker status={c.agreementStatus ?? "not_sent"} />' src/
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: AgreementTracker missing from the owner Onboarding Agreement cell"
 fi
-if grep -Fq '<option value="delivered">Delivered</option>' src/Clients.tsx && grep -Fq '<option value="declined">Declined</option>' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: agreement select offers delivered + declined (owner can set every lifecycle state manually)"
+if ! grep -Fq '<option value="delivered">Delivered</option>' src/Clients.tsx && ! grep -Fq '<option value="declined">Declined</option>' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: manual agreement status select removed (native e-signature replaces it)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: agreement select options missing delivered/declined"
+  FAIL=$((FAIL+1)); echo "  ✗ source: manual agreement status select still present — native signer should replace it"
 fi
 if grep -Fq '{!ownerOnboardingTab && canEdit && (' src/Clients.tsx && grep -Fq 'className="stage-select"' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: Stage select is owner-Onboarding-gated (owner Onboarding = badge only; tenants keep their picker)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: owner-Onboarding stage-select gate missing in src/Clients.tsx"
 fi
-echo "-- 41c. Bundle + CSS: tracker compiled, 5-state select shipped, owner Onboarding stage select gated in the built rows =="
+echo "-- 41c. Bundle + CSS: tracker compiled, manual select removed (native signer), owner Onboarding stage select gated in the built rows =="
 bun run build >/dev/null 2>&1
 NEWEST_JS41=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 NEWEST_CSS41=$(ls -t dist/index-*.css 2>/dev/null | head -1)
@@ -4251,10 +4251,10 @@ if [ -n "$NEWEST_JS41" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: stage select element missing from $NEWEST_JS41"
   fi
-  if grep -Fq 'value:"delivered"' "$NEWEST_JS41" && grep -Fq 'value:"declined"' "$NEWEST_JS41"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: agreement select options carry delivered + declined values"
+  if ! grep -Fq 'value:"delivered"' "$NEWEST_JS41" && ! grep -Fq 'value:"declined"' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: manual agreement select values (delivered/declined) removed from the built rows"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: delivered/declined option values missing from $NEWEST_JS41"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: manual agreement select values still present in $NEWEST_JS41"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 41 bundle check"
@@ -4771,6 +4771,222 @@ echo "-- 44f. Cleanup: delete UI tenant =="
 code -b "$JAR44" -X DELETE "$BASE/api/admin/orgs/$UI_ORG" > /dev/null
 rm -f "$JAR44" "$JAR44A" "$JAR44B"
 echo "  ✓ 44: team-members Settings UI + tab-gated nav shipped (bundle markers), /api/auth/me isOrgAdmin verified, impersonation lands on the org admin"
+
+echo "== 45. Native e-signature (owner direction 2026-08-15) =="
+# Self-contained like section 28: a throwaway CRM server on :3006 with a fresh
+# DB posts emails to a mock Resend endpoint on :3196, which records every
+# request as JSONL. The MAIN server on $BASE is untouched. start_crm/stop_crm
+# (defined in section 27) are reused here.
+MOCK45=$(mktemp -d)
+MOCK45_EMAILS="$MOCK45/emails.jsonl"
+: > "$MOCK45_EMAILS"
+cat > "$MOCK45/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const PORT = 3196;
+const OUT = process.env.MOCK45_OUT ?? "/tmp/mock45-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock45 resend on " + PORT);
+TS
+MOCK45_OUT="$MOCK45_EMAILS" nohup bun "$MOCK45/resend.ts" > "$MOCK45/resend.log" 2>&1 &
+MOCK45_PID=$!
+i=0; until curl -sf http://127.0.0.1:3196/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+curl -sf http://127.0.0.1:3196/health >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  ✓ mock Resend up on :3196"; } || { FAIL=$((FAIL+1)); echo "  ✗ mock Resend failed"; }
+start_crm 3006 "$MOCK45/db" "$MOCK45/srv.log" "$MOCK45/srv.pid" -u TEST_EMAIL_TO RESEND_API_KEY=test-key-123 RESEND_URL=http://127.0.0.1:3196
+S45=http://localhost:3006
+cat > "$MOCK45/audit.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+const env = db
+  .query(
+    "SELECT e.token_hash, e.status, e.signer_name, e.signed_at, e.ip_address, e.consent, e.expires_at FROM agreement_envelopes e JOIN clients c ON c.id = e.client_id WHERE c.company_name = ? ORDER BY e.id DESC LIMIT 1",
+  )
+  .get(process.env.CLIENT_NAME ?? "") as Record<string, unknown>;
+if (!env) { console.log("NO_ENVELOPE"); process.exit(2); }
+console.log(JSON.stringify(env));
+TS
+cat > "$MOCK45/expire.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+db.query(
+  "UPDATE agreement_envelopes SET expires_at = 1 WHERE client_id = (SELECT id FROM clients WHERE company_name = ?)",
+).run(process.env.CLIENT_NAME ?? "");
+console.log("expired");
+TS
+JA45=$(mktemp)   # owner session
+JT45=$(mktemp)   # tenant session
+echo "-- 45a. Template: owner sets + reads the agreement template == "
+S=$(code -c "$JA45" -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$S45/api/auth/login")
+check "45a: owner login → 200" 200 "$S"
+S=$(code -b "$JA45" -X PUT -H 'Content-Type: application/json' \
+  -d '{"agreementTemplate":"AGREEMENT {{company}} / {{client_name}} / {{date}} / {{price}}\n\nTerms apply."}' "$S45/api/settings")
+check "45a: owner saves agreement template → 200" 200 "$S"
+S=$(code -b "$JA45" "$S45/api/settings")
+check "45a: settings GET → 200" 200 "$S"
+grep -q '"agreementTemplate":"AGREEMENT' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ owner settings returns the saved template"; } || { FAIL=$((FAIL+1)); echo "  ✗ template missing: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Sig Tenant","email":"sigtenant@example.com","password":"SigTenant123!"}' "$S45/api/admin/orgs")
+check "45a: owner provisions tenant → 201" 201 "$S"
+T45_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Harbor Legal LLP","contactName":"Jordan Lee","email":"harbor@example.com","industry":"Legal","clientType":"commercial","dealValue":200,"stage":"Onboarding","nextAction":"Send agreement"}' "$S45/api/clients")
+check "45a: owner creates Onboarding client → 201" 201 "$S"
+HARBOR_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+echo "    (harbor client id=$HARBOR_ID)"
+echo "-- 45b. Send: PDF + token + email; status Not sent → Sent == "
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d "{\"clientId\":$HARBOR_ID}" "$S45/api/agreements/send")
+check "45b: send agreement → 200" 200 "$S"
+grep -q '"status":"sent"' /tmp/body.json && grep -q '"emailTo":"harbor@example.com"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ send marks Sent + emails the client"; } || { FAIL=$((FAIL+1)); echo "  ✗ send response: $(cat /tmp/body.json)"; }
+sleep 1
+if grep -q "Your agreement is ready to sign" "$MOCK45_EMAILS" && grep -q "harbor@example.com" "$MOCK45_EMAILS"; then
+  PASS=$((PASS+1)); echo "  ✓ mock received the agreement email"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ agreement email missing: $(cat "$MOCK45_EMAILS")"
+fi
+TOKEN45=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK45_EMAILS" | head -1 | cut -d/ -f2)
+if [ -n "$TOKEN45" ] && [ ${#TOKEN45} -eq 64 ]; then
+  PASS=$((PASS+1)); echo "  ✓ unique sign token extracted from email (${#TOKEN45} chars)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no sign token in email: $(cat "$MOCK45_EMAILS")"
+fi
+if DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Harbor Legal LLP" bun "$MOCK45/audit.ts" > "$MOCK45/audit1.json" 2>"$MOCK45/audit1.err"; then
+  python3 - "$MOCK45/audit1.json" "$TOKEN45" <<'PY'
+import json, sys, time, hashlib
+d = json.load(open(sys.argv[1])); raw = sys.argv[2]
+assert d["status"] == "sent", d
+assert len(d["token_hash"]) == 64 and d["token_hash"] != raw, d
+assert d["token_hash"] == hashlib.sha256(raw.encode()).hexdigest(), d
+assert d["expires_at"] > time.time() * 1000, d
+print("ok")
+PY
+  if [ $? -eq 0 ]; then PASS=$((PASS+1)); echo "  ✓ DB: envelope stored (sha-256 token hash, unexpired, status sent)"; else FAIL=$((FAIL+1)); echo "  ✗ envelope DB check failed: $(cat "$MOCK45/audit1.json")"; fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ audit script failed: $(cat "$MOCK45/audit1.err" 2>/dev/null)"; fi
+ls "$MOCK45/db/agreements/"*.pdf >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  ✓ generated PDF stored in the data dir"; } || { FAIL=$((FAIL+1)); echo "  ✗ PDF missing"; }
+echo "-- 45c. Public page: first open → Delivered + IP captured == "
+S=$(code -b "$JAR" "$S45/sign/$TOKEN45")
+check "45c: public sign page → 200" 200 "$S"
+grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Harbor Legal LLP / Jordan Lee" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the rendered template with client details"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
+S=$(code -b "$JA45" "$S45/api/agreements")
+check "45c: owner audit list → 200" 200 "$S"
+grep -q '"status":"delivered"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ first open advanced status to Delivered"; } || { FAIL=$((FAIL+1)); echo "  ✗ audit list: $(cat /tmp/body.json)"; }
+echo "-- 45d. Sign: typed name + consent + audit; one-time use == "
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"sign","name":"","consent":true}' "$S45/api/sign/$TOKEN45")
+check "45d: sign without name → 400" 400 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"sign","name":"Jordan Lee","consent":false}' "$S45/api/sign/$TOKEN45")
+check "45d: sign without consent → 400" 400 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"sign","name":"Jordan Lee","consent":true}' "$S45/api/sign/$TOKEN45")
+check "45d: sign with name + consent → 200" 200 "$S"
+grep -q '"status":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ sign returns status signed"; } || { FAIL=$((FAIL+1)); echo "  ✗ sign response: $(cat /tmp/body.json)"; }
+if DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Harbor Legal LLP" bun "$MOCK45/audit.ts" > "$MOCK45/audit2.json" 2>/dev/null; then
+  python3 - "$MOCK45/audit2.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["status"] == "signed", d
+assert d["signer_name"] == "Jordan Lee", d
+assert d["signed_at"] and len(d["signed_at"]) > 10, d
+assert d["ip_address"] and d["ip_address"] in ("127.0.0.1", "::1", "0:0:0:0:0:0:0:1"), d
+assert d["consent"] == 1, d
+print("ok")
+PY
+  if [ $? -eq 0 ]; then PASS=$((PASS+1)); echo "  ✓ audit recorded: name, timestamp, IP (127.0.0.1), consent"; else FAIL=$((FAIL+1)); echo "  ✗ audit values: $(cat "$MOCK45/audit2.json")"; fi
+else FAIL=$((FAIL+1)); echo "  ✗ audit script 2 failed"; fi
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"sign","name":"Again","consent":true}' "$S45/api/sign/$TOKEN45")
+check "45d: second sign attempt → 400 (one-time use)" 400 "$S"
+grep -q "already been used" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ second attempt rejected with already-used message"; } || { FAIL=$((FAIL+1)); echo "  ✗ second-attempt body: $(cat /tmp/body.json)"; }
+S=$(code -b "$JAR" "$S45/sign/$TOKEN45")
+grep -q "This agreement has been signed" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ signed link shows the final state, not a re-sign form"; } || { FAIL=$((FAIL+1)); echo "  ✗ final state missing"; }
+S=$(code -b "$JA45" "$S45/api/clients")
+grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ owner client tracker shows Signed"; } || { FAIL=$((FAIL+1)); echo "  ✗ client agreementStatus: $(cat /tmp/body.json)"; }
+echo "-- 45e. Decline path for another client == "
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Cedar Co","contactName":"Alex Cedar","email":"cedar@example.com","industry":"Home Services","clientType":"residential","dealValue":150,"stage":"Onboarding"}' "$S45/api/clients")
+check "45e: create second Onboarding client → 201" 201 "$S"
+CEDAR_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$CEDAR_ID}" "$S45/api/agreements/send")
+check "45e: send agreement → 200" 200 "$S"
+sleep 1
+TOKEN45C=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK45_EMAILS" | tail -1 | cut -d/ -f2)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{"action":"decline"}' "$S45/api/sign/$TOKEN45C")
+check "45e: decline → 200" 200 "$S"
+grep -q '"status":"declined"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ decline returns status declined"; } || { FAIL=$((FAIL+1)); echo "  ✗ decline response: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA45" "$S45/api/agreements")
+grep -q '"status":"declined"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ audit list shows Declined"; } || { FAIL=$((FAIL+1)); echo "  ✗ declined missing"; }
+echo "-- 45f. Invalid + expired tokens == "
+S=$(code -b "$JAR" "$S45/sign/bogustoken")
+grep -q "This link is invalid" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ invalid token page renders a clear message"; } || { FAIL=$((FAIL+1)); echo "  ✗ invalid page: $(head -c 200 /tmp/body.json)"; }
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{"action":"sign","name":"X","consent":true}' "$S45/api/sign/bogustoken")
+check "45f: POST invalid token → 400" 400 "$S"
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Expired Co","contactName":"Eva Expired","email":"expired@example.com","industry":"Other","clientType":"residential","stage":"Onboarding"}' "$S45/api/clients")
+check "45f: create third client → 201" 201 "$S"
+EXP_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$EXP_ID}" "$S45/api/agreements/send")
+check "45f: send agreement → 200" 200 "$S"
+sleep 1
+TOKEN45E=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK45_EMAILS" | tail -1 | cut -d/ -f2)
+CLIENT_NAME="Expired Co" DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/expire.ts" >/dev/null 2>&1
+S=$(code -b "$JAR" "$S45/sign/$TOKEN45E")
+grep -q "This link has expired" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ expired token page renders a clear message"; } || { FAIL=$((FAIL+1)); echo "  ✗ expired page: $(head -c 200 /tmp/body.json)"; }
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{"action":"sign","name":"X","consent":true}' "$S45/api/sign/$TOKEN45E")
+check "45f: POST expired token → 400" 400 "$S"
+grep -q "expired" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ expired POST rejected with expiry message"; } || { FAIL=$((FAIL+1)); echo "  ✗ expired POST body: $(cat /tmp/body.json)"; }
+echo "-- 45g. Owner-only enforcement: tenants cannot send/see agreement data == "
+S=$(code -c "$JT45" -b "$JT45" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"sigtenant@example.com","password":"SigTenant123!"}' "$S45/api/auth/login")
+check "45g: tenant login → 200" 200 "$S"
+S=$(code -b "$JT45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$HARBOR_ID}" "$S45/api/agreements/send")
+check "45g: tenant POST agreements/send → 403" 403 "$S"
+S=$(code -b "$JT45" "$S45/api/agreements")
+check "45g: tenant GET agreements → 403" 403 "$S"
+S=$(code -b "$JT45" "$S45/api/settings")
+grep -qv 'agreementTemplate' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ tenant settings response carries no agreement template"; } || { FAIL=$((FAIL+1)); echo "  ✗ tenant sees agreementTemplate: $(cat /tmp/body.json)"; }
+echo "-- 45h. Bundle + source markers: sign page + template editor == "
+bun run build >/dev/null 2>&1
+NEWEST_JS45=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS45" ]; then
+  for M45 in "Send Agreements" "Re-send" "Agreement template" "Save agreement template" "Agreement details"; do
+    if grep -Fq "$M45" "$NEWEST_JS45"; then PASS=$((PASS+1)); echo "  ✓ bundle: \"$M45\" shipped"; else FAIL=$((FAIL+1)); echo "  ✗ bundle: \"$M45\" missing"; fi
+  done
+else FAIL=$((FAIL+1)); echo "  ✗ dist build missing for 45h"; fi
+if grep -Fq "renderSignPage" server/agreements.ts && grep -Fq "generateAgreementPdf" server/agreements.ts && grep -Fq "resolveAgreement" server/agreements.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: agreements module (renderSignPage/generateAgreementPdf/resolveAgreement)"
+else FAIL=$((FAIL+1)); echo "  ✗ source: agreements module markers missing"; fi
+if grep -Fq '"/api/agreements/send"' server/api.ts && grep -Fq '"/api/agreements"' server/api.ts && grep -Fq '"/api/sign/"' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner send + audit + public sign routes"
+else FAIL=$((FAIL+1)); echo "  ✗ source: api routes markers missing"; fi
+if grep -Fq '"/sign/"' server/index.ts && grep -Fq '"/agreement-pdf/"' server/index.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: public /sign/ + /agreement-pdf/ routes"
+else FAIL=$((FAIL+1)); echo "  ✗ source: index routes missing"; fi
+if grep -Fq "handleSendAgreement" src/Clients.tsx && grep -Fq "openAudit" src/Clients.tsx && grep -Fq "agreement_envelopes" server/db.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner UI (send + audit) + envelopes table"
+else FAIL=$((FAIL+1)); echo "  ✗ source: owner UI markers missing"; fi
+if grep -Fq "saveAgreementTemplate" src/Settings.tsx && grep -Fq "agreementTemplate" src/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: template editor (Settings) + api wiring"
+else FAIL=$((FAIL+1)); echo "  ✗ source: template editor markers missing"; fi
+echo "-- 45i. Cleanup == "
+stop_crm "$MOCK45/srv.pid" 2>/dev/null
+kill "$MOCK45_PID" 2>/dev/null
+rm -f "$JA45" "$JT45"
+rm -rf "$MOCK45"
+echo "  ✓ 45: native e-signature shipped (PDF generation, unique sign link + email, public sign/decline page with audit, owner tracker auto-advance + audit view, owner-only enforcement)"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 

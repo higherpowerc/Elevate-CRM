@@ -3645,3 +3645,20 @@ legend.field-label {
   min-width: 220px;
   flex: 1;
 }
+
+/* ── Native e-signature (owner direction 2026-08-15) ────────────── */
+/* Owner Settings → "Agreement template" textarea. */
+.agree-template-input { width: 100%; min-height: 220px; font-family: inherit; background: var(--bg, #0a0a0c); color: var(--ink, #f2f1ec); border: 1px solid var(--border, #2a2a31); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.55; resize: vertical; }
+/* Owner Onboarding → Agreement audit modal grid. */
+.audit-grid { display: grid; gap: 10px; }
+.audit-grid p { margin: 0; display: flex; gap: 10px; font-size: 14px; }
+.audit-grid p span { flex: 0 0 120px; color: var(--muted, #8b8a84); text-transform: uppercase; font-size: 11px; letter-spacing: .06em; padding-top: 2px; }
+.audit-grid a { color: var(--accent, #d6ff3f); }
+
+/* Audit modal (native e-signature) — overlay/modal primitives in case the
+   app shell's own modal styles are scoped elsewhere. */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 20px; }
+.modal { background: #131316; border: 1px solid #2a2a31; border-radius: 14px; max-width: 520px; width: 100%; max-height: 86vh; overflow: auto; }
+.modal-head { padding: 18px 22px 0; }
+.modal-body { padding: 14px 22px; }
+.modal-actions { padding: 0 22px 20px; display: flex; justify-content: flex-end; gap: 10px; }

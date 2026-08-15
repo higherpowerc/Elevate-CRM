@@ -175,3 +175,36 @@ export function sendPasswordResetEmail(opts: {
     text,
   });
 }
+
+/** Native e-signature (owner direction 2026-08-15) — the client's unique
+ *  agreement signing link. The token appears ONLY in this email (the server
+ *  stores its SHA-256 hash); the link is one-time use and expires after 30
+ *  days. `appUrl` comes from appUrlFrom(req) exactly like the 3g-4 emails. */
+export function sendAgreementEmail(opts: {
+  to: string;
+  clientName: string;
+  appUrl: string;
+  token: string;
+}): Promise<void> {
+  const signUrl = `${opts.appUrl}/sign/${opts.token}`;
+  const text = [
+    `Hi ${opts.clientName},`,
+    "",
+    "Good news — your agreement with Elevate Studio is ready to review and sign.",
+    "",
+    "Open the link below to read the agreement and sign it electronically:",
+    "",
+    signUrl,
+    "",
+    "The link is unique to you, works once, and expires in 30 days.",
+    "",
+    "If you have any questions, just reply to this email.",
+    "",
+    "— Elevate Studio",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: "Your agreement is ready to sign",
+    text,
+  });
+}
