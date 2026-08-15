@@ -1578,6 +1578,41 @@ legend.field-label {
   opacity: 0.55;
   cursor: default;
 }
+/* Owner cockpit B (owner direction 2026-08-15) — the OWNER's Onboarding tab:
+   "Send Agreements" quick action under the next-action text (same compact
+   stack action as the Leads tab's "Start Onboarding", blue accent for the
+   DocuSign flow). */
+.send-agreements-btn {
+  background: rgba(111, 179, 255, 0.08);
+  border: 1px solid rgba(111, 179, 255, 0.35);
+  border-radius: 7px;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 4px 8px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.send-agreements-btn:hover {
+  background: rgba(111, 179, 255, 0.16);
+  border-color: var(--blue);
+}
+.send-agreements-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* The owner Onboarding tab's DocuSign Agreement cell: a tone badge (Not sent
+   / Sent / Signed) over a compact select, stacked like the Stage cell so the
+   fixed-width column stays table-fit. */
+.agree-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
 /* The owner Leads tab's Actions column holds more buttons (Edit / Lost /
    DNC / Delete) — let them wrap inside the fixed column instead of
    overflowing the table edge. */
