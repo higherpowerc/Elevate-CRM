@@ -364,13 +364,19 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
             </div>
           ) : (
             <table className="table">
+              {/* Owner bug report 2026-08-15 — explicit column widths so the
+                  fixed-layout table never squeezes the billing controls or
+                  the action buttons: name/meta flexible, numeric/badge
+                  columns compact, billing + actions wide enough for their
+                  controls. (The form now sits above; the table is full
+                  width.) */}
               <colgroup>
-                <col style={{ width: "33%" }} />
-                <col style={{ width: "8%" }} />
-                <col style={{ width: "12%" }} />
+                <col style={{ width: "25%" }} />
+                <col style={{ width: "7%" }} />
                 <col style={{ width: "10%" }} />
-                <col style={{ width: "14%" }} />
-                <col style={{ width: "23%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "24%" }} />
+                <col style={{ width: "25%" }} />
               </colgroup>
               <thead>
                 <tr>

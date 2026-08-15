@@ -200,7 +200,8 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
   }
 
   /* The sold set (terminal-stage clients) — drives the header counts, the
-     empty state and the "+ New client" default stage. */
+     empty state and the (tenant-only, owner direction 2026-08-15) "+ New
+     client" default stage. */
   const sold = clients.filter((c) => c.stage === terminalStage);
   const archived = sold.filter((c) => c.archived).length;
   const bookValue = sold.reduce((sum, c) => sum + (c.dealValue || 0), 0);
@@ -215,14 +216,23 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
             <strong>{money(bookValue)}</strong>
           </p>
         </div>
-        <div className="page-actions">
-          {/* A new record added from the sold-customer directory is created
-              pre-set to the terminal stage — the natural meaning of adding to
-              a sold/customers list. */}
-          <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-            + New client
-          </button>
-        </div>
+        {/* Owner direction 2026-08-15 — client/lead creation entry points
+            are fixed: the ONLY place to add a client is the Admin tab's
+            "create client account" form, and the ONLY place to add a lead is
+            the Leads tab. The owner's Clients directory therefore carries no
+            "+ New client" entry point. Client accounts keep this button —
+            their directory is their own sold customers and the CTA is part
+            of their workspace (untouched). */}
+        {!ownerOrg && (
+          <div className="page-actions">
+            {/* A new record added from the sold-customer directory is created
+                pre-set to the terminal stage — the natural meaning of adding to
+                a sold/customers list. */}
+            <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
+              + New client
+            </button>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -276,7 +286,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
               ? "Move a client into your final pipeline stage and it shows up here — this directory holds your sold customers."
               : "Try a different search — sold clients are listed here."}
           </p>
-          {sold.length === 0 && (
+          {sold.length === 0 && !ownerOrg && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               + New client
             </button>
