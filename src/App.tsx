@@ -7,6 +7,7 @@ import ClientsDirectory from "./ClientsDirectory";
 import Tasks from "./Tasks";
 import Finance from "./Finance";
 import Admin from "./Admin";
+import Tickets from "./Tickets";
 import Settings from "./Settings";
 import { api } from "./api";
 import { DEFAULT_STAGES, type User } from "./types";
@@ -27,7 +28,7 @@ import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "
  * (prospects), Onboarding = the MIDDLE stages (intake leads), Clients = the
  * terminal stage (sold). Client accounts (role=member) are unchanged: their
  * Leads tab keeps showing every stage except their terminal one. */
-type View = "dashboard" | "leads" | "onboarding" | "clients" | "tasks" | "finance" | "admin" | "settings";
+type View = "dashboard" | "leads" | "onboarding" | "clients" | "tasks" | "finance" | "admin" | "tickets" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -358,6 +359,26 @@ export default function App() {
                 Admin
               </button>
             )}
+            {/* Owner direction 2026-08-15 — support tickets: the OWNER's tab
+                reads "Tickets" (every account's tickets, worked to
+                resolution); client accounts (role=member) read "Support"
+                (their own org's tickets + submit form). Same view, role-based
+                rendering inside Tickets.tsx. */}
+            {user.role === "admin" ? (
+              <button
+                className={view === "tickets" ? "tab active" : "tab"}
+                onClick={() => setView("tickets")}
+              >
+                Tickets
+              </button>
+            ) : (
+              <button
+                className={view === "tickets" ? "tab active" : "tab"}
+                onClick={() => setView("tickets")}
+              >
+                Support
+              </button>
+            )}
             <button
               className={view === "settings" ? "tab active" : "tab"}
               onClick={() => setView("settings")}
@@ -420,6 +441,8 @@ export default function App() {
           <Finance />
         ) : view === "admin" ? (
           <Admin ownerOrgId={user.orgId} onViewAccount={handleImpersonate} />
+        ) : view === "tickets" ? (
+          <Tickets ownerOrg={isOwnerOrg} />
         ) : (
           <Settings />
         )}

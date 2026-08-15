@@ -3460,3 +3460,54 @@ legend.field-label {
     align-items: flex-start;
   }
 }
+
+/* ── Support tickets (owner direction 2026-08-15) ───────────────────────
+   Owner "Tickets" tab (every account's tickets + status control) and tenant
+   "Support" tab (own org only + submit form). Reuses the existing badge
+   tones / table / modal conventions; only the ticket-specific bits are here. */
+.tickets-table .ticket-subject {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink, #f2f1ec);
+  text-align: left;
+  cursor: pointer;
+}
+.tickets-table .ticket-subject:hover {
+  text-decoration: underline;
+}
+.tickets-table .ticket-row.open .ticket-subject {
+  color: var(--accent, #d6ff3f);
+}
+.tickets-table .ticket-message {
+  margin: 8px 0 2px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.12);
+  white-space: pre-wrap;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  max-height: 220px;
+  overflow: auto;
+}
+.tickets-table .status-select {
+  width: 100%;
+  min-width: 118px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: var(--surface, #141417);
+  color: inherit;
+  font-size: 0.85rem;
+}
+.tickets-table .status-select:disabled {
+  opacity: 0.6;
+}
+.tickets-table .ticket-saving {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.78rem;
+}

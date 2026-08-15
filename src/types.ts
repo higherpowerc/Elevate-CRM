@@ -182,6 +182,53 @@ export interface Invoice {
   updatedAt: string;
 }
 
+/* ── Support tickets (owner direction 2026-08-15) ───────────────────────
+ * Clients submit tickets from their own workspace; the owner sees every
+ * account's tickets and works them OPEN → IN_PROGRESS → RESOLVED → CLOSED.
+ * Status is owner-moved (tenants only create + read); priority is chosen by
+ * the submitter (LOW | NORMAL | HIGH, default NORMAL) and owner-adjustable. */
+export const TICKET_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] as const;
+export type TicketStatus = (typeof TICKET_STATUSES)[number];
+
+export const TICKET_PRIORITIES = ["LOW", "NORMAL", "HIGH"] as const;
+export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
+
+export interface Ticket {
+  id: number;
+  /** The submitting account's org id (always the caller's own org). */
+  orgId: number;
+  /** Submitting org's name — present ONLY in the owner's response (tenants
+   *  never receive other orgs' names; their own rows carry no orgName key). */
+  orgName?: string;
+  subject: string;
+  message: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Stored ticket status → badge tone (the same palette the stage badges use). */
+export const TICKET_STATUS_TONE: Record<TicketStatus, string> = {
+  OPEN: "blue",
+  IN_PROGRESS: "amber",
+  RESOLVED: "green",
+  CLOSED: "gray",
+};
+
+/** Stored ticket priority → badge tone. HIGH is red so urgent tickets pop. */
+export const TICKET_PRIORITY_TONE: Record<TicketPriority, string> = {
+  LOW: "gray",
+  NORMAL: "blue",
+  HIGH: "red",
+};
+
+export const ticketStatusLabel = (s: TicketStatus): string =>
+  s === "IN_PROGRESS" ? "In progress" : s.charAt(0) + s.slice(1).toLowerCase();
+
+export const ticketPriorityLabel = (p: TicketPriority): string =>
+  p.charAt(0) + p.slice(1).toLowerCase();
+
 /** One row of the dashboard "Task overview" upcoming list. */
 export interface DashboardUpcomingTask {
   id: number;

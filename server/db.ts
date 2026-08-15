@@ -364,6 +364,24 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token_hash);
+
+  -- Support tickets (owner direction 2026-08-15). Clients experiencing issues
+  -- submit tickets from their own workspace; the owner sees every account's
+  -- tickets and works them to resolution. org_id is the SUBMITTING account
+  -- (the caller's org at create time, never spoofable). status flows
+  -- OPEN, IN_PROGRESS, RESOLVED, CLOSED (the owner moves it; default OPEN);
+  -- priority is LOW | NORMAL | HIGH (optional, default NORMAL).
+  CREATE TABLE IF NOT EXISTS tickets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id     INTEGER NOT NULL REFERENCES orgs(id),
+    subject    TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'OPEN',
+    priority   TEXT NOT NULL DEFAULT 'NORMAL',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_tickets_org_status ON tickets(org_id, status);
 `);
 
 // Simple migration for databases created before custom_fields existed:
@@ -1026,6 +1044,37 @@ export interface InvoiceRow {
   status: InvoiceStatus;
   due_date: string;
   notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/* ── Support tickets (owner direction 2026-08-15) ───────────────────────
+ * `status` is owned by the OWNER workspace: clients create tickets (OPEN by
+ * default) and the owner moves them OPEN → IN_PROGRESS → RESOLVED → CLOSED.
+ * `priority` is set by the submitter (optional) and adjustable by the owner:
+ * LOW | NORMAL | HIGH. org_id is the submitting account — always the caller's
+ * session org at create time, so a tenant can never file a ticket on another
+ * tenant's behalf. */
+export const TICKET_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] as const;
+export type TicketStatus = (typeof TICKET_STATUSES)[number];
+
+export const TICKET_PRIORITIES = ["LOW", "NORMAL", "HIGH"] as const;
+export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
+
+export function isTicketStatus(v: unknown): v is TicketStatus {
+  return typeof v === "string" && (TICKET_STATUSES as readonly string[]).includes(v);
+}
+export function isTicketPriority(v: unknown): v is TicketPriority {
+  return typeof v === "string" && (TICKET_PRIORITIES as readonly string[]).includes(v);
+}
+
+export interface TicketRow {
+  id: number;
+  org_id: number;
+  subject: string;
+  message: string;
+  status: TicketStatus;
+  priority: TicketPriority;
   created_at: string;
   updated_at: string;
 }
