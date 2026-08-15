@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type ClientInput } from "./api";
 import { money, fmtDate, type Client, type CustomFieldDef, type Stage, type AgreementStatus } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
@@ -65,15 +65,52 @@ function localTodayStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** Owner cockpit B (owner direction 2026-08-15) — the owner's Onboarding tab
- *  DocuSign agreement status vocabulary: badge label + badge tone + the
- *  select's option label. not_sent → gray (not started), sent → amber
- *  (waiting on the client), signed → green (complete). */
+/** Owner cockpit B (owner direction 2026-08-15; PR #53 adds the full
+ *  DocuSign lifecycle) — the owner's Onboarding tab DocuSign agreement
+ *  status vocabulary: badge label + badge tone + the select's option label.
+ *  not_sent → gray (not started), sent → amber (waiting on the client),
+ *  delivered → blue (opened by the signer), signed → green (complete),
+ *  declined → red (the signer refused — a failure state). */
 const AGREEMENT_META: Record<AgreementStatus, { label: string; tone: string }> = {
   not_sent: { label: "Not sent", tone: "tone-gray" },
   sent: { label: "Sent", tone: "tone-amber" },
+  delivered: { label: "Delivered", tone: "tone-blue" },
   signed: { label: "Signed", tone: "tone-green" },
+  declined: { label: "Declined", tone: "tone-red" },
 };
+
+/** Owner cockpit B (PR #53) — the compact DocuSign lifecycle stepper shown
+ *  in the owner's Onboarding Agreement cell. The LINEAR stages render as a
+ *  4-dot progress row (not_sent → sent → delivered → signed) with the
+ *  current step highlighted and completed steps filled; "declined" is NOT a
+ *  step in the bar — it renders as a distinct red failure state with the
+ *  "Declined" label. Tooltips on the dots carry the stage names; the badge
+ *  directly below the tracker shows the current status label. */
+const AGREEMENT_STEPS: AgreementStatus[] = ["not_sent", "sent", "delivered", "signed"];
+
+function AgreementTracker({ status }: { status: AgreementStatus }) {
+  if (status === "declined") {
+    return (
+      <div className="agree-tracker declined" role="group" aria-label="Agreement declined">
+        <span className="agree-tracker-fail">Declined</span>
+      </div>
+    );
+  }
+  const cur = AGREEMENT_STEPS.indexOf(status);
+  return (
+    <div className="agree-tracker" role="group" aria-label={`Agreement status: ${AGREEMENT_META[status].label}`}>
+      {AGREEMENT_STEPS.map((s, i) => (
+        <Fragment key={s}>
+          {i > 0 && <span className={`agree-tracker-line${i <= cur ? " done" : ""}`} />}
+          <span
+            className={`agree-tracker-dot${i < cur ? " done" : ""}${i === cur ? " current" : ""}`}
+            title={AGREEMENT_META[s].label}
+          />
+        </Fragment>
+      ))}
+    </div>
+  );
+}
 
 export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
@@ -360,13 +397,13 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     }
   }
 
-  /** Owner cockpit B (owner direction 2026-08-15) — OWNER Onboarding tab
-   *  only: DocuSign agreement status quick actions. The "Send Agreements"
+  /** Owner cockpit B (owner direction 2026-08-15; PR #53) — OWNER Onboarding
+   *  tab only: DocuSign agreement status quick actions. The "Send Agreements"
    *  button sets "sent"; the Agreement-column select moves any status
-   *  (including back to "not_sent" or forward to "signed"). The SAME update
-   *  path as the stage picker (api.updateClient) with a refetch to keep the
-   *  row in sync. Real DocuSign envelope sending is wired LATER — today the
-   *  owner tracks the status manually. */
+   *  (including back to "not_sent" or forward to "delivered" / "signed" /
+   *  "declined"). The SAME update path as the stage picker (api.updateClient)
+   *  with a refetch to keep the row in sync. Real DocuSign envelope sending
+   *  is wired LATER — today the owner tracks the status manually. */
   async function handleAgreementStatus(c: Client, status: AgreementStatus) {
     setBusy(true);
     setError(null);
@@ -767,14 +804,17 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                       </div>
                     </td>
                     {ownerOnboardingTab ? (
-                      /* Owner cockpit B (owner direction 2026-08-15) — the
-                         owner's Onboarding tab tracks each client's DocuSign
-                         agreement status: a tone badge (Not sent / Sent /
-                         Signed) over a compact select that moves the status
-                         manually (the same stacked layout as the Stage cell).
-                         Real DocuSign sending is wired LATER — manual today. */
+                      /* Owner cockpit B (owner direction 2026-08-15; PR #53) —
+                         the owner's Onboarding tab tracks each client's
+                         DocuSign agreement status: a compact lifecycle
+                         tracker (Not sent → Sent → Delivered → Signed with
+                         the current step highlighted; Declined renders as a
+                         red failure state), the tone badge, and a select
+                         that moves the status manually. Real DocuSign
+                         sending is wired LATER — manual today. */
                       <td data-label="Agreement">
                         <div className="agree-cell">
+                          <AgreementTracker status={c.agreementStatus ?? "not_sent"} />
                           <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
                             {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
                           </span>
@@ -787,7 +827,9 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           >
                             <option value="not_sent">Not sent</option>
                             <option value="sent">Sent</option>
+                            <option value="delivered">Delivered</option>
                             <option value="signed">Signed</option>
+                            <option value="declined">Declined</option>
                           </select>
                         </div>
                       </td>
@@ -801,21 +843,31 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </td>
                     {!ownerLeadsTab && (
                       <td data-label="Stage">
+                        {/* Owner direction 2026-08-15 (PR #53) — the OWNER's
+                            Onboarding tab shows ONLY the blue StageBadge in
+                            the Stage column (no stage select): the owner
+                            moves records via the edit modal, and the row
+                            keeps its quick actions. Client accounts
+                            (role=member) keep badge + select — their core
+                            stage picker — and the owner Leads tab has no
+                            Stage column at all. */}
                         <div className="stage-cell">
                           <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
-                          <select
-                            className="stage-select"
-                            value={c.stage}
-                            aria-label={`Move ${c.companyName} to stage`}
-                            onChange={(e) => handleStageMove(c, e.target.value as Stage)}
-                            disabled={busy}
-                          >
-                            {orgStages.map((s) => (
-                              <option key={s} value={s}>
-                                {s}
-                              </option>
-                            ))}
-                          </select>
+                          {!ownerOnboardingTab && (
+                            <select
+                              className="stage-select"
+                              value={c.stage}
+                              aria-label={`Move ${c.companyName} to stage`}
+                              onChange={(e) => handleStageMove(c, e.target.value as Stage)}
+                              disabled={busy}
+                            >
+                              {orgStages.map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       </td>
                     )}

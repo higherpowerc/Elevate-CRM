@@ -74,13 +74,15 @@ export type ClientType = "commercial" | "residential";
 export const REVENUE_MODELS = ["sales", "subscription"] as const;
 export type RevenueModel = (typeof REVENUE_MODELS)[number];
 
-/** Owner cockpit B (owner direction 2026-08-15) — per-client DocuSign
- *  agreement status: "not_sent" → "sent" → "signed". The OWNER's Onboarding
- *  tab tracks where each client is in completing forms; real DocuSign
- *  envelope sending is wired LATER (once the owner connects a DocuSign
- *  account) — today the owner sets the status manually. OWNER-workspace-only:
- *  tenant orgs never receive this field (absent from their API responses). */
-export type AgreementStatus = "not_sent" | "sent" | "signed";
+/** Owner cockpit B (owner direction 2026-08-15; PR #53 widens to the full
+ *  DocuSign lifecycle) — per-client DocuSign agreement status:
+ *  "not_sent" → "sent" → "delivered" → "signed", with "declined" as a
+ *  terminal failure state (the signer refused). The OWNER's Onboarding tab
+ *  tracks where each client is in completing forms; real DocuSign envelope
+ *  sending is wired LATER (once the owner connects a DocuSign account) —
+ *  today the owner sets the status manually. OWNER-workspace-only: tenant
+ *  orgs never receive this field (absent from their API responses). */
+export type AgreementStatus = "not_sent" | "sent" | "delivered" | "signed" | "declined";
 
 export interface Client {
   id: number;
