@@ -113,11 +113,25 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
 
   const hasClients = data.totalClients > 0;
   const lastStage = stages.length > 0 ? stages[stages.length - 1] : "";
-  /* Owner request 2026-08-14 — lost leads are excluded from every pipeline
-     KPI. The "Active" count is the sum of the (server-side) stageCounts —
-     which already exclude lost + archived — rather than totalClients minus
-     archived (totalClients stays the "in the book" record count). */
-  const activeClients = Object.values(data.stageCounts).reduce((sum, n) => sum + (n ?? 0), 0);
+  /* Owner cockpit A (owner direction 2026-08-15) — the OWNER's "Active
+     leads" KPI counts ONLY the FIRST stage (the Leads position): the owner's
+     pipeline is a three-bucket split (Leads = first, Onboarding = middle,
+     Clients = terminal), and the sales cockpit's "Active leads" means the
+     prospects bucket, not every non-lost record. Positional + rename-safe.
+     Client accounts (role=member) keep the original behavior: their "Active
+     clients" is the sum of the (server-side) stageCounts — which already
+     exclude lost + archived — rather than totalClients minus archived. */
+  const activeClients = ownerOrg
+    ? stages.length > 0
+      ? (data.stageCounts[stages[0]] ?? 0)
+      : 0
+    : Object.values(data.stageCounts).reduce((sum, n) => sum + (n ?? 0), 0);
+  /* Owner cockpit A (owner direction 2026-08-15) — the owner's "Onboarding"
+     KPI watches the MIDDLE stage (the one between first and terminal — the
+     intake bucket of the three-bucket pipeline) instead of the terminal
+     stage. Positional + rename-safe; falls back to the last-stage KPI only
+     when the pipeline has no middle bucket (< 3 stages). */
+  const midStage = stages.length > 2 ? stages[1] : "";
 
   /* Owner workspace labels its pipeline records "leads" (owner direction
      2026-08-14); tenant orgs keep "clients". Same page, same data — only
@@ -132,6 +146,10 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
       ? `Leads in "${lastStage}" — your last pipeline stage`
       : `Clients in "${lastStage}" — your last pipeline stage`
     : "No stages configured";
+  /* Owner cockpit A — the "Onboarding" KPI note (owner workspace). */
+  const onboardingNote = midStage
+    ? `Leads in "${midStage}" — your onboarding pipeline`
+    : "No middle stage configured";
   const stageCaption = ownerOrg ? "leads" : "clients";
   const emptyTitle = ownerOrg ? "No leads yet" : "No clients yet";
   const emptyCta = ownerOrg ? "Add a lead" : "Add a client";
@@ -191,28 +209,11 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
       {ownerOrg && <ProvisionNotices />}
 
       <div className="kpi-row">
-        {/* Owner request 2026-08-14 — workspace money KPI: owner sees Client
-            MRR (across every client account); members see their own business's
-            money per their revenue model. Both respect the privacy eye. */}
-        {ownerOrg ? (
-          <div className="card kpi">
-            <span className="kpi-label kpi-label-row">
-              Client MRR
-              <button
-                type="button"
-                className="eye-btn"
-                onClick={() => setMoneyHidden((v) => !v)}
-                aria-label={moneyTitle}
-                aria-pressed={moneyHidden}
-                title={moneyTitle}
-              >
-                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
-              </button>
-            </span>
-            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
-            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
-          </div>
-        ) : (
+        {/* Workspace money KPI: members see their own business's money per
+            their revenue model. The owner's MRR figure is shown as "Sold MRR"
+            directly beside the projected pipeline (below) — a single MRR
+            figure, no duplicate top card. Both respect the privacy eye. */}
+        {!ownerOrg && (
           <div className="card kpi">
             <span className="kpi-label kpi-label-row">
               {moneyKpiLabel}
@@ -248,16 +249,66 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false, onNew
           <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
           <span className="kpi-note">{pipelineNote}</span>
         </div>
+        {/* Owner cockpit A (owner direction 2026-08-15) — "Sold MRR" sits
+            directly beside the projected pipeline: the deal value of the
+            owner's OWN client records in the terminal/Sold stage (excl. lost
+            + archived). Same figure the Clients tab shows as "Client MRR";
+            shown once, here, so the owner reads both money figures in one
+            glance. */}
+        {ownerOrg && (
+          <div className="card kpi">
+            <span className="kpi-label kpi-label-row">
+              Sold MRR
+              <button
+                type="button"
+                className="eye-btn"
+                onClick={() => setMoneyHidden((v) => !v)}
+                aria-label={moneyTitle}
+                aria-pressed={moneyHidden}
+                title={moneyTitle}
+              >
+                {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
+            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
+          </div>
+        )}
         <div className="card kpi">
           <span className="kpi-label">{activeKpi}</span>
           <span className="kpi-value">{activeClients}</span>
-          <span className="kpi-note">Non-archived, non-lost entries across all stages</span>
+          <span className="kpi-note">
+            {ownerOrg
+              ? "Non-archived, non-lost leads in your first stage"
+              : "Non-archived, non-lost entries across all stages"}
+          </span>
         </div>
-        <div className="card kpi">
-          <span className="kpi-label">In final stage</span>
-          <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
-          <span className="kpi-note">{lastStageNote}</span>
-        </div>
+        {/* Owner cockpit A (owner direction 2026-08-15) — the owner's third
+            bucket KPI: "Onboarding" shows the MIDDLE stage (between first and
+            terminal) with a deep-link that opens the Onboarding tab
+            pre-filtered to that stage (mirrors the stage-card "View →"
+            pattern). Client accounts keep the original "In final stage"
+            last-stage KPI unchanged. */}
+        {ownerOrg && midStage ? (
+          <div className="card kpi">
+            <span className="kpi-label">Onboarding</span>
+            <span className="kpi-value">{data.stageCounts[midStage] ?? 0}</span>
+            <span className="kpi-note">{onboardingNote}</span>
+            <button
+              className="link-btn"
+              onClick={() => onGoToStage(midStage)}
+              aria-label={`View ${midStage} in the Onboarding pipeline`}
+            >
+              View →
+            </button>
+          </div>
+        ) : (
+          <div className="card kpi">
+            <span className="kpi-label">In final stage</span>
+            <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
+            <span className="kpi-note">{lastStageNote}</span>
+          </div>
+        )}
       </div>
 
       <h2 className="section-title">Stage breakdown</h2>
