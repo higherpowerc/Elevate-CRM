@@ -147,7 +147,15 @@ export function getIntakeLayout(
         placeholder: commercial ? "e.g. Acme Landscaping" : "e.g. Jane Doe",
         maxLength: 200,
       },
-      { key: "contactName", label: "Contact name", kind: "text", placeholder: "Jordan Lee", maxLength: 200 },
+      /* Owner direction 2026-08-15 (live-test finding) — the universal
+         "Contact name" field only makes sense for COMMERCIAL records (the
+         person running the business is not the business). For individuals the
+         person's name is already captured by the "Name *" field above, and a
+         leftover partial/redundant contact name must not render in the
+         Contact column — so the field is omitted for individuals. */
+      ...(commercial
+        ? [{ key: "contactName", label: "Contact name", kind: "text", placeholder: "Jordan Lee", maxLength: 200 } as IntakeField]
+        : []),
       { key: "email", label: "Email", kind: "text", placeholder: "jordan@acme.com", maxLength: 200 },
       { key: "phone", label: "Phone", kind: "text", placeholder: "+1 555 000 1234", maxLength: 50 },
       { key: "dealValue", label: "Deal value ($)", kind: "text", placeholder: "9500.50" },

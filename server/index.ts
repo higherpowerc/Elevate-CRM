@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
-import { renderSignPage, readAgreementPdf } from "./agreements";
+import { renderSignPage, readAgreementPdf, backfillSignedClients } from "./agreements";
+import { db } from "./db";
 
 /**
  * Elevate CRM — single Bun server: serves the built React frontend from
@@ -76,6 +77,21 @@ function serveStatic(pathname: string): Response {
 // Seed the admin account at startup if ADMIN_EMAIL / ADMIN_PASSWORD are set.
 const seed = await ensureAdmin();
 console.log(seed.message);
+
+// Boot-time signed-client backfill (live-test finding 2026-08-15): records
+// marked signed BEFORE the sign-time auto-advance (PR #60) existed still sit
+// in a non-terminal stage (live client id 59 "Joe"). Advance them exactly
+// like a fresh signature would (terminal stage + deduped account task +
+// next_action). Idempotent; run defensively so a failure can never block
+// startup — the app must still boot and serve.
+try {
+  const advanced = backfillSignedClients(db);
+  if (advanced > 0) {
+    console.log(`[crm] Signed-client backfill: advanced ${advanced} record(s) to their terminal stage.`);
+  }
+} catch (err) {
+  console.error("[crm] Signed-client backfill failed (continuing boot):", err);
+}
 
 if (!existsSync(join(DIST_DIR, "index.html"))) {
   console.log("[crm] dist/index.html missing — run `bun run build` to build the frontend.");
