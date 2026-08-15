@@ -19,6 +19,11 @@ interface Props {
    *  client accounts alike (the member-org "All clients" variant is gone).
    *  Purely presentational; data untouched. */
   ownerOrg?: boolean;
+  /** Team-users UI (owner request 2026-08-14) — false for a restricted member
+   *  with view-only "clients" access: the create/edit/archive/delete
+   *  affordances are hidden (the server still 403s any write). Owner and org
+   *  admins always pass true. */
+  canEdit?: boolean;
 }
 
 /** The sold-customer directory (owner request 2026-08-14): every client in
@@ -30,7 +35,7 @@ interface Props {
  *  record lands in the terminal stage), archive/unarchive and delete. Reads
  *  the same /api/clients (per-org scoped) as the Leads pipeline tab —
  *  filtering happens client-side. */
-export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
+export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = true }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur client
      names/addresses/contact details in the directory rows. */
   const pii = usePii();
@@ -223,7 +228,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
             "+ New client" entry point. Client accounts keep this button —
             their directory is their own sold customers and the CTA is part
             of their workspace (untouched). */}
-        {!ownerOrg && (
+        {!ownerOrg && canEdit && (
           <div className="page-actions">
             {/* A new record added from the sold-customer directory is created
                 pre-set to the terminal stage — the natural meaning of adding to
@@ -286,7 +291,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
               ? "Move a client into your final pipeline stage and it shows up here — this directory holds your sold customers."
               : "Try a different search — sold clients are listed here."}
           </p>
-          {sold.length === 0 && !ownerOrg && (
+          {sold.length === 0 && !ownerOrg && canEdit && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               + New client
             </button>
@@ -350,25 +355,31 @@ export default function ClientsDirectory({ stages, ownerOrg = false }: Props) {
                     </td>
                     <td data-label="Actions">
                       <div className="row-actions">
-                        <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
-                          Edit
-                        </button>
-                        <button
-                          className="icon-btn"
-                          title={c.archived ? "Unarchive" : "Archive"}
-                          aria-label={c.archived ? "Unarchive" : "Archive"}
-                          onClick={() => handleArchive(c)}
-                        >
-                          {c.archived ? "Restore" : "Archive"}
-                        </button>
-                        <button
-                          className="icon-btn danger"
-                          title="Delete"
-                          aria-label={`Delete ${c.companyName}`}
-                          onClick={() => setDeleting(c)}
-                        >
-                          Delete
-                        </button>
+                        {canEdit && (
+                          <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
+                            Edit
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button
+                            className="icon-btn"
+                            title={c.archived ? "Unarchive" : "Archive"}
+                            aria-label={c.archived ? "Unarchive" : "Archive"}
+                            onClick={() => handleArchive(c)}
+                          >
+                            {c.archived ? "Restore" : "Archive"}
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button
+                            className="icon-btn danger"
+                            title="Delete"
+                            aria-label={`Delete ${c.companyName}`}
+                            onClick={() => setDeleting(c)}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

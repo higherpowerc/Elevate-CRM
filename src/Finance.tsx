@@ -30,7 +30,11 @@ function isOverdue(inv: Invoice): boolean {
   return inv.status === "sent" && !!inv.dueDate && inv.dueDate < localToday();
 }
 
-export default function Finance() {
+export default function Finance({ canEdit = true }: { canEdit?: boolean }) {
+  /* Team-users UI (owner request 2026-08-14) — false for a restricted member
+     with view-only "finance" access: the add/status/edit/delete affordances
+     are hidden (the server still 403s any write). Owner and org admins
+     always pass true. */
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
@@ -235,6 +239,7 @@ export default function Finance() {
         </div>
       </div>
 
+      {canEdit && (
       <form className="card inv-add" onSubmit={handleQuickAdd}>
         <SearchableSelect
           piiBlur={pii}
@@ -286,6 +291,7 @@ export default function Finance() {
           Add
         </button>
       </form>
+      )}
 
       <div className="toolbar">
         <div className="seg">
@@ -332,7 +338,7 @@ export default function Finance() {
                   : "Try a different search or status."
                 : "Try a different status tab."}
           </p>
-          {totalCount === 0 && (
+          {canEdit && totalCount === 0 && (
             <button
               className="btn btn-primary"
               onClick={() => {
@@ -378,19 +384,22 @@ export default function Finance() {
                   </div>
                 </div>
                 <div className="row-actions">
-                  {inv.status === "draft" && (
+                  {canEdit && inv.status === "draft" && (
                     <button className="icon-btn" onClick={() => handleStatus(inv, "sent")} disabled={busy}>
                       Mark sent
                     </button>
                   )}
-                  {inv.status === "sent" && (
+                  {canEdit && inv.status === "sent" && (
                     <button className="icon-btn" onClick={() => handleStatus(inv, "paid")} disabled={busy}>
                       Mark paid
                     </button>
                   )}
+                  {canEdit && (
                   <button className="icon-btn" onClick={() => setEditing(inv)} aria-label={`Edit invoice ${inv.id}`}>
                     Edit
                   </button>
+                  )}
+                  {canEdit && (
                   <button
                     className="icon-btn danger"
                     onClick={() => setDeleting(inv)}
@@ -398,6 +407,7 @@ export default function Finance() {
                   >
                     Delete
                   </button>
+                  )}
                 </div>
               </li>
             );

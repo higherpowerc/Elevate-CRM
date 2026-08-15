@@ -47,6 +47,11 @@ interface Props {
    *  stage deep-links to itself. null/undefined = "All". A name outside this
    *  view's scope (e.g. the terminal stage) is ignored → "All". */
   initialStage?: string | null;
+  /** Team-users UI (owner request 2026-08-14) — false for a restricted member
+   *  with view-only "clients" access: the create/edit/archive/delete
+   *  affordances are hidden (the server still 403s any write). Owner and org
+   *  admins always pass true. */
+  canEdit?: boolean;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -112,7 +117,7 @@ function AgreementTracker({ status }: { status: AgreementStatus }) {
   );
 }
 
-export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null }: Props) {
+export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, canEdit = true }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -498,12 +503,16 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-ghost" onClick={() => setStageModal(true)} title="Rename, reorder or remove your pipeline stages">
-            Manage stages
-          </button>
-          <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-            {addCta}
-          </button>
+          {canEdit && (
+            <button className="btn btn-ghost" onClick={() => setStageModal(true)} title="Rename, reorder or remove your pipeline stages">
+              Manage stages
+            </button>
+          )}
+          {canEdit && (
+            <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
+              {addCta}
+            </button>
+          )}
         </div>
       </div>
 
@@ -595,7 +604,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   ? emptySub
                   : "Try a different search or filter."}
           </p>
-          {scoped.length === 0 && filter !== "lost" && filter !== "dnc" && (
+          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {emptyCta}
             </button>
@@ -661,15 +670,17 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   </td>
                   <td data-label="Actions">
                     <div className="row-actions">
-                      <button
-                        className="icon-btn"
-                        title="Edit"
-                        aria-label={`Edit ${c.companyName}`}
-                        onClick={() => setModal({ mode: "edit", client: c })}
-                      >
-                        Edit
-                      </button>
-                      {filter === "lost" && (
+                      {canEdit && (
+                        <button
+                          className="icon-btn"
+                          title="Edit"
+                          aria-label={`Edit ${c.companyName}`}
+                          onClick={() => setModal({ mode: "edit", client: c })}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canEdit && filter === "lost" && (
                         <button
                           className="icon-btn"
                           title="Restore to pipeline — clears the lost flag"
@@ -680,22 +691,26 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           Restore
                         </button>
                       )}
-                      <button
-                        className="icon-btn"
-                        title={c.archived ? "Unarchive" : "Archive"}
-                        aria-label={c.archived ? "Unarchive" : "Archive"}
-                        onClick={() => handleArchive(c)}
-                      >
-                        {c.archived ? "Restore" : "Archive"}
-                      </button>
-                      <button
-                        className="icon-btn danger"
-                        title="Delete"
-                        aria-label={`Delete ${c.companyName}`}
-                        onClick={() => setDeleting(c)}
-                      >
-                        Delete
-                      </button>
+                      {canEdit && (
+                        <button
+                          className="icon-btn"
+                          title={c.archived ? "Unarchive" : "Archive"}
+                          aria-label={c.archived ? "Unarchive" : "Archive"}
+                          onClick={() => handleArchive(c)}
+                        >
+                          {c.archived ? "Restore" : "Archive"}
+                        </button>
+                      )}
+                      {canEdit && (
+                        <button
+                          className="icon-btn danger"
+                          title="Delete"
+                          aria-label={`Delete ${c.companyName}`}
+                          onClick={() => setDeleting(c)}
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -853,7 +868,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             Stage column at all. */}
                         <div className="stage-cell">
                           <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
-                          {!ownerOnboardingTab && (
+                          {!ownerOnboardingTab && canEdit && (
                             <select
                               className="stage-select"
                               value={c.stage}
@@ -926,9 +941,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </td>
                     <td data-label="Actions">
                       <div className="row-actions">
-                        <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
-                          Edit
-                        </button>
+                        {canEdit && (
+                          <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
+                            Edit
+                          </button>
+                        )}
                         {/* Owner cockpit A — owner Leads tab only: quick Lost /
                             DNC flags (same update path as the stage picker);
                             the pipeline-row Archive action is removed per the
@@ -957,14 +974,16 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             DNC
                           </button>
                         )}
-                        <button
-                          className="icon-btn danger"
-                          title="Delete"
-                          aria-label={`Delete ${c.companyName}`}
-                          onClick={() => setDeleting(c)}
-                        >
-                          Delete
-                        </button>
+                        {canEdit && (
+                          <button
+                            className="icon-btn danger"
+                            title="Delete"
+                            aria-label={`Delete ${c.companyName}`}
+                            onClick={() => setDeleting(c)}
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1010,6 +1029,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               <StageEditor
                 initialStages={orgStages}
                 stageCounts={stageCounts}
+                canEdit={canEdit}
                 onSaved={() => {
                   setStageModal(false);
                   load();

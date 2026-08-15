@@ -10,7 +10,7 @@ import Admin from "./Admin";
 import Tickets from "./Tickets";
 import Settings from "./Settings";
 import { api } from "./api";
-import { DEFAULT_STAGES, type User } from "./types";
+import { DEFAULT_STAGES, TENANT_TABS, type TenantTab, type User } from "./types";
 import { initials } from "./bits";
 import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "./pii";
 
@@ -123,10 +123,53 @@ export default function App() {
      owner workspace is the org whose members hold the admin role — exactly
      the org where the Admin tab appears. It calls its pipeline records
      "leads"; tenant orgs (role=member) keep "clients" for their customers.
-     Role-based, never org-name-based, so a renamed owner org still labels
-     correctly. Also gates the owner-only Onboarding tab (owner direction
-     2026-08-15). */
-  const isOwnerOrg = user?.role === "admin";
+     Team-users (PR #56): owner behavior is keyed to the OWNER ORG by name
+     (matching the server's isOwnerOrg(orgId)) — NOT to role alone, so a
+     tenant team member with stored role='admin' stays in their client
+     account's workspace and never inherits the owner cockpit. Also gates the
+     owner-only Onboarding tab (owner direction 2026-08-15). */
+  const isOwnerOrg = user?.role === "admin" && orgName === "Elevate Studio";
+
+  /* Team users per client account (owner request 2026-08-14) — tab gating.
+     Restricted members carry per-tab grants on user.permissions; org admins
+     (stored role='admin' OR the account's original owner login — the server
+     reports this as user.isOrgAdmin) bypass everything, and the OWNER is
+     never permission-restricted. The server enforces all of this on every
+     route; these helpers only drive the nav and the edit affordances (UX). */
+  const canSeeTab = (tab: TenantTab): boolean => {
+    if (isOwnerOrg) return true;
+    if (user?.isOrgAdmin === true) return true;
+    return user?.permissions?.[tab] !== undefined;
+  };
+  const canEditTab = (tab: TenantTab): boolean => {
+    if (isOwnerOrg) return true;
+    if (user?.isOrgAdmin === true) return true;
+    return user?.permissions?.[tab]?.edit === true;
+  };
+  /* If the current view is a tab the session user can no longer access
+     (e.g. an admin revoked it mid-session), fall back to the Dashboard
+     instead of rendering a view whose API calls would 403. */
+  const viewAllowed = (v: View): boolean => {
+    switch (v) {
+      case "dashboard":
+        return true;
+      case "leads":
+      case "clients":
+        return canSeeTab("clients");
+      case "tasks":
+        return canSeeTab("tasks");
+      case "finance":
+        return canSeeTab("finance");
+      case "tickets":
+        return canSeeTab("support");
+      case "settings":
+        return canSeeTab("settings");
+      case "onboarding":
+      case "admin":
+        return isOwnerOrg;
+    }
+  };
+  const effectiveView: View = viewAllowed(view) ? view : "dashboard";
 
   const handleLogout = useCallback(async () => {
     try {
@@ -298,7 +341,7 @@ export default function App() {
           </button>
           <nav className="tabs" aria-label="Main">
             <button
-              className={view === "dashboard" ? "tab active" : "tab"}
+              className={effectiveView === "dashboard" ? "tab active" : "tab"}
               onClick={() => setView("dashboard")}
             >
               Dashboard
@@ -311,20 +354,26 @@ export default function App() {
                 2026-08-15 (OWNER ONLY): the owner's pipeline splits into
                 Leads = first stage + Onboarding = middle stages; client
                 accounts never see Onboarding — their single Leads tab keeps
-                every stage except their terminal one. */}
-            <button
-              className={view === "leads" ? "tab active" : "tab"}
-              onClick={() => {
-                setLeadsStage(null);
-                setOnboardingStage(null);
-                setView("leads");
-              }}
-            >
-              Leads
-            </button>
+                every stage except their terminal one. Team-users (PR #56):
+                a restricted member only sees the tabs their grants allow —
+                Leads + Clients are both gated by the "clients" grant (both
+                render /api/clients data); the owner and org admins always
+                see every tab. */}
+            {canSeeTab("clients") && (
+              <button
+                className={effectiveView === "leads" ? "tab active" : "tab"}
+                onClick={() => {
+                  setLeadsStage(null);
+                  setOnboardingStage(null);
+                  setView("leads");
+                }}
+              >
+                Leads
+              </button>
+            )}
             {isOwnerOrg && (
               <button
-                className={view === "onboarding" ? "tab active" : "tab"}
+                className={effectiveView === "onboarding" ? "tab active" : "tab"}
                 onClick={() => {
                   setOnboardingStage(null);
                   setView("onboarding");
@@ -333,27 +382,33 @@ export default function App() {
                 Onboarding
               </button>
             )}
-            <button
-              className={view === "clients" ? "tab active" : "tab"}
-              onClick={() => setView("clients")}
-            >
-              Clients
-            </button>
-            <button
-              className={view === "tasks" ? "tab active" : "tab"}
-              onClick={() => setView("tasks")}
-            >
-              Tasks
-            </button>
-            <button
-              className={view === "finance" ? "tab active" : "tab"}
-              onClick={() => setView("finance")}
-            >
-              Finance
-            </button>
-            {user.role === "admin" && (
+            {canSeeTab("clients") && (
               <button
-                className={view === "admin" ? "tab active" : "tab"}
+                className={effectiveView === "clients" ? "tab active" : "tab"}
+                onClick={() => setView("clients")}
+              >
+                Clients
+              </button>
+            )}
+            {canSeeTab("tasks") && (
+              <button
+                className={effectiveView === "tasks" ? "tab active" : "tab"}
+                onClick={() => setView("tasks")}
+              >
+                Tasks
+              </button>
+            )}
+            {canSeeTab("finance") && (
+              <button
+                className={effectiveView === "finance" ? "tab active" : "tab"}
+                onClick={() => setView("finance")}
+              >
+                Finance
+              </button>
+            )}
+            {isOwnerOrg && (
+              <button
+                className={effectiveView === "admin" ? "tab active" : "tab"}
                 onClick={() => setView("admin")}
               >
                 Admin
@@ -361,30 +416,33 @@ export default function App() {
             )}
             {/* Owner direction 2026-08-15 — support tickets: the OWNER's tab
                 reads "Tickets" (every account's tickets, worked to
-                resolution); client accounts (role=member) read "Support"
-                (their own org's tickets + submit form). Same view, role-based
-                rendering inside Tickets.tsx. */}
-            {user.role === "admin" ? (
+                resolution); client accounts read "Support" (their own org's
+                tickets + submit form). Same view, role-based rendering
+                inside Tickets.tsx. Team-users: restricted members only see
+                the Support tab when they hold the "support" grant. */}
+            {isOwnerOrg ? (
               <button
-                className={view === "tickets" ? "tab active" : "tab"}
+                className={effectiveView === "tickets" ? "tab active" : "tab"}
                 onClick={() => setView("tickets")}
               >
                 Tickets
               </button>
-            ) : (
+            ) : canSeeTab("support") ? (
               <button
-                className={view === "tickets" ? "tab active" : "tab"}
+                className={effectiveView === "tickets" ? "tab active" : "tab"}
                 onClick={() => setView("tickets")}
               >
                 Support
               </button>
+            ) : null}
+            {canSeeTab("settings") && (
+              <button
+                className={effectiveView === "settings" ? "tab active" : "tab"}
+                onClick={() => setView("settings")}
+              >
+                Settings
+              </button>
             )}
-            <button
-              className={view === "settings" ? "tab active" : "tab"}
-              onClick={() => setView("settings")}
-            >
-              Settings
-            </button>
           </nav>
           <div className="nav-right">
             {/* Global privacy eye (owner request 2026-08-14) — blurs names,
@@ -411,40 +469,47 @@ export default function App() {
         </div>
       </header>
       <main className="main">
-        {view === "dashboard" ? (
+        {effectiveView === "dashboard" ? (
           <Dashboard
             onGoToStage={goToStage}
             stages={stages}
             ownerOrg={isOwnerOrg}
           />
-        ) : view === "leads" ? (
+        ) : effectiveView === "leads" ? (
           /* Owner request 2026-08-15 — the owner's Leads tab scopes to the
              FIRST stage only; client accounts (role=member) keep the full
-             pipeline (every stage except their terminal one, PR #35). */
+             pipeline (every stage except their terminal one, PR #35).
+             Team-users: a view-only "clients" member still opens the tab —
+             only the create/edit affordances are hidden (canEdit). */
           <Clients
             stages={stages}
             ownerOrg={isOwnerOrg}
             scope={isOwnerOrg ? "first" : "all"}
             initialStage={leadsStage}
+            canEdit={canEditTab("clients")}
           />
-        ) : view === "onboarding" ? (
+        ) : effectiveView === "onboarding" ? (
           /* Owner request 2026-08-15 — OWNER ONLY: the Onboarding tab scopes
              the pipeline to the MIDDLE stages (between first and terminal).
              Client accounts never reach this view — no nav item, and the
              dashboard routes middle stages to their single Leads tab. */
-          <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} />
-        ) : view === "clients" ? (
-          <ClientsDirectory stages={stages} ownerOrg={isOwnerOrg} />
-        ) : view === "tasks" ? (
-          <Tasks />
-        ) : view === "finance" ? (
-          <Finance />
-        ) : view === "admin" ? (
+          <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} canEdit />
+        ) : effectiveView === "clients" ? (
+          <ClientsDirectory stages={stages} ownerOrg={isOwnerOrg} canEdit={canEditTab("clients")} />
+        ) : effectiveView === "tasks" ? (
+          <Tasks canEdit={canEditTab("tasks")} />
+        ) : effectiveView === "finance" ? (
+          <Finance canEdit={canEditTab("finance")} />
+        ) : effectiveView === "admin" ? (
           <Admin ownerOrgId={user.orgId} onViewAccount={handleImpersonate} />
-        ) : view === "tickets" ? (
-          <Tickets ownerOrg={isOwnerOrg} />
+        ) : effectiveView === "tickets" ? (
+          <Tickets ownerOrg={isOwnerOrg} canEdit={canEditTab("support")} />
         ) : (
-          <Settings />
+          <Settings
+            canEdit={canEditTab("settings")}
+            isOrgAdmin={user.isOrgAdmin === true}
+            currentUserId={user.id}
+          />
         )}
       </main>
       <footer className="foot">

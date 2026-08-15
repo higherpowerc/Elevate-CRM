@@ -24,7 +24,11 @@ function dueTone(t: Task): "overdue" | "today" | "" {
   return "";
 }
 
-export default function Tasks() {
+export default function Tasks({ canEdit = true }: { canEdit?: boolean }) {
+  /* Team-users UI (owner request 2026-08-14) — false for a restricted member
+     with view-only "tasks" access: the add/toggle/edit/delete affordances are
+     hidden (the server still 403s any write). Owner and org admins always
+     pass true. */
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const [tasks, setTasks] = useState<Task[] | null>(null);
@@ -168,6 +172,7 @@ export default function Tasks() {
         </div>
       )}
 
+      {canEdit && (
       <form className="card task-add" onSubmit={handleQuickAdd}>
         <input
           className="task-add-title"
@@ -197,6 +202,7 @@ export default function Tasks() {
           Add
         </button>
       </form>
+      )}
 
       <div className="toolbar">
         <div className="seg">
@@ -239,7 +245,7 @@ export default function Tasks() {
                 ? "All done — add something new, or check the Completed tab."
                 : "Try a different filter or search."}
           </p>
-          {tasks.length === 0 && (
+          {canEdit && tasks.length === 0 && (
             <button
               className="btn btn-primary"
               onClick={() => {
@@ -257,6 +263,7 @@ export default function Tasks() {
             const tone = dueTone(t);
             return (
               <li key={t.id} className={t.done ? "task task-done" : "task"}>
+                {canEdit && (
                 <button
                   className="task-check"
                   onClick={() => handleToggle(t)}
@@ -265,6 +272,7 @@ export default function Tasks() {
                 >
                   <span className={t.done ? "task-checkbox on" : "task-checkbox"}>{t.done ? "✓" : ""}</span>
                 </button>
+                )}
                 <div className="task-body">
                   <div className="task-title">
                     <span className={`task-title-text${blurPii(pii)}`}>{t.title}</span>
@@ -280,6 +288,7 @@ export default function Tasks() {
                     {t.notes && <span className="task-notes">{t.notes}</span>}
                   </div>
                 </div>
+                {canEdit && (
                 <div className="row-actions">
                   <button className="icon-btn" onClick={() => setEditing(t)} aria-label={`Edit ${t.title}`}>
                     Edit
@@ -292,6 +301,7 @@ export default function Tasks() {
                     Delete
                   </button>
                 </div>
+                )}
               </li>
             );
           })}

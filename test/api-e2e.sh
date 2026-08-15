@@ -4221,7 +4221,7 @@ if grep -Fq '<option value="delivered">Delivered</option>' src/Clients.tsx && gr
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: agreement select options missing delivered/declined"
 fi
-if grep -Fq '{!ownerOnboardingTab && (' src/Clients.tsx && grep -Fq 'className="stage-select"' src/Clients.tsx; then
+if grep -Fq '{!ownerOnboardingTab && canEdit && (' src/Clients.tsx && grep -Fq 'className="stage-select"' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: Stage select is owner-Onboarding-gated (owner Onboarding = badge only; tenants keep their picker)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: owner-Onboarding stage-select gate missing in src/Clients.tsx"
@@ -4241,7 +4241,7 @@ if [ -n "$NEWEST_JS41" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: Agreement/Services swap missing from $NEWEST_JS41"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("select",\{className:"stage-select",value:[A-Za-z0-9$_]+\.stage' "$NEWEST_JS41"; then
+  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+&&[A-Za-z0-9$_]+\.jsxDEV\("select",\{className:"stage-select",value:[A-Za-z0-9$_]+\.stage' "$NEWEST_JS41"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: owner Onboarding stage select is gated in the built rows (badge-only for the owner)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated stage select missing from $NEWEST_JS41"
@@ -4663,6 +4663,114 @@ code -b "$JAR43" -X DELETE "$BASE/api/admin/orgs/$TENANT_A_ORG" > /dev/null
 code -b "$JAR43" -X DELETE "$BASE/api/admin/orgs/$TENANT_B_ORG" > /dev/null
 rm -f "$JAR43" "$JAR43A" "$JAR43B" "$JAR43C" "$JAR43D"
 echo "  ✓ 43: team users per client account verified (org admin = original owner login, restricted members per-tab enforced server-side, last-admin protection, cross-org isolation, owner unaffected)"
+
+echo "== 44. Team-members UI + nav gating (owner request 2026-08-14): Settings members section, restricted-member nav gating, isOrgAdmin flag, impersonation targeting =="
+echo "-- 44a. Provision a member tenant + fresh sessions =="
+JAR44=$(mktemp)
+JAR44A=$(mktemp)
+JAR44B=$(mktemp)
+S=$(code -c "$JAR44" -b "$JAR44" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "44a: owner login" 200 "$S"
+S=$(code -b "$JAR44" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"UI Co 44","email":"ui44@example.com","password":"ui44pass1"}' "$BASE/api/admin/orgs")
+check "44a: provision tenant" 201 "$S"
+UI_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -c "$JAR44A" -b "$JAR44A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"ui44@example.com","password":"ui44pass1"}' "$BASE/api/auth/login")
+check "44a: tenant first user login" 200 "$S"
+UI_FIRST_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+echo "    (tenant org=$UI_ORG, first user id=$UI_FIRST_ID)"
+
+echo "-- 44b. /api/auth/me isOrgAdmin: first-user admin true; stored member false unless first user; owner true =="
+S=$(code -b "$JAR44A" "$BASE/api/auth/me")
+check "44b: tenant first user me → 200" 200 "$S"
+grep -q '"isOrgAdmin":true' /tmp/body.json && echo "  ✓ first user (stored role member) isOrgAdmin TRUE (first-user rule)" || echo "  ✗ first user isOrgAdmin: $(cat /tmp/body.json)"
+S=$(code -b "$JAR44A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"member44@ui.example","password":"member44pw","role":"member"}' "$BASE/api/org/members")
+check "44b: admin creates restricted member → 201" 201 "$S"
+UI_MEMBER_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['member']['id'])")
+S=$(code -c "$JAR44B" -b "$JAR44B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"member44@ui.example","password":"member44pw"}' "$BASE/api/auth/login")
+check "44b: member login → 200" 200 "$S"
+S=$(code -b "$JAR44B" "$BASE/api/auth/me")
+grep -q '"isOrgAdmin":false' /tmp/body.json && echo "  ✓ second member (stored member, not first user) isOrgAdmin FALSE" || echo "  ✗ member isOrgAdmin: $(cat /tmp/body.json)"
+S=$(code -b "$JAR44" "$BASE/api/auth/me")
+grep -q '"isOrgAdmin":true' /tmp/body.json && echo "  ✓ owner isOrgAdmin TRUE" || echo "  ✗ owner isOrgAdmin: $(cat /tmp/body.json)"
+
+echo "-- 44c. Impersonation targeting: owner lands on the org ADMIN (first user), not a member =="
+S=$(code -c "$JAR44" -b "$JAR44" -X POST -H 'Content-Type: application/json' -d "{\"orgId\":$UI_ORG}" "$BASE/api/admin/impersonate")
+check "44c: owner impersonates tenant → 200" 200 "$S"
+IMP_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+if [ "$IMP_ID" = "$UI_FIRST_ID" ]; then PASS=$((PASS+1)); echo "  ✓ impersonation lands on the first user (org admin) id=$IMP_ID"; else FAIL=$((FAIL+1)); echo "  ✗ impersonation landed on id=$IMP_ID, expected first user $UI_FIRST_ID"; fi
+grep -q '"isOrgAdmin":true' /tmp/body.json && echo "  ✓ impersonated session reports isOrgAdmin true (admin controls visible)" || echo "  ✗ impersonated isOrgAdmin: $(cat /tmp/body.json)"
+check "44c: impersonated user is NOT the restricted member" 200 "$S"
+S=$(code -c "$JAR44" -b "$JAR44" -X POST "$BASE/api/auth/impersonate-return")
+check "44c: return to owner dashboard → 200" 200 "$S"
+S=$(code -b "$JAR44A" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"admin44@ui.example","password":"admin44pw","role":"admin"}' "$BASE/api/org/members")
+check "44c: create stored-role admin → 201" 201 "$S"
+STORED_ADMIN_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['member']['id'])")
+S=$(code -c "$JAR44" -b "$JAR44" -X POST -H 'Content-Type: application/json' -d "{\"orgId\":$UI_ORG}" "$BASE/api/admin/impersonate")
+check "44c: impersonate again → 200" 200 "$S"
+IMP2_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+if [ "$IMP2_ID" = "$STORED_ADMIN_ID" ]; then PASS=$((PASS+1)); echo "  ✓ with a stored admin present, impersonation lands on the stored admin id=$STORED_ADMIN_ID"; else FAIL=$((FAIL+1)); echo "  ✗ impersonation landed on id=$IMP2_ID, expected stored admin $STORED_ADMIN_ID"; fi
+S=$(code -c "$JAR44" -b "$JAR44" -X POST "$BASE/api/auth/impersonate-return")
+check "44c: return again → 200" 200 "$S"
+
+echo "-- 44d. Bundle: Settings members UI markers + nav gating + owner nav unchanged =="
+bun run build >/dev/null 2>&1
+NEWEST_JS44=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS44" ]; then
+  if grep -Fq 'Team members' "$NEWEST_JS44" && grep -Fq 'Add a team member' "$NEWEST_JS44" && grep -Fq 'Reset password' "$NEWEST_JS44" && grep -Fq 'Temporary password' "$NEWEST_JS44" && grep -Fq 'Can edit' "$NEWEST_JS44" && grep -Fq 'No access' "$NEWEST_JS44"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Settings members UI markers shipped (list/add/reset/password/per-tab pickers)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: members UI markers missing from $NEWEST_JS44"
+  fi
+  if grep -Fq 'view-only access to settings' "$NEWEST_JS44"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: view-only settings notice shipped"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: view-only settings notice missing"
+  fi
+  for ROW44 in "Dashboard" "Onboarding" "Admin" "Tickets" "Settings"; do
+    if grep -Fq "$ROW44" "$NEWEST_JS44"; then PASS=$((PASS+1)); echo "  ✓ bundle: owner nav label \"$ROW44\" present (owner nav unchanged)"
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle: owner nav label \"$ROW44\" missing from $NEWEST_JS44"; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 44d bundle check"
+fi
+
+echo "-- 44e. Source markers: members UI + nav gating + isOrgAdmin wiring + impersonation targeting =="
+if grep -Fq 'Team members' src/Settings.tsx && grep -Fq 'handleAddMember' src/Settings.tsx && grep -Fq 'handleResetPassword' src/Settings.tsx && grep -Fq 'handleRemoveMember' src/Settings.tsx && grep -Fq 'isOrgAdmin' src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Settings members section (add/reset/remove/isOrgAdmin gate)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Settings members section markers missing"
+fi
+if grep -Fq 'canSeeTab' src/App.tsx && grep -Fq 'canEditTab' src/App.tsx && grep -Fq 'user?.permissions?.[tab]' src/App.tsx && grep -Fq 'isOrgAdmin === true' src/App.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: App nav gating + admin bypass (canSeeTab/canEditTab)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: App nav gating markers missing"
+fi
+if grep -Fq 'const isOwnerOrg = user?.role === "admin" && orgName === "Elevate Studio"' src/App.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner workspace keyed to owner ORG by name (tenant admins stay tenants)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-org detection missing"
+fi
+if grep -Fq 'isOrgAdmin: boolean' server/auth.ts && grep -Fq 'MIN(id)' server/auth.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: /api/auth/me user payload carries isOrgAdmin (first-user rule)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: isOrgAdmin server wiring missing"
+fi
+if grep -Fq "role = 'admin' ORDER BY id ASC LIMIT 1" server/api.ts && grep -Fq 'org admin' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: impersonation targets the org admin (stored admin else first user)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: impersonation targeting missing"
+fi
+
+echo "-- 44f. Cleanup: delete UI tenant =="
+code -b "$JAR44" -X DELETE "$BASE/api/admin/orgs/$UI_ORG" > /dev/null
+rm -f "$JAR44" "$JAR44A" "$JAR44B"
+echo "  ✓ 44: team-members Settings UI + tab-gated nav shipped (bundle markers), /api/auth/me isOrgAdmin verified, impersonation lands on the org admin"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 
