@@ -12,6 +12,10 @@ interface Props {
   client?: Client;
   /** The tenant's ordered pipeline stages (Phase 3a) — drives the dropdown. */
   stages: Stage[];
+  /** Optional stage a NEW record is pre-set to on create. Defaults to the
+   *  first stage. The sold-customer directory passes its terminal stage so
+   *  "Add new client" there creates a record that lands in the sold list. */
+  defaultStage?: Stage;
   /** The tenant's custom-field definitions (Phase 3b) — each defined field
    *  gets its own typed input; values are stored keyed by field name. */
   customFieldDefs: CustomFieldDef[];
@@ -55,8 +59,8 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
   preferredServiceLocation: string;
 };
 
-export default function ClientModal({ client, stages, customFieldDefs, intake, busy, onClose, onSave }: Props) {
-  const defaultStage = stages[0] ?? "Leads";
+export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, busy, onClose, onSave }: Props) {
+  const createStage = defaultStage ?? stages[0] ?? "Leads";
   const empty = (): FormState => ({
     companyName: "",
     contactName: "",
@@ -66,7 +70,7 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
     services: [],
     customFields: [],
     dealValue: 0,
-    stage: defaultStage,
+    stage: createStage,
     nextAction: "",
     notes: "",
     archived: false,
@@ -405,6 +409,11 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
       );
     }
     if (f.kind === "select") {
+      /* The "Stage" field's options are the org's own pipeline stages (the
+         intake layout carries no options for it); every other select carries
+         its own. On create the stage is pre-set (first stage by default, or
+         the terminal stage when adding from the sold-customer directory). */
+      const opts = f.key === "stage" ? stages : (f.options ?? []);
       return (
         <label className="field" key={f.key}>
           <span className="field-label">{f.label}</span>
@@ -414,7 +423,7 @@ export default function ClientModal({ client, stages, customFieldDefs, intake, b
             aria-label={f.label}
           >
             <option value="">—</option>
-            {(f.options ?? []).map((o) => (
+            {opts.map((o) => (
               <option key={o} value={o}>
                 {o}
               </option>

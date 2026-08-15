@@ -65,6 +65,19 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
      chips row below selects/toggles it. Composes with the Active/Archived/All
      toggle and search — all three intersect in the visible memo. */
   const [stageFilter, setStageFilter] = useState<string | null>(initialStage);
+
+  /* Owner request 2026-08-14 — terminal-stage split (GLOBAL): the pipeline
+     shows prospects only. The account's TERMINAL stage is the LAST entry of
+     its ordered stages (positional — renamed-safe, never hardcoded "Sold"):
+     sold customers leave this table and live in the directory tab instead.
+     `terminalStage` is derived from orgStages (refreshed from settings on
+     every load) so a rename/reorder made in "Manage stages" applies here
+     immediately. */
+  const terminalStage = orgStages.length > 0 ? orgStages[orgStages.length - 1] : "";
+  /* The Dashboard deep-links "View →" per stage card; a card that IS the
+     terminal stage has no chip anymore, so the link opens the pipeline on
+     "All" (the stale stage name is ignored). */
+  const activeStageFilter = stageFilter && stageFilter !== terminalStage ? stageFilter : null;
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
@@ -112,12 +125,16 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
     if (!clients) return [];
     const q = query.trim().toLowerCase();
     return clients.filter((c) => {
+      /* Terminal-stage split (owner request 2026-08-14): the pipeline shows
+         prospects only — clients in the account's terminal (sold) stage never
+         appear here, archived or not. They live in the directory tab. */
+      if (c.stage === terminalStage) return false;
       const matchFilter =
         filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
       if (!matchFilter) return false;
       /* Stage chip filter — intersects with the toggle above and the search
          below. A selected chip narrows to exactly that pipeline stage. */
-      if (stageFilter && c.stage !== stageFilter) return false;
+      if (activeStageFilter && c.stage !== activeStageFilter) return false;
       if (!q) return true;
       return [
         c.companyName,
@@ -134,22 +151,24 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
         .toLowerCase()
         .includes(q);
     });
-  }, [clients, filter, query, stageFilter]);
+  }, [clients, filter, query, activeStageFilter, terminalStage]);
 
   /* Owner request 2026-08-14 — chip counts. Non-archived clients per stage,
      computed live from the same loaded list the table renders, so the chips
      always agree with the dashboard's stage breakdown (which is also
-     non-archived per stage) and with the "Active" count above. */
+     non-archived per stage) and with the "Active" count above. The terminal
+     (sold) stage has no chip — sold customers are not pipeline prospects. */
   const stageCountsActive = useMemo(() => {
     const m: Record<string, number> = {};
     if (clients) {
       for (const c of clients) {
         if (c.archived) continue;
+        if (c.stage === terminalStage) continue;
         m[c.stage] = (m[c.stage] ?? 0) + 1;
       }
     }
     return m;
-  }, [clients]);
+  }, [clients, terminalStage]);
 
   const totalValue = useMemo(
     () => visible.filter((c) => !c.archived).reduce((sum, c) => sum + (c.dealValue || 0), 0),
@@ -220,9 +239,13 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
     );
   }
 
+  /* Terminal-stage split: the pipeline's Active/Archived/All counts cover
+     prospects only — sold customers (terminal stage) are counted in the
+     directory tab, not here. */
+  const nonTerminal = clients.filter((c) => c.stage !== terminalStage);
   const counts = {
-    active: clients.filter((c) => !c.archived).length,
-    archived: clients.filter((c) => c.archived).length,
+    active: nonTerminal.filter((c) => !c.archived).length,
+    archived: nonTerminal.filter((c) => c.archived).length,
   };
 
   /* Owner workspace labels its pipeline records "leads" (owner direction
@@ -274,7 +297,7 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
             >
               {f === "active" ? "Active" : f === "archived" ? "Archived" : "All"}
               <span className="seg-count">
-                {f === "active" ? counts.active : f === "archived" ? counts.archived : clients.length}
+                {f === "active" ? counts.active : f === "archived" ? counts.archived : nonTerminal.length}
               </span>
             </button>
           ))}
@@ -289,33 +312,37 @@ export default function Clients({ stages, ownerOrg = false, initialStage = null 
         />
         {/* Owner request 2026-08-14 — stage chip row: "All" + one chip per
             org stage, each with its live non-archived count (same numbers as
-            the dashboard stage breakdown). Clicking a chip filters the table
-            to that stage; clicking the active chip again toggles it off;
-            "All" clears. Stage names come from the org's CURRENT stages
-            (orgStages, refreshed with every load), so renames show up here
-            immediately. */}
+            the dashboard stage breakdown), EXCEPT the terminal stage — sold
+            customers are not pipeline prospects and get no chip (they live in
+            the directory tab). Clicking a chip filters the table to that
+            stage; clicking the active chip again toggles it off; "All"
+            clears. Stage names come from the org's CURRENT stages (orgStages,
+            refreshed with every load), so renames show up here immediately. */}
         <div className="stage-chips" role="group" aria-label="Filter by stage">
           <button
             type="button"
-            className={stageFilter === null ? "stage-chip active" : "stage-chip"}
-            aria-pressed={stageFilter === null}
+            className={activeStageFilter === null ? "stage-chip active" : "stage-chip"}
+            aria-pressed={activeStageFilter === null}
             onClick={() => setStageFilter(null)}
           >
             All
             <span className="seg-count">{counts.active}</span>
           </button>
-          {orgStages.map((s) => (
-            <button
-              type="button"
-              key={s}
-              className={stageFilter === s ? "stage-chip active" : "stage-chip"}
-              aria-pressed={stageFilter === s}
-              onClick={() => setStageFilter((cur) => (cur === s ? null : s))}
-            >
-              {s}
-              <span className="seg-count">{stageCountsActive[s] ?? 0}</span>
-            </button>
-          ))}
+          {orgStages.map((s) => {
+            if (s === terminalStage) return null;
+            return (
+              <button
+                type="button"
+                key={s}
+                className={activeStageFilter === s ? "stage-chip active" : "stage-chip"}
+                aria-pressed={activeStageFilter === s}
+                onClick={() => setStageFilter((cur) => (cur === s ? null : s))}
+              >
+                {s}
+                <span className="seg-count">{stageCountsActive[s] ?? 0}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
