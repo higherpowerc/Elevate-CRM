@@ -257,7 +257,7 @@ export default function App() {
   const brandMark = isOwner ? "E" : initials(orgName) || "E";
 
   return (
-    <div className="app" style={accentStyle}>
+    <div className={isOwnerOrg ? "app owner-workspace" : "app"} style={accentStyle}>
       <PiiContext.Provider value={piiHidden}>
         <header className="nav">
         {impersonating && (

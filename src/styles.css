@@ -793,6 +793,54 @@ legend.field-label {
   }
 }
 
+/* Owner workspace table-fit sweep (owner permission 2026-08-15) — the
+   owner's 8-tab nav (Leads/Onboarding/Clients/Tasks/Finance/Admin/Settings
+   + brand + privacy eye + user + sign-out) outgrew the viewport at ~1280px
+   (~25px) and below 980px (~200px), forcing a horizontal scrollbar on EVERY
+   tab. Tenant workspaces (5-6 tabs) fit at all widths, so the tightening is
+   owner-scoped (.owner-workspace) and client-account headers stay
+   pixel-identical. The tabs row also becomes internally scrollable (min-width
+   0 + overflow-x) so no page-level horizontal scroll can ever return. */
+@media (max-width: 1320px) {
+  .owner-workspace .nav-inner {
+    gap: 14px;
+    padding: 0 16px;
+  }
+  .owner-workspace .tab {
+    padding: 8px 9px;
+  }
+  .owner-workspace .nav-user {
+    max-width: 120px;
+  }
+  .owner-workspace .brand-sub {
+    display: none;
+  }
+  .owner-workspace .tabs {
+    min-width: 0;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 1100px) {
+  .owner-workspace .nav-inner {
+    gap: 10px;
+    padding: 0 14px;
+  }
+  .owner-workspace .tab {
+    padding: 7px 7px;
+    font-size: 13px;
+  }
+  .owner-workspace .nav-user {
+    display: none;
+  }
+  .owner-workspace .nav-right {
+    gap: 8px;
+  }
+  .owner-workspace .tabs {
+    gap: 2px;
+  }
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
