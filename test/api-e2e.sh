@@ -671,6 +671,10 @@ echo "    (member later-stage client id=$MC2_ID, stage=$MEM_LAST2)"
 code -b "$JAR2" "$BASE/api/dashboard" > /dev/null
 grep -q '"projectedPipeline":7500' /tmp/body.json && echo "  ✓ 16f2: member projectedPipeline = 7500 (5000+2500 — ALL stages still summed for tenants)" || echo "  ✗ 16f2: member pipeline: $(cat /tmp/body.json)"
 check "16f2: remove the later-stage member client (cleanup) → 200" 200 $(code -b "$JAR2" -X DELETE "$BASE/api/clients/$MC2_ID")
+# Refetch the member dashboard so /tmp/body.json holds the dashboard payload
+# again (the DELETE above overwrote it) — the next check reads it.
+code -b "$JAR2" "$BASE/api/dashboard" > /dev/null
+grep -q '"projectedPipeline":5000' /tmp/body.json && echo "  ✓ 16f2: member pipeline back to 5000 (later-stage client removed)" || echo "  ✗ 16f2: member pipeline after cleanup: $(cat /tmp/body.json)"
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d = json.load(open('/tmp/body.json'))
