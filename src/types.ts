@@ -2,13 +2,13 @@
  *  tenant's own list comes from the API (user.stages / /api/settings) and
  *  drives the stage dropdown, dashboard breakdown and client badges.
  *  NOTE (3g-2, owner direction 2026-08-14): the owner workspace's pipeline is
- *  Leads → Intakes → Sold; the server migrates the owner org's stored stages
+ *  Leads → Onboarding → Sold; the server migrates the owner org's stored stages
  *  at boot. This client-side list is only a pre-auth UI fallback, kept in
  *  sync with the owner pipeline. Tenant orgs always receive their own
  *  (vertical-seeded or default) stages from the API. */
 export const DEFAULT_STAGES = [
   "Leads",
-  "Intakes",
+  "Onboarding",
   "Sold",
 ];
 export type Stage = string;

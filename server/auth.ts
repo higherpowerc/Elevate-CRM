@@ -198,7 +198,7 @@ export async function ensureAdmin(): Promise<{ created: boolean; message: string
   );
   // 3g-2: on a fresh database the admin is created AFTER db.ts's import-time
   // migration pass, so re-run it now — the owner org (this admin's org) still
-  // has the legacy 6-stage pipeline and must be migrated to Leads → Intakes →
+  // has the legacy 6-stage pipeline and must be migrated to Leads → Onboarding →
   // Sold (idempotent; no-op once migrated).
   migrateOwnerPipeline();
   return { created: true, message: `[auth] Seeded admin account: ${email}` };

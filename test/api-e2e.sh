@@ -84,18 +84,18 @@ grep -q 'Acme Legal LLP' /tmp/body.json && grep -qv 'Northline' /tmp/body.json &
 
 echo "== 6. Update stage / fields =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Acme Legal LLP","contactName":"Jordan Lee","email":"jordan@acme.example","phone":"+1 555 0100","industry":"Legal","clientType":"commercial","address":"2200 Market St","city":"San Francisco","state":"CA","zip":"94114","website":"acmelegal.example","leadSource":"Referral","services":["Premium Website","SEO","Paid Campaigns"],"dealValue":15000,"stage":"Intakes","nextAction":"Kickoff call Thursday","notes":"Added paid campaigns"}' \
+  -d '{"companyName":"Acme Legal LLP","contactName":"Jordan Lee","email":"jordan@acme.example","phone":"+1 555 0100","industry":"Legal","clientType":"commercial","address":"2200 Market St","city":"San Francisco","state":"CA","zip":"94114","website":"acmelegal.example","leadSource":"Referral","services":["Premium Website","SEO","Paid Campaigns"],"dealValue":15000,"stage":"Onboarding","nextAction":"Kickoff call Thursday","notes":"Added paid campaigns"}' \
   "$BASE/api/clients/$ACME_ID")
 check "update Acme → 200" 200 "$S"
-grep -q '"stage":"Intakes"' /tmp/body.json && grep -q '"dealValue":15000' /tmp/body.json && echo "  ✓ stage moved to Intakes, deal 15000" || echo "  ✗ update failed: $(cat /tmp/body.json)"
+grep -q '"stage":"Onboarding"' /tmp/body.json && grep -q '"dealValue":15000' /tmp/body.json && echo "  ✓ stage moved to Onboarding, deal 15000" || echo "  ✗ update failed: $(cat /tmp/body.json)"
 
 echo "== 7. Dashboard counts + projected pipeline =="
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 check "dashboard → 200" 200 "$S"
 grep -q '"Sold":0' /tmp/body.json && echo "  ✓ Sold=0" || echo "  ✗ Sold count: $(cat /tmp/body.json)"
-grep -q '"Intakes":1' /tmp/body.json && echo "  ✓ Intakes=1" || echo "  ✗ Intakes count: $(cat /tmp/body.json)"
+grep -q '"Onboarding":1' /tmp/body.json && echo "  ✓ Onboarding=1" || echo "  ✗ Onboarding count: $(cat /tmp/body.json)"
 grep -q '"Leads":1' /tmp/body.json && echo "  ✓ Leads=1" || echo "  ✗ Leads count: $(cat /tmp/body.json)"
-grep -q '"projectedPipeline":5400' /tmp/body.json && echo "  ✓ projectedPipeline = 5400 (OWNER: Leads stage only — Acme's 15000 in Intakes excluded, not revenue)" || echo "  ✗ pipeline: $(cat /tmp/body.json)"
+grep -q '"projectedPipeline":5400' /tmp/body.json && echo "  ✓ projectedPipeline = 5400 (OWNER: Leads stage only — Acme's 15000 in Onboarding excluded, not revenue)" || echo "  ✗ pipeline: $(cat /tmp/body.json)"
 
 echo "== 8. Archive affects dashboard only =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
@@ -104,7 +104,7 @@ S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
 check "archive Northline → 200" 200 "$S"
 grep -q '"archived":true' /tmp/body.json && echo "  ✓ archived=true" || echo "  ✗ archive failed: $(cat /tmp/body.json)"
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
-grep -q '"projectedPipeline":0' /tmp/body.json && echo "  ✓ pipeline now 0 (owner Leads-stage only: Northline archived, Acme in Intakes excluded)" || echo "  ✗ pipeline after archive: $(cat /tmp/body.json)"
+grep -q '"projectedPipeline":0' /tmp/body.json && echo "  ✓ pipeline now 0 (owner Leads-stage only: Northline archived, Acme in Onboarding excluded)" || echo "  ✗ pipeline after archive: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/clients")
 check "default list → 200" 200 "$S"
 grep -qv 'Northline' /tmp/body.json && echo "  ✓ archived hidden in default list" || echo "  ✗ archived still in default list"
@@ -220,7 +220,7 @@ check "custom fields not a list → 400" 400 $(code -b "$JAR" -X POST -H 'Conten
 
 echo "== 11. Custom field update round-trip =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","clientType":"residential","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Intakes","nextAction":"","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}]}' \
+  -d '{"companyName":"Summit Heating & Air","contactName":"Ray Ortiz","email":"ray@summit.example","phone":"","industry":"HVAC","clientType":"residential","services":["AC Tune-Up","Installation"],"dealValue":12345.67,"stage":"Onboarding","nextAction":"","notes":"","customFields":[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}]}' \
   "$BASE/api/clients/$HVAC_ID")
 check "update HVAC → 200" 200 "$S"
 grep -q '"customFields":\[{"name":"License #","value":"CA-88213"},{"name":"Fleet size","value":"14"},{"name":"Insured","value":"0"}\]' /tmp/body.json && echo "  ✓ custom fields survive update (values round-trip)" || echo "  ✗ custom fields after update: $(cat /tmp/body.json)"
@@ -229,7 +229,7 @@ grep -q '"AC Tune-Up"' /tmp/body.json && echo "  ✓ updated free-form service" 
 
 echo "== 12. Landscaping demo client (defined fields only) =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","clientType":"commercial","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Intakes","nextAction":"Site visit","notes":"","customFields":[{"name":"Service area","value":"Greater Seattle"},{"name":"Fleet size","value":"6"}]}' \
+  -d '{"companyName":"Willow & Stone Landscapes","contactName":"Dana Kim","email":"dana@willowstone.example","phone":"+1 206 555 0144","industry":"Landscaping","clientType":"commercial","services":["Mowing","Design","Irrigation"],"dealValue":4200,"stage":"Onboarding","nextAction":"Site visit","notes":"","customFields":[{"name":"Service area","value":"Greater Seattle"},{"name":"Fleet size","value":"6"}]}' \
   "$BASE/api/clients")
 check "create landscaping client → 201" 201 "$S"
 LS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -757,7 +757,7 @@ import json
 d = json.load(open('/tmp/body.json'))
 u = d['user']
 assert u['orgName'] == 'Elevate Studio', u.get('orgName')
-assert u['stages'] == ['Leads','Intakes','Sold'], u['stages']
+assert u['stages'] == ['Leads','Onboarding','Sold'], u['stages']
 assert u['accentColor'] == '#d6ff3f', u.get('accentColor')
 print("  ✓ me returns orgName + default stages + accentColor")
 PY
@@ -772,7 +772,7 @@ echo "-- 17c. GET settings =="
 S=$(code -b "$JAR" "$BASE/api/settings")
 check "owner GET settings → 200" 200 "$S"
 grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ settings carries org name" || echo "  ✗ settings orgName: $(cat /tmp/body.json)"
-grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ settings returns the owner 3-stage pipeline (Leads → Intakes → Sold)" || echo "  ✗ settings stages: $(cat /tmp/body.json)"
+grep -q '"stages":\["Leads","Onboarding","Sold"\]' /tmp/body.json && echo "  ✓ settings returns the owner 3-stage pipeline (Leads → Onboarding → Sold)" || echo "  ✗ settings stages: $(cat /tmp/body.json)"
 grep -q '"accentColor":"#d6ff3f"' /tmp/body.json && echo "  ✓ settings returns default accent" || echo "  ✗ settings accent: $(cat /tmp/body.json)"
 
 echo "-- 17d. Settings validation =="
@@ -794,7 +794,7 @@ check "blank org name → 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: app
 echo "-- 17e. Rename a stage migrates its clients =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"stages":["Leads","Proposal","Sold"]}' "$BASE/api/settings")
-check "rename Intakes→Proposal → 200" 200 "$S"
+check "rename Onboarding→Proposal → 200" 200 "$S"
 grep -q '"stages":\["Leads","Proposal","Sold"\]' /tmp/body.json && echo "  ✓ new stage list returned" || echo "  ✗ response: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/clients/$HVAC_ID")
 check "get HVAC client → 200" 200 "$S"
@@ -806,8 +806,8 @@ import json
 d = json.load(open('/tmp/body.json'))
 sc = d['stageCounts']
 assert sc.get('Proposal') == 2, sc
-assert sc.get('Intakes', 0) == 0, sc
-print("  ✓ dashboard counts follow the rename (Proposal=2, Intakes=0)")
+assert sc.get('Onboarding', 0) == 0, sc
+print("  ✓ dashboard counts follow the rename (Proposal=2, Onboarding=0)")
 PY
 
 echo "-- 17f. Add / remove stages =="
@@ -1471,12 +1471,12 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for bundle surface check"
 fi
 
-echo "== 24. Owner pipeline migration (3g-2): Leads → Intakes → Sold =="
+echo "== 24. Owner pipeline migration (3g-2): Leads → Onboarding → Sold =="
 echo "-- 24a. Owner org has exactly 3 stages (editor tests renamed the middle) =="
 # The stage-editor sections (17e/17f) renamed the middle stage to "Proposal" to
 # prove the Settings editor still works on the owner org — so at this point the
 # owner pipeline is [Leads, Proposal, Sold]: exactly 3 stages, first Leads,
-# last Sold. The canonical [Leads, Intakes, Sold] is asserted right after the
+# last Sold. The canonical [Leads, Onboarding, Sold] is asserted right after the
 # migration in 24b.
 S=$(code -b "$JAR" "$BASE/api/auth/me")
 check "owner me → 200" 200 "$S"
@@ -1553,22 +1553,22 @@ python3 - <<'PY'
 import json
 d = json.load(open('/tmp/mig_result.json'))
 st = d.get('stages', [])
-assert st == ['Leads', 'Intakes', 'Sold'], st
+assert st == ['Leads', 'Onboarding', 'Sold'], st
 expect = {
   'Legacy Lead Band': 'Leads',
   'Legacy Intake Band': 'Leads',
-  'Legacy Kickoff Band': 'Intakes',
-  'Legacy Build Band': 'Intakes',
+  'Legacy Kickoff Band': 'Onboarding',
+  'Legacy Build Band': 'Onboarding',
   'Legacy Launch Band': 'Sold',
   'Legacy Retainer Band': 'Sold',
 }
 by = {c['company_name']: c['stage'] for c in d.get('clients', [])}
 assert by == expect, (by, expect)
-print("  ✓ positional remap (computed from counts): bands [1-2]→Leads, [3-4]→Intakes, [5-6]→Sold")
-print("  ✓ every owner client record's stage value migrated (Prospect/Intake→Leads, Kickoff/Build→Intakes, Launch/Retainer→Sold)")
+print("  ✓ positional remap (computed from counts): bands [1-2]→Leads, [3-4]→Onboarding, [5-6]→Sold")
+print("  ✓ every owner client record's stage value migrated (Prospect/Intake→Leads, Kickoff/Build→Onboarding, Launch/Retainer→Sold)")
 PY
 S=$(code -b "$JAR" "$BASE/api/settings")
-grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ owner settings (via API) reflect the migrated pipeline" || echo "  ✗ owner stages via API: $(cat /tmp/body.json)"
+grep -q '"stages":\["Leads","Onboarding","Sold"\]' /tmp/body.json && echo "  ✓ owner settings (via API) reflect the migrated pipeline" || echo "  ✗ owner stages via API: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/clients?q=Legacy")
 python3 - <<'PY'
 import json
@@ -1577,13 +1577,13 @@ by = {c['companyName']: c['stage'] for c in d['clients']}
 expect = {
   'Legacy Lead Band': 'Leads',
   'Legacy Intake Band': 'Leads',
-  'Legacy Kickoff Band': 'Intakes',
-  'Legacy Build Band': 'Intakes',
+  'Legacy Kickoff Band': 'Onboarding',
+  'Legacy Build Band': 'Onboarding',
   'Legacy Launch Band': 'Sold',
   'Legacy Retainer Band': 'Sold',
 }
 assert by == expect, (by, expect)
-print("  ✓ API confirms the remap (a record formerly in Build is now Intakes, Retainer → Sold)")
+print("  ✓ API confirms the remap (a record formerly in Build is now Onboarding, Retainer → Sold)")
 PY
 
 echo "-- 24c. Tenant org untouched by the migration =="
@@ -1614,7 +1614,7 @@ for ID in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(
   code -b "$JAR" -X DELETE "$BASE/api/clients/$ID" > /dev/null
 done
 S=$(code -b "$JAR" "$BASE/api/settings")
-grep -q '"stages":\["Leads","Intakes","Sold"\]' /tmp/body.json && echo "  ✓ owner org ends clean: stages back to Leads → Intakes → Sold, test clients removed" || echo "  ✗ owner end state: $(cat /tmp/body.json)"
+grep -q '"stages":\["Leads","Onboarding","Sold"\]' /tmp/body.json && echo "  ✓ owner org ends clean: stages back to Leads → Onboarding → Sold, test clients removed" || echo "  ✗ owner end state: $(cat /tmp/body.json)"
 rm -f /tmp/mig_run.ts /tmp/mig_result.json
 
 echo "== 25. Fresh-process boot: prod-style import-time migration (TDZ regression) =="
@@ -1631,8 +1631,8 @@ echo "== 25. Fresh-process boot: prod-style import-time migration (TDZ regressio
 #       migration can run during setup) and park a client in an old stage;
 #   (b) import server/db.ts in a NEW bun process — the import itself must
 #       succeed (no TDZ ReferenceError) and the import-time pass must migrate
-#       the owner org to Leads → Intakes → Sold with the client remapped
-#       positionally (Kickoff = band [3-4] → Intakes).
+#       the owner org to Leads → Onboarding → Sold with the client remapped
+#       positionally (Kickoff = band [3-4] → Onboarding).
 # If the TDZ bug ever regresses, this section fails while section 24 stays
 # green — exactly the failure mode that hit prod.
 BOOT_DIR=$(mktemp -d)
@@ -1665,7 +1665,7 @@ fi
 cat > "$BOOT_DIR/boot_import.ts" <<'TS'
 // THE regression probe: import server/db.ts in a fresh process against the
 // prod-style DB. The import-time migrateOwnerPipeline() call must succeed and
-// migrate the owner org to Leads → Intakes → Sold. On a regression of the TDZ
+// migrate the owner org to Leads → Onboarding → Sold. On a regression of the TDZ
 // bug this throws ReferenceError before the import completes and BOOT_RESULT
 // is never printed.
 import { db, getOrg, parseStages, OWNER_PIPELINE } from "/home/team/shared/crm-app/server/db.ts";
@@ -1689,9 +1689,9 @@ if echo "$BOOT_OUT" | grep -q '^BOOT_RESULT '; then
 import json
 d = json.load(open('/tmp/boot_result.json'))
 assert d['stages'] == d['expected'], (d['stages'], d['expected'])
-assert d['client'] == 'Intakes', d['client']  # old Kickoff = band [3-4] → Intakes
+assert d['client'] == 'Onboarding', d['client']  # old Kickoff = band [3-4] → Onboarding
 print("  ✓ owner org migrated at import: " + " → ".join(d['stages']))
-print("  ✓ positional client remap ran from the boot path (Kickoff → Intakes)")
+print("  ✓ positional client remap ran from the boot path (Kickoff → Onboarding)")
 PY
   then
     PASS=$((PASS+1))
@@ -1703,7 +1703,100 @@ else
   echo "$BOOT_OUT" | head -4
 fi
 rm -rf "$BOOT_DIR" /tmp/boot_result.json
-
+echo "-- 25b. Boot remap of the legacy 'Intakes' owner stage (owner direction 2026-08-15) --"
+# Production right now has the owner org on ["Leads","Intakes","Sold"] with 8
+# client records in "Intakes". This block replays that exact state in a fresh
+# process: seed a throwaway DB, revert the owner org to the legacy 3-stage
+# owner list via RAW SQL (no db.ts import, so no migration can run during
+# setup), park a client in "Intakes", then import server/db.ts — the boot path
+# must rename the middle stage to "Onboarding" at the same position and move
+# the client with it. A SECOND import must be a no-op (idempotent).
+REN_DIR=$(mktemp -d)
+(cd /home/team/shared/crm-app && DATA_DIR="$REN_DIR" ADMIN_EMAIL=owner@elevate.studio \
+  ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
+  bun ./server/seed.ts >/dev/null 2>&1)
+cat > "$REN_DIR/setup_rename.ts" <<'TS'
+// Revert the owner org to the legacy 3-stage owner list ["Leads","Intakes","Sold"]
+// and park one client in "Intakes" — raw bun:sqlite only, deliberately NOT
+// importing server/db.ts (its import-time migration would run first and
+// defeat the test). This is exactly prod's pre-rename state.
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+const legacy = ["Leads", "Intakes", "Sold"];
+const admin = db
+  .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
+  .get() as { org_id: number };
+db.query("UPDATE orgs SET stages = ? WHERE id = ?").run(JSON.stringify(legacy), admin.org_id);
+db.query(
+  "INSERT INTO clients (org_id, company_name, stage) VALUES (?, 'Boot Intake Co', 'Intakes')",
+).run(admin.org_id);
+console.log("RENAME_SETUP_OK");
+TS
+REN_SETUP=$(DATA_DIR="$REN_DIR" bun "$REN_DIR/setup_rename.ts" 2>&1)
+if echo "$REN_SETUP" | grep -q RENAME_SETUP_OK; then
+  PASS=$((PASS+1)); echo "  ✓ throwaway DB in prod-style pre-rename state (owner on [Leads, Intakes, Sold] + one client in Intakes)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ pre-rename state setup failed: $REN_SETUP"
+fi
+cat > "$REN_DIR/boot_rename.ts" <<'TS'
+// THE boot probe: import server/db.ts in a fresh process against the
+// pre-rename DB. The import-time migrateOwnerPipeline() pass must rename the
+// owner middle stage "Intakes" → "Onboarding" and move the client with it.
+import { db, getOrg, parseStages, OWNER_PIPELINE } from "/home/team/shared/crm-app/server/db.ts";
+const admin = db
+  .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
+  .get() as { org_id: number };
+const org = getOrg(admin.org_id)!;
+const row = db
+  .query("SELECT stage FROM clients WHERE org_id = ? AND company_name = 'Boot Intake Co'")
+  .get(admin.org_id) as { stage: string };
+console.log(
+  "REN_RESULT " +
+    JSON.stringify({ stages: parseStages(org.stages), client: row.stage, expected: [...OWNER_PIPELINE] }),
+);
+TS
+REN_OUT=$(DATA_DIR="$REN_DIR" bun "$REN_DIR/boot_rename.ts" 2>&1)
+if echo "$REN_OUT" | grep -q '^REN_RESULT '; then
+  PASS=$((PASS+1)); echo "  ✓ fresh-process db.ts import succeeded (rename pass runs at boot)"
+  echo "$REN_OUT" | grep '^REN_RESULT ' | sed 's/^REN_RESULT //' > /tmp/ren_result.json
+  if python3 - <<'PY'
+import json
+d = json.load(open('/tmp/ren_result.json'))
+assert d['stages'] == d['expected'], (d['stages'], d['expected'])
+assert d['stages'] == ['Leads', 'Onboarding', 'Sold'], d['stages']
+assert d['client'] == 'Onboarding', d['client']  # client followed the renamed middle stage
+print("  ✓ owner org remapped at import: " + " → ".join(d['stages']))
+print("  ✓ client record remapped at the same position (Intakes → Onboarding)")
+PY
+  then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ rename boot result mismatch: $(cat /tmp/ren_result.json)"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ fresh-process db.ts import FAILED for the rename pass:"; echo "$REN_OUT" | head -4
+fi
+# Idempotency: a second boot must be a no-op (stages + client unchanged).
+REN_OUT2=$(DATA_DIR="$REN_DIR" bun "$REN_DIR/boot_rename.ts" 2>&1)
+if echo "$REN_OUT2" | grep -q '^REN_RESULT '; then
+  echo "$REN_OUT2" | grep '^REN_RESULT ' | sed 's/^REN_RESULT //' > /tmp/ren_result2.json
+  if python3 - <<'PY'
+import json
+a = json.load(open('/tmp/ren_result.json'))
+b = json.load(open('/tmp/ren_result2.json'))
+assert a == b, (a, b)
+assert b['stages'] == ['Leads', 'Onboarding', 'Sold'], b['stages']
+print("  ✓ second boot is a no-op: stages + client unchanged (idempotent)")
+PY
+  then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ rename idempotency broken: $(cat /tmp/ren_result2.json)"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ second boot import FAILED: $REN_OUT2" | head -3
+fi
+rm -rf "$REN_DIR" /tmp/ren_result.json /tmp/ren_result2.json
 echo "== 26. Sold-lead auto-provisioning (3g-3) =="
 ORG_COUNT() { curl -s -b "$JAR" "$BASE/api/admin/orgs" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['orgs']))"; }
 echo "-- 26a. Owner moves a lead into Sold → one clean vertical-seeded workspace =="
@@ -1772,12 +1865,12 @@ check "member cannot read provisions → 403" 403 $(code -b "$JARPROV" "$BASE/ap
 S=$(code -b "$JARPROV" "$BASE/api/settings")
 grep -qv 'tempPassword' /tmp/body.json && echo "  ✓ temp password NOT exposed via tenant-scoped endpoints" || echo "  ✗ tempPassword leaked: $(cat /tmp/body.json)"
 
-echo "-- 26b. Idempotent: Sold → Intakes → Sold creates no second org =="
+echo "-- 26b. Idempotent: Sold → Onboarding → Sold creates no second org =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Intakes","nextAction":"","notes":"moved back"}' \
+  -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Onboarding","nextAction":"","notes":"moved back"}' \
   "$BASE/api/clients/$WL_ID")
-check "move back to Intakes → 200" 200 "$S"
-grep -q '"stage":"Intakes"' /tmp/body.json && echo "  ✓ client back in Intakes" || echo "  ✗ stage: $(cat /tmp/body.json)"
+check "move back to Onboarding → 200" 200 "$S"
+grep -q '"stage":"Onboarding"' /tmp/body.json && echo "  ✓ client back in Onboarding" || echo "  ✗ stage: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Sold","nextAction":"","notes":"sold again"}' \
   "$BASE/api/clients/$WL_ID")
@@ -2451,7 +2544,7 @@ else
 fi
 PRE_CNT=$(python3 -c "import json; d=json.load(open('/tmp/dash29.json')); print(d['stageCounts'].get('Leads', 0))")
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Pipeline Leads","Intakes","Sold"]}' "$BASE/api/settings")
+  -d '{"stages":["Pipeline Leads","Onboarding","Sold"]}' "$BASE/api/settings")
 check "29c: rename Leads → \"Pipeline Leads\" → 200" 200 "$S"
 code -b "$JAR" "$BASE/api/settings" > /dev/null
 cp /tmp/body.json /tmp/settings29.json
@@ -2465,7 +2558,7 @@ if PRE_CNT="$PRE_CNT" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 settings = json.load(open('/tmp/settings29.json'))
 st = settings['settings']['stages']
-assert st == ['Pipeline Leads', 'Intakes', 'Sold'], st
+assert st == ['Pipeline Leads', 'Onboarding', 'Sold'], st
 clients = json.load(open('/tmp/clients29b.json'))['clients']
 assert not [c for c in clients if c['stage'] == 'Leads'], "clients still in old stage"
 moved = [c for c in clients if c['stage'] == 'Pipeline Leads']
@@ -2757,8 +2850,8 @@ for CID in $TSC_ID $PAR_ID; do
   code -b "$JAR" -X DELETE "$BASE/api/clients/$CID" > /dev/null
 done
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Leads","Intakes","Sold"]}' "$BASE/api/settings")
-check "30g: owner stages restored to Leads → Intakes → Sold → 200" 200 "$S"
+  -d '{"stages":["Leads","Onboarding","Sold"]}' "$BASE/api/settings")
+check "30g: owner stages restored to Leads → Onboarding → Sold → 200" 200 "$S"
 code -b "$JAR" "$BASE/api/admin/provisions" > /dev/null
 for PID30 in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(' '.join(str(p['id']) for p in d['provisions']))"); do
   code -b "$JAR" -X POST "$BASE/api/admin/provisions/$PID30/dismiss" > /dev/null
@@ -2835,7 +2928,7 @@ else
 fi
 echo "-- 31d. Stage rename round-trip keeps the positional buckets correct =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["New Leads","Intakes","Sold"]}' "$BASE/api/settings")
+  -d '{"stages":["New Leads","Onboarding","Sold"]}' "$BASE/api/settings")
 check "31d: rename first stage Leads → \"New Leads\" → 200" 200 "$S"
 code -b "$JAR" "$BASE/api/settings" > /dev/null
 cp /tmp/body.json /tmp/s31d-settings.json
@@ -2843,15 +2936,15 @@ code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
 if BID31A="$BID31A" BID31B="$BID31B" BID31C="$BID31C" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 st = json.load(open('/tmp/s31d-settings.json'))['settings']['stages']
-assert st == ['New Leads', 'Intakes', 'Sold'], st
+assert st == ['New Leads', 'Onboarding', 'Sold'], st
 clients = json.load(open('/tmp/body.json'))['clients']
 A = [c for c in clients if c['id'] == int(os.environ['BID31A'])][0]
 B = [c for c in clients if c['id'] == int(os.environ['BID31B'])][0]
 C = [c for c in clients if c['id'] == int(os.environ['BID31C'])][0]
 assert A['stage'] == 'New Leads', A['stage']   # first bucket follows the rename
-assert B['stage'] == 'Intakes', B['stage']     # middle bucket unchanged
+assert B['stage'] == 'Onboarding', B['stage']     # middle bucket unchanged
 assert C['stage'] == 'Sold', C['stage']        # terminal bucket unchanged
-print("  ✓ after rename: first bucket = \"New Leads\" (A), middle = [\"Intakes\"] (B), terminal = \"Sold\" (C)")
+print("  ✓ after rename: first bucket = \"New Leads\" (A), middle = [\"Onboarding\"] (B), terminal = \"Sold\" (C)")
 PY
 then
   PASS=$((PASS+1)); echo "  ✓ 31d: positional buckets survive a first-stage rename (first follows the rename)"
@@ -2940,8 +3033,8 @@ for CID in $BID31A $BID31B $BID31C; do
   code -b "$JAR" -X DELETE "$BASE/api/clients/$CID" > /dev/null
 done
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["Leads","Intakes","Sold"]}' "$BASE/api/settings")
-check "31g: owner stages restored to Leads → Intakes → Sold → 200" 200 "$S"
+  -d '{"stages":["Leads","Onboarding","Sold"]}' "$BASE/api/settings")
+check "31g: owner stages restored to Leads → Onboarding → Sold → 200" 200 "$S"
 code -b "$JAR" "$BASE/api/admin/provisions" > /dev/null
 for PID31 in $(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(' '.join(str(p['id']) for p in d['provisions']))"); do
   code -b "$JAR" -X POST "$BASE/api/admin/provisions/$PID31/dismiss" > /dev/null
@@ -2983,11 +3076,11 @@ S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
 check "32b: update DNC reason → 200" 200 "$S"
 grep -q '"dncReason":"Written request received"' /tmp/body.json && echo "  ✓ DNC reason updates" || echo "  ✗ DNC reason not updated: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Intakes"}' "$BASE/api/clients/$DNC32_ID")
+  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Onboarding"}' "$BASE/api/clients/$DNC32_ID")
 check "32b: partial update without dnc keys → 200" 200 "$S"
 grep -q '"dnc":true' /tmp/body.json && grep -q '"dncReason":"Written request received"' /tmp/body.json && echo "  ✓ absent dnc keys leave the flag untouched (partial update)" || echo "  ✗ dnc clobbered: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Intakes","dnc":false}' "$BASE/api/clients/$DNC32_ID")
+  -d '{"companyName":"DNC Lead Co","clientType":"residential","dealValue":500,"stage":"Onboarding","dnc":false}' "$BASE/api/clients/$DNC32_ID")
 check "32b: clear DNC → 200" 200 "$S"
 grep -q '"dnc":false' /tmp/body.json && grep -qv '"dncReason":"Written' /tmp/body.json && grep -qv '"dncDate":"2026-08-15"' /tmp/body.json && echo "  ✓ clearing DNC clears reason + date" || echo "  ✗ DNC clear: $(cat /tmp/body.json)"
 echo "-- 32c. Validation =="
@@ -3000,7 +3093,7 @@ check "32c: bad dncDate → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: 
 check "32c: over-long lostReason → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Long Reason Co\",\"clientType\":\"residential\",\"lost\":true,\"lostReason\":\"$(python3 -c "print('x'*301)")\"}" "$BASE/api/clients")
 echo "-- 32d. Restore to pipeline (lost=false) brings the lead back =="
-# Baseline recaptured NOW: 32b's DNC Lead Co (dealValue 500, stage Intakes) is
+# Baseline recaptured NOW: 32b's DNC Lead Co (dealValue 500, stage Onboarding) is
 # non-lost and legitimately in the pipeline, so the pre-restore snapshot
 # already includes its 500.
 code -b "$JAR" "$BASE/api/dashboard" > /dev/null
