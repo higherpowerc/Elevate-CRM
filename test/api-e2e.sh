@@ -1802,7 +1802,252 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ second boot import FAILED: $REN_OUT2" | head -3
 fi
 rm -rf "$REN_DIR" /tmp/ren_result.json /tmp/ren_result2.json
+echo "== 25c. Boot backfill: signed records stuck in a non-terminal stage advance to the terminal stage (live-test finding 2026-08-15) =="
+# Live prod state: client id 59 "Joe" has agreement_status='signed' but stage
+# 'Onboarding' and next_action='' — signed BEFORE PR #60's sign-time
+# auto-advance existed. The boot backfill must advance such records exactly
+# like a fresh signature would (terminal stage + deduped 'Create client
+# account' task + next_action), must be a no-op when re-run (idempotent),
+# and must never block startup.
+BF_DIR=$(mktemp -d)
+(cd /home/team/shared/crm-app && DATA_DIR="$BF_DIR" ADMIN_EMAIL=owner@elevate.studio \
+  ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
+  bun ./server/seed.ts >/dev/null 2>&1)
+cat > "$BF_DIR/setup_backfill.ts" <<'TS'
+// Replay prod's pre-backfill state in the throwaway DB — raw bun:sqlite only
+// (deliberately NOT importing server/db.ts so no migration can run during
+// setup). The owner org's stages are the modern Leads → Onboarding → Sold.
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+const admin = db
+  .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
+  .get() as { org_id: number };
+// A: the exact client-59 repro — signed, stuck in the middle stage.
+db.query(
+  "INSERT INTO clients (org_id, company_name, stage, agreement_status, next_action) VALUES (?, 'Backfill Signed Co', 'Onboarding', 'signed', '')",
+).run(admin.org_id);
+// B: signed, stuck in the FIRST stage.
+db.query(
+  "INSERT INTO clients (org_id, company_name, stage, agreement_status) VALUES (?, 'Backfill First Co', 'Leads', 'signed')",
+).run(admin.org_id);
+// C: signed, stuck, but an OPEN 'Create client account' task already exists —
+// the backfill must advance the stage but NOT duplicate the task.
+db.query(
+  "INSERT INTO clients (org_id, company_name, stage, agreement_status) VALUES (?, 'Backfill Dup Co', 'Onboarding', 'signed')",
+).run(admin.org_id);
+const dupClient = db
+  .query("SELECT id FROM clients WHERE company_name = 'Backfill Dup Co'")
+  .get() as { id: number };
+db.query(
+  "INSERT INTO tasks (org_id, title, client_id, done, notes) VALUES (?, 'Create client account for Backfill Dup Co', ?, 0, 'pre-existing open task')",
+).run(admin.org_id, dupClient.id);
+// D: signed AND already terminal — the backfill must NOT touch it.
+db.query(
+  "INSERT INTO clients (org_id, company_name, stage, agreement_status, next_action) VALUES (?, 'Backfill Done Co', 'Sold', 'signed', '')",
+).run(admin.org_id);
+console.log("BACKFILL_SETUP_OK");
+TS
+BF_SETUP=$(DATA_DIR="$BF_DIR" bun "$BF_DIR/setup_backfill.ts" 2>&1)
+if echo "$BF_SETUP" | grep -q BACKFILL_SETUP_OK; then
+  PASS=$((PASS+1)); echo "  ✓ throwaway DB in prod-style pre-backfill state (2 stuck signed, 1 stuck + open task, 1 already terminal)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ backfill state setup failed: $BF_SETUP"
+fi
+cat > "$BF_DIR/backfill_probe.ts" <<'TS'
+// THE probe: import the exported backfill and run it TWICE against the
+// pre-backfill DB — the first run must settle every stuck signed record, the
+// second must be a total no-op (idempotent).
+import { db } from "/home/team/shared/crm-app/server/db.ts";
+import { backfillSignedClients } from "/home/team/shared/crm-app/server/agreements.ts";
+const state = () => {
+  const rows = db
+    .query(
+      "SELECT c.company_name, c.stage, c.next_action, c.agreement_status, " +
+        "(SELECT COUNT(*) FROM tasks t WHERE t.client_id = c.id AND t.title LIKE 'Create client account%') AS tasks " +
+        "FROM clients c WHERE c.company_name LIKE 'Backfill %' ORDER BY c.company_name",
+    )
+    .all() as { company_name: string; stage: string; next_action: string; agreement_status: string; tasks: number }[];
+  return Object.fromEntries(rows.map((r) => [r.company_name, r]));
+};
+const first = backfillSignedClients(db);
+const afterFirst = state();
+const second = backfillSignedClients(db);
+const afterSecond = state();
+console.log("BACKFILL_RESULT " + JSON.stringify({ first, second, afterFirst, afterSecond }));
+TS
+BF_OUT=$(DATA_DIR="$BF_DIR" bun "$BF_DIR/backfill_probe.ts" 2>&1)
+if echo "$BF_OUT" | grep -q '^BACKFILL_RESULT '; then
+  PASS=$((PASS+1)); echo "  ✓ exported backfill ran in a fresh process (no boot crash)"
+  echo "$BF_OUT" | grep '^BACKFILL_RESULT ' | sed 's/^BACKFILL_RESULT //' > /tmp/backfill_result.json
+  if python3 - <<'PY'
+import json
+d = json.load(open('/tmp/backfill_result.json'))
+a = d['afterFirst']
+assert d['first'] == 3, d['first']   # A, B, C advanced; D already terminal → untouched
+assert d['second'] == 0, d['second'] # idempotent — nothing left to advance
+# A (the client-59 repro): terminal stage + next_action + exactly one task
+assert a['Backfill Signed Co']['stage'] == 'Sold', a['Backfill Signed Co']
+assert a['Backfill Signed Co']['next_action'] == 'Create client account', a['Backfill Signed Co']
+assert a['Backfill Signed Co']['agreement_status'] == 'signed', a['Backfill Signed Co']
+assert a['Backfill Signed Co']['tasks'] == 1, a['Backfill Signed Co']
+# B: first-stage stuck record also advanced
+assert a['Backfill First Co']['stage'] == 'Sold', a['Backfill First Co']
+assert a['Backfill First Co']['tasks'] == 1, a['Backfill First Co']
+# C: advanced, but the pre-existing OPEN task was NOT duplicated
+assert a['Backfill Dup Co']['stage'] == 'Sold', a['Backfill Dup Co']
+assert a['Backfill Dup Co']['tasks'] == 1, a['Backfill Dup Co']
+# D: already terminal — untouched (no task, no next_action)
+assert a['Backfill Done Co']['stage'] == 'Sold', a['Backfill Done Co']
+assert a['Backfill Done Co']['next_action'] == '', a['Backfill Done Co']
+assert a['Backfill Done Co']['tasks'] == 0, a['Backfill Done Co']
+# Idempotency: the second run changed nothing at all
+assert d['afterFirst'] == d['afterSecond'], (d['afterFirst'], d['afterSecond'])
+print("  ✓ backfill advanced 3 stuck signed records to Sold + created the account task + set next_action")
+print("  ✓ already-terminal signed record untouched; second run changed nothing (idempotent)")
+print("  ✓ open 'Create client account' task not duplicated")
+PY
+  then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ backfill result mismatch: $(cat /tmp/backfill_result.json)"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ backfill probe FAILED:"; echo "$BF_OUT" | head -4
+fi
+# The REAL boot path: revert client A to the stuck state and boot the actual
+# server binary against this DB — the boot-time backfill must self-heal it
+# (this is the live "next deploy fixes client 59" guarantee) and boot must
+# still succeed.
+cat > "$BF_DIR/revert_a.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+db.query("DELETE FROM tasks WHERE client_id = (SELECT id FROM clients WHERE company_name = 'Backfill Signed Co')").run();
+db.query(
+  "UPDATE clients SET stage = 'Onboarding', next_action = '' WHERE company_name = 'Backfill Signed Co'",
+).run();
+console.log("REVERT_OK");
+TS
+BF_REVERT=$(DATA_DIR="$BF_DIR" bun "$BF_DIR/revert_a.ts" 2>&1)
+if echo "$BF_REVERT" | grep -q REVERT_OK; then
+  PASS=$((PASS+1)); echo "  ✓ client A reverted to the stuck state (simulating the next deploy against live data)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ revert failed: $BF_REVERT"
+fi
+BF_LOG="$BF_DIR/boot.log"
+(cd /home/team/shared/crm-app && DATA_DIR="$BF_DIR" PORT=3099 ADMIN_EMAIL=owner@elevate.studio \
+  ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
+  nohup bun ./server/index.ts > "$BF_LOG" 2>&1 & echo $! > "$BF_DIR/boot.pid")
+BF_BOOT_OK=0
+for _i in $(seq 1 30); do
+  curl -s -o /dev/null http://localhost:3099/api/auth/me 2>/dev/null && { BF_BOOT_OK=1; break; }
+  sleep 0.2
+done
+if [ "$BF_BOOT_OK" = 1 ]; then
+  PASS=$((PASS+1)); echo "  ✓ real server booted against the stuck DB (backfill did not break startup)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ real server boot FAILED: $(tail -5 "$BF_LOG")"
+fi
+if grep -q 'Signed-client backfill: advanced 1 record' "$BF_LOG"; then
+  PASS=$((PASS+1)); echo "  ✓ boot log reports the backfill ran and advanced 1 record"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ boot backfill log line missing: $(grep -i backfill "$BF_LOG" | head -3)"
+fi
+cat > "$BF_DIR/verify_boot.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+const a = db
+  .query(
+    "SELECT c.stage, c.next_action, (SELECT COUNT(*) FROM tasks t WHERE t.client_id = c.id AND t.title LIKE 'Create client account%') AS tasks FROM clients c WHERE c.company_name = 'Backfill Signed Co'",
+  )
+  .get() as { stage: string; next_action: string; tasks: number };
+console.log("BOOT_VERIFY " + JSON.stringify(a));
+TS
+BF_VERIFY=$(DATA_DIR="$BF_DIR" bun "$BF_DIR/verify_boot.ts" 2>&1)
+if echo "$BF_VERIFY" | grep -q '^BOOT_VERIFY '; then
+  echo "$BF_VERIFY" | grep '^BOOT_VERIFY ' | sed 's/^BOOT_VERIFY //' > /tmp/boot_verify.json
+  if python3 - <<'PY'
+import json
+a = json.load(open('/tmp/boot_verify.json'))
+assert a['stage'] == 'Sold', a
+assert a['next_action'] == 'Create client account', a
+assert a['tasks'] == 1, a
+print("  ✓ boot-time backfill self-healed the stuck signed record (stage Sold + task + next_action)")
+PY
+  then
+    PASS=$((PASS+1))
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ boot-time backfill did not self-heal: $(cat /tmp/boot_verify.json)"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ boot verify failed: $BF_VERIFY"
+fi
+kill "$(cat "$BF_DIR/boot.pid")" 2>/dev/null
+rm -rf "$BF_DIR" /tmp/backfill_result.json /tmp/boot_verify.json
+echo "== 25d. Individual lead rows: no person name under 'Business name' + full name in Contact (live-test finding 2026-08-15) =="
+# Owner tables: an individual record's companyName holds the person's FULL
+# NAME, so the Business-name cell must show the DBA (or an em dash) — never
+# the name — and the Contact cell must lead with the full name (in place of
+# the redundant partial 'Contact name'). Tenant tables (header 'Client') are
+# unchanged. The universal 'Contact name' intake field is commercial-only.
+if grep -Fq 'function ownerBizName' src/Clients.tsx && \
+   grep -Fq 'ownerOrg && c.clientType !== "commercial" ? c.dbaName || "—" : c.companyName' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: ownerBizName helper (individual → dbaName or em dash, commercial → companyName)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: ownerBizName helper missing from src/Clients.tsx"
+fi
+if grep -Fq 'function ownerContactPrimary' src/Clients.tsx && \
+   grep -Fq 'ownerOrg && c.clientType !== "commercial" ? c.companyName : c.contactName || "—"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: ownerContactPrimary helper (individual → full name, commercial → contactName)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: ownerContactPrimary helper missing from src/Clients.tsx"
+fi
+# Both owner tables must use the business-name helper: the Lost/DNC table AND
+# the main pipeline table.
+if [ "$(grep -c 'ownerBizName(ownerOrg, c)' src/Clients.tsx)" -ge 2 ] && \
+   grep -Fq 'ownerContactPrimary(ownerOrg, c)' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: ownerBizName wired into BOTH owner tables (Lost/DNC + main); Contact cell uses ownerContactPrimary"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: ownerBizName/ownerContactPrimary call sites missing in src/Clients.tsx"
+fi
+# intakeRules: the 'Contact name' field must be inside the commercial-only
+# spread (one occurrence, gated on `commercial`) — never in the universal list.
+if python3 - <<'PY'
+lines = open('src/intakeRules.ts').read().splitlines()
+hits = [i for i, l in enumerate(lines) if 'key: "contactName"' in l]
+assert len(hits) == 1, hits
+assert '...(commercial' in lines[hits[0] - 1], lines[hits[0] - 1]
+print("  ✓ source: 'Contact name' field is commercial-only (gated on the commercial spread, not universal)")
+PY
+then
+  PASS=$((PASS+1))
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 'Contact name' field still universal in src/intakeRules.ts"
+fi
+# API: an individual lead keeps its data intact end-to-end (rendering is
+# client-side; the API must still round-trip name + partial contact name +
+# email + phone).
+S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Jane Doe","contactName":"Doe","email":"jane@doe.example","phone":"+1 555 0101","industry":"Home Services","clientType":"residential","dealValue":800,"stage":"Leads"}' "$BASE/api/clients")
+check "25d: owner creates individual lead (name + partial contact name) → 201" 201 "$S"
+JANE_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" "$BASE/api/clients/$JANE_ID")
+if grep -q '"companyName":"Jane Doe"' /tmp/body.json && grep -q '"contactName":"Doe"' /tmp/body.json && \
+   grep -q '"email":"jane@doe.example"' /tmp/body.json && grep -q '"phone":"+1 555 0101"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ API round-trips the individual lead unchanged (name/contactName/email/phone)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ individual lead API payload: $(cat /tmp/body.json)"
+fi
+# Bundle: the compiled app contains both helpers' distinctive expressions
+# (minified): dbaName-or-em-dash for the Business-name slot and
+# contactName-or-em-dash for the commercial Contact primary.
+NEWEST_JS25=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS25" ] && grep -Fq 'dbaName||"—"' "$NEWEST_JS25" && grep -Fq 'contactName||"—"' "$NEWEST_JS25"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: individual Business-name fallback + Contact primary compiled"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: individual-row markers missing from $NEWEST_JS25"
+fi
 echo "== 26. Sold-lead auto-provisioning (3g-3) =="
+
 ORG_COUNT() { curl -s -b "$JAR" "$BASE/api/admin/orgs" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['orgs']))"; }
 echo "-- 26a. Owner moves a lead into Sold → one clean vertical-seeded workspace =="
 BEFORE_ORG=$(ORG_COUNT)

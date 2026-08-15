@@ -25,6 +25,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Database } from "bun:sqlite";
 import { dataDir, db, getOrg, parseStages } from "./db";
 import type { ClientRow } from "./db";
 
@@ -339,38 +340,96 @@ export function resolveAgreement(
     if (action === "sign") {
       const client = db
         .query("SELECT id, org_id, company_name, stage FROM clients WHERE id = ?")
-        .get(env.client_id) as { id: number; org_id: number; company_name: string; stage: string } | null;
+        .get(env.client_id) as SignedClientRow | null;
       if (!client) {
         // The client row is gone — record the envelope state only (the audit
         // trail is still correct; there is no record left to advance).
         db.query("UPDATE clients SET agreement_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, env.client_id);
         return;
       }
-      // 1. Terminal-stage auto-advance (Clients tab). No-op when already there.
-      const org = getOrg(client.org_id);
-      const stages = org ? parseStages(org.stages) : [];
-      const terminal = stages.length > 0 ? stages[stages.length - 1] : null;
-      if (terminal && client.stage !== terminal) {
-        db.query("UPDATE clients SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(terminal, client.id);
-      }
-      // 2 + 3. Account-creation task (deduped on OPEN tasks) + Next Action.
-      const dup = db
-        .query("SELECT id FROM tasks WHERE client_id = ? AND title LIKE 'Create client account%' AND done = 0")
-        .get(client.id);
-      if (!dup) {
-        db.query(
-          `INSERT INTO tasks (org_id, title, client_id, due_date, done, notes)
-           VALUES (?, ?, ?, '', 0, 'Auto-created when the agreement was signed.')`,
-        ).run(client.org_id, `Create client account for ${client.company_name}`, client.id);
-      }
-      db.query(
-        "UPDATE clients SET agreement_status = ?, next_action = 'Create client account', updated_at = datetime('now') WHERE id = ?",
-      ).run(status, client.id);
+      advanceSignedClient(db, client);
     } else {
       db.query("UPDATE clients SET agreement_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, env.client_id);
     }
   })();
   return { ok: true, status };
+}
+
+/** The client row slice the sign-advance logic needs (see
+ *  advanceSignedClient). */
+interface SignedClientRow {
+  id: number;
+  org_id: number;
+  company_name: string;
+  stage: string;
+}
+
+/**
+ * The shared "agreement just got signed" side effects — extracted from the
+ * resolveAgreement sign branch (PR #60) so the LIVE sign flow and the BOOT
+ * backfill (below) use ONE code path (live-test finding 2026-08-15):
+ *   1. the client record auto-advances to its org's TERMINAL stage (the last
+ *      element of orgs.stages — stages are renamable, so the terminal stage
+ *      is always the array's last element; the owner's terminal stage is
+ *      "Sold", the Clients tab) — a no-op when already there;
+ *   2. a "Create client account" task is raised for the owner (deduped —
+ *      re-sign/re-send never duplicates an OPEN task; a completed task may be
+ *      recreated by a fresh agreement);
+ *   3. the record's Next Action is set to "Create client account" so the
+ *      column shows it immediately.
+ * Idempotent: re-running on an already-advanced record changes nothing
+ * observable (stage stays terminal, the open task is not duplicated,
+ * next_action is already set).
+ */
+export function advanceSignedClient(db: Database, client: SignedClientRow): void {
+  // 1. Terminal-stage auto-advance (Clients tab). No-op when already there.
+  const org = getOrg(client.org_id);
+  const stages = org ? parseStages(org.stages) : [];
+  const terminal = stages.length > 0 ? stages[stages.length - 1] : null;
+  if (terminal && client.stage !== terminal) {
+    db.query("UPDATE clients SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(terminal, client.id);
+  }
+  // 2 + 3. Account-creation task (deduped on OPEN tasks) + Next Action.
+  const dup = db
+    .query("SELECT id FROM tasks WHERE client_id = ? AND title LIKE 'Create client account%' AND done = 0")
+    .get(client.id);
+  if (!dup) {
+    db.query(
+      `INSERT INTO tasks (org_id, title, client_id, due_date, done, notes)
+       VALUES (?, ?, ?, '', 0, 'Auto-created when the agreement was signed.')`,
+    ).run(client.org_id, `Create client account for ${client.company_name}`, client.id);
+  }
+  db.query(
+    "UPDATE clients SET agreement_status = 'signed', next_action = 'Create client account', updated_at = datetime('now') WHERE id = ?",
+  ).run(client.id);
+}
+
+/**
+ * Boot-time backfill (live-test finding 2026-08-15): records that were marked
+ * signed BEFORE the sign-time auto-advance (PR #60) existed still sit in a
+ * non-terminal stage (live client id 59 "Joe" — agreement_status='signed',
+ * stage='Onboarding', next_action=''). For every signed client NOT already in
+ * its org's terminal stage, apply the exact same advance logic as the live
+ * sign flow. Idempotent: a settled DB (all signed records already terminal)
+ * matches nothing, so re-running changes nothing. Returns the number of
+ * records advanced. This only ever touches owner-org records by construction
+ * (tenant orgs cannot send agreements, so they have no signed status), but
+ * it reads each client's own org stages, so it stays correct generically.
+ */
+export function backfillSignedClients(db: Database): number {
+  const signed = db
+    .query("SELECT id, org_id, company_name, stage FROM clients WHERE agreement_status = 'signed'")
+    .all() as SignedClientRow[];
+  let advanced = 0;
+  for (const client of signed) {
+    const org = getOrg(client.org_id);
+    const stages = org ? parseStages(org.stages) : [];
+    const terminal = stages.length > 0 ? stages[stages.length - 1] : null;
+    if (!terminal || client.stage === terminal) continue;
+    advanceSignedClient(db, client);
+    advanced++;
+  }
+  return advanced;
 }
 
 /** Human label for the sign-page final states / badges. */
