@@ -2316,8 +2316,10 @@ sleep 1
 if python3 - "$MOCK28_EMAILS" <<'PY' 2>"$MOCK28/emails-a.err"
 import json, sys
 lines = [json.loads(l) for l in open(sys.argv[1])]
-assert len(lines) == 1, [(l.get("subject"), l.get("to")) for l in lines]
-e = lines[0]
+# 3g-4 intake emails now accompany admin provisioning; only the reset email matters here.
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+assert len(reset) == 1, [(l.get("subject"), l.get("to")) for l in lines]
+e = reset[0]
 assert e["to"] == ["reseta@example.com"], e["to"]
 assert e["subject"] == "Reset your password", e["subject"]
 t = e["text"]
@@ -2329,7 +2331,8 @@ then PASS=$((PASS+1)); echo "  ✓ reset email: recipient, subject, origin URL w
 TOKENA=$(python3 - "$MOCK28_EMAILS" <<'PY'
 import json, sys, re
 lines = [json.loads(l) for l in open(sys.argv[1])]
-t = lines[0]["text"]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+t = reset[0]["text"]
 m = re.search(r"token=([0-9a-f]{64})", t)
 assert m, t
 print(m.group(1))
@@ -2341,7 +2344,7 @@ S=$(code -b "$JA28" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"nobody@example.com"}' "http://localhost:3005/api/auth/forgot")
 check "28a: forgot for unknown email → 200" 200 "$S"
 grep -Fq "a reset link is on its way" /tmp/body.json && echo "  ✓ identical generic message (no account enumeration)" || echo "  ✗ forgot response: $(cat /tmp/body.json)"
-if [ "$(wc -l < "$MOCK28_EMAILS")" -eq 1 ]; then
+if [ "$(grep -c 'Reset your password' "$MOCK28_EMAILS")" -eq 1 ]; then
   PASS=$((PASS+1)); echo "  ✓ unknown email sent NO reset email"
 else
   FAIL=$((FAIL+1)); echo "  ✗ unexpected email for unknown account: $(cat "$MOCK28_EMAILS")"
@@ -2380,8 +2383,9 @@ sleep 1
 TOKENA2=$(python3 - "$MOCK28_EMAILS" <<'PY'
 import json, sys, re
 lines = [json.loads(l) for l in open(sys.argv[1])]
-m = re.search(r"token=([0-9a-f]{64})", lines[-1]["text"])
-assert m, lines[-1]["text"]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+m = re.search(r"token=([0-9a-f]{64})", reset[-1]["text"])
+assert m, reset[-1]["text"]
 print(m.group(1))
 PY
 )
@@ -2399,8 +2403,9 @@ sleep 1
 TOKENA3=$(python3 - "$MOCK28_EMAILS" <<'PY'
 import json, sys, re
 lines = [json.loads(l) for l in open(sys.argv[1])]
-m = re.search(r"token=([0-9a-f]{64})", lines[-1]["text"])
-assert m, lines[-1]["text"]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+m = re.search(r"token=([0-9a-f]{64})", reset[-1]["text"])
+assert m, reset[-1]["text"]
 print(m.group(1))
 PY
 )
@@ -4792,6 +4797,15 @@ const server = Bun.serve({
     if (req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       appendFileSync(OUT, JSON.stringify(body) + "\n");
+      const to = Array.isArray(body.to) ? body.to.join(",") : String(body.to ?? "");
+      if (to.includes("fail@example.com")) {
+        // Simulate Resend test mode: only the account owner's email may
+        // receive mail (the live 422 the owner hit in live testing).
+        return Response.json(
+          { message: "You can only send testing emails to your own email address (422)" },
+          { status: 422 },
+        );
+      }
       return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
     }
     return new Response("nope", { status: 404 });
@@ -4816,6 +4830,20 @@ const env = db
 if (!env) { console.log("NO_ENVELOPE"); process.exit(2); }
 console.log(JSON.stringify(env));
 TS
+cat > "$MOCK45/auto.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+const c = db
+  .query("SELECT stage, next_action FROM clients WHERE company_name = ?")
+  .get(process.env.CLIENT_NAME ?? "") as Record<string, unknown> | null;
+if (!c) { console.log("NO_CLIENT"); process.exit(2); }
+const t = db
+  .query(
+    "SELECT COUNT(*) AS n FROM tasks WHERE client_id = (SELECT id FROM clients WHERE company_name = ?) AND title LIKE 'Create client account%' AND done = 0",
+  )
+  .get(process.env.CLIENT_NAME ?? "") as { n: number };
+console.log(JSON.stringify({ stage: c.stage, nextAction: c.next_action, openTasks: Number(t.n) }));
+TS
 cat > "$MOCK45/expire.ts" <<'TS'
 import { Database } from "bun:sqlite";
 const db = new Database(process.env.DB_FILE ?? "");
@@ -4839,6 +4867,7 @@ grep -q '"agreementTemplate":"AGREEMENT' /tmp/body.json && { PASS=$((PASS+1)); e
 S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
   -d '{"name":"Sig Tenant","email":"sigtenant@example.com","password":"SigTenant123!"}' "$S45/api/admin/orgs")
 check "45a: owner provisions tenant → 201" 201 "$S"
+grep -q '"emailStatus":"sent"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ provisioning response carries emailStatus sent (welcome email accepted by the mock)"; } || { FAIL=$((FAIL+1)); echo "  ✗ provisioning emailStatus missing: $(cat /tmp/body.json)"; }
 T45_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
 S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Harbor Legal LLP","contactName":"Jordan Lee","email":"harbor@example.com","industry":"Legal","clientType":"commercial","dealValue":200,"stage":"Onboarding","nextAction":"Send agreement"}' "$S45/api/clients")
@@ -4849,7 +4878,7 @@ echo "-- 45b. Send: PDF + token + email; status Not sent → Sent == "
 S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
   -d "{\"clientId\":$HARBOR_ID}" "$S45/api/agreements/send")
 check "45b: send agreement → 200" 200 "$S"
-grep -q '"status":"sent"' /tmp/body.json && grep -q '"emailTo":"harbor@example.com"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ send marks Sent + emails the client"; } || { FAIL=$((FAIL+1)); echo "  ✗ send response: $(cat /tmp/body.json)"; }
+grep -q '"status":"sent"' /tmp/body.json && grep -q '"emailTo":"harbor@example.com"' /tmp/body.json && grep -q '"emailStatus":"sent"' /tmp/body.json && grep -q '"signUrl":"https://crm.example.test/sign/' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ send marks Sent + emailStatus sent + signUrl returned"; } || { FAIL=$((FAIL+1)); echo "  ✗ send response: $(cat /tmp/body.json)"; }
 sleep 1
 if grep -q "Your agreement is ready to sign" "$MOCK45_EMAILS" && grep -q "harbor@example.com" "$MOCK45_EMAILS"; then
   PASS=$((PASS+1)); echo "  ✓ mock received the agreement email"
@@ -4915,6 +4944,46 @@ S=$(code -b "$JAR" "$S45/sign/$TOKEN45")
 grep -q "This agreement has been signed" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ signed link shows the final state, not a re-sign form"; } || { FAIL=$((FAIL+1)); echo "  ✗ final state missing"; }
 S=$(code -b "$JA45" "$S45/api/clients")
 grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ owner client tracker shows Signed"; } || { FAIL=$((FAIL+1)); echo "  ✗ client agreementStatus: $(cat /tmp/body.json)"; }
+echo "-- 45d2. Signed → auto-advance to Clients + 'Create client account' task (owner workflow, live-test finding) =="
+if DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Harbor Legal LLP" bun "$MOCK45/auto.ts" > "$MOCK45/auto1.json" 2>/dev/null; then
+  python3 - "$MOCK45/auto1.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["stage"] == "Sold", d                      # terminal stage of the owner org (Leads→Onboarding→Sold)
+assert d["nextAction"] == "Create client account", d
+assert d["openTasks"] == 1, d                       # exactly one OPEN account task
+print("ok")
+PY
+  if [ $? -eq 0 ]; then PASS=$((PASS+1)); echo "  ✓ signed record auto-advanced to the terminal stage (Sold) + nextAction set + one open 'Create client account' task"; else FAIL=$((FAIL+1)); echo "  ✗ auto-advance values: $(cat "$MOCK45/auto1.json")"; fi
+else FAIL=$((FAIL+1)); echo "  ✗ auto.ts failed"; fi
+# Dedupe: re-send a FRESH agreement for the same client and sign it again —
+# the open task must NOT be duplicated, and the record stays in the terminal
+# stage (a completed task WOULD be recreated, but this one is still open).
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$HARBOR_ID}" "$S45/api/agreements/send")
+check "45d2: re-send agreement → 200" 200 "$S"
+sleep 1
+TOKEN45R=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK45_EMAILS" | tail -1 | cut -d/ -f2)
+if [ -n "$TOKEN45R" ] && [ ${#TOKEN45R} -eq 64 ]; then
+  PASS=$((PASS+1)); echo "  ✓ fresh sign token issued for the re-send"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no fresh token: $(cat "$MOCK45_EMAILS")"
+fi
+S=$(code -b "$JAR" "$S45/sign/$TOKEN45R")
+check "45d2: re-send link opens → 200" 200 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{"action":"sign","name":"Jordan Lee","consent":true}' "$S45/api/sign/$TOKEN45R")
+check "45d2: re-sign → 200" 200 "$S"
+grep -q '"status":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ re-sign returns signed"; } || { FAIL=$((FAIL+1)); echo "  ✗ re-sign response: $(cat /tmp/body.json)"; }
+if DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Harbor Legal LLP" bun "$MOCK45/auto.ts" > "$MOCK45/auto2.json" 2>/dev/null; then
+  python3 - "$MOCK45/auto2.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["stage"] == "Sold", d
+assert d["nextAction"] == "Create client account", d
+assert d["openTasks"] == 1, d    # still exactly one — the re-sign did NOT duplicate it
+print("ok")
+PY
+  if [ $? -eq 0 ]; then PASS=$((PASS+1)); echo "  ✓ re-sign did not duplicate the open task (dedupe) and the stage stayed terminal"; else FAIL=$((FAIL+1)); echo "  ✗ dedupe check: $(cat "$MOCK45/auto2.json")"; fi
+else FAIL=$((FAIL+1)); echo "  ✗ auto.ts (dedupe) failed"; fi
 echo "-- 45e. Decline path for another client == "
 S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Cedar Co","contactName":"Alex Cedar","email":"cedar@example.com","industry":"Home Services","clientType":"residential","dealValue":150,"stage":"Onboarding"}' "$S45/api/clients")
@@ -4929,6 +4998,17 @@ check "45e: decline → 200" 200 "$S"
 grep -q '"status":"declined"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ decline returns status declined"; } || { FAIL=$((FAIL+1)); echo "  ✗ decline response: $(cat /tmp/body.json)"; }
 S=$(code -b "$JA45" "$S45/api/agreements")
 grep -q '"status":"declined"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ audit list shows Declined"; } || { FAIL=$((FAIL+1)); echo "  ✗ declined missing"; }
+# Decline must NOT auto-advance the record or create the account task (sign-only).
+if DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Cedar Co" bun "$MOCK45/auto.ts" > "$MOCK45/auto3.json" 2>/dev/null; then
+  python3 - "$MOCK45/auto3.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["stage"] == "Onboarding", d   # decline leaves the record in place
+assert d["openTasks"] == 0, d          # no account task on decline
+print("ok")
+PY
+  if [ $? -eq 0 ]; then PASS=$((PASS+1)); echo "  ✓ decline left the record in place (no stage change, no task — sign-only behavior)"; else FAIL=$((FAIL+1)); echo "  ✗ decline side-effects: $(cat "$MOCK45/auto3.json")"; fi
+else FAIL=$((FAIL+1)); echo "  ✗ auto.ts (decline) failed"; fi
 echo "-- 45f. Invalid + expired tokens == "
 S=$(code -b "$JAR" "$S45/sign/bogustoken")
 grep -q "This link is invalid" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ invalid token page renders a clear message"; } || { FAIL=$((FAIL+1)); echo "  ✗ invalid page: $(head -c 200 /tmp/body.json)"; }
@@ -4965,6 +5045,9 @@ if [ -n "$NEWEST_JS45" ]; then
   for M45 in "Send Agreements" "Re-send" "Agreement template" "Save agreement template" "Agreement details"; do
     if grep -Fq "$M45" "$NEWEST_JS45"; then PASS=$((PASS+1)); echo "  ✓ bundle: \"$M45\" shipped"; else FAIL=$((FAIL+1)); echo "  ✗ bundle: \"$M45\" missing"; fi
   done
+  for M45B in "Agreement link generated, but the email failed to send" "Signing link:" "the welcome email could not be sent"; do
+    if grep -Fq "$M45B" "$NEWEST_JS45"; then PASS=$((PASS+1)); echo "  ✓ bundle: email-failure UI \"$M45B\" shipped"; else FAIL=$((FAIL+1)); echo "  ✗ bundle: email-failure UI \"$M45B\" missing"; fi
+  done
 else FAIL=$((FAIL+1)); echo "  ✗ dist build missing for 45h"; fi
 if grep -Fq "renderSignPage" server/agreements.ts && grep -Fq "generateAgreementPdf" server/agreements.ts && grep -Fq "resolveAgreement" server/agreements.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: agreements module (renderSignPage/generateAgreementPdf/resolveAgreement)"
@@ -4981,7 +5064,29 @@ else FAIL=$((FAIL+1)); echo "  ✗ source: owner UI markers missing"; fi
 if grep -Fq "saveAgreementTemplate" src/Settings.tsx && grep -Fq "agreementTemplate" src/api.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: template editor (Settings) + api wiring"
 else FAIL=$((FAIL+1)); echo "  ✗ source: template editor markers missing"; fi
-echo "-- 45i. Cleanup == "
+echo "-- 45i. Email-send failures are VISIBLE (live-test finding #1) =="
+# Mock rejects fail@example.com with the real Resend test-mode 422.
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Fail Co","contactName":"Fay Mail","email":"fail@example.com","industry":"Other","clientType":"residential","dealValue":100,"stage":"Onboarding"}' "$S45/api/clients")
+check "45i: create fail-recipient client → 201" 201 "$S"
+FAILCO_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$FAILCO_ID}" "$S45/api/agreements/send")
+check "45i: send agreement to failing recipient → 200 (tracker still advances)" 200 "$S"
+if grep -q '"status":"sent"' /tmp/body.json && grep -q '"emailStatus":"failed"' /tmp/body.json && grep -q '"emailError"' /tmp/body.json && grep -q '"signUrl":"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ agreement send reports emailStatus failed + emailError + signUrl (link still copyable manually)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ agreement-send failure fields missing: $(cat /tmp/body.json)"
+fi
+grep -q "422" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ emailError surfaces the Resend 422 detail"; } || { FAIL=$((FAIL+1)); echo "  ✗ emailError lacks the 422 detail: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Fail Tenant LLC","email":"fail@example.com","password":"failpass123"}' "$S45/api/admin/orgs")
+check "45i: provision tenant with failing recipient → 201" 201 "$S"
+if grep -q '"emailStatus":"failed"' /tmp/body.json && grep -q '"emailError"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ provisioning reports emailStatus failed + emailError"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ provisioning failure fields missing: $(cat /tmp/body.json)"
+fi
+echo "-- 45j. Cleanup == "
 stop_crm "$MOCK45/srv.pid" 2>/dev/null
 kill "$MOCK45_PID" 2>/dev/null
 rm -f "$JA45" "$JT45"

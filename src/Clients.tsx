@@ -407,8 +407,15 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
      REAL internal signer: the server renders the owner's template with the
      client's details, generates the PDF, mints the unique sign token and
      emails the client the /sign/<token> link. The tracker (Not sent → Sent →
-     Delivered → Signed/Declined) advances automatically from server state. */
-  const [sendNotice, setSendNotice] = useState<string | null>(null);
+     Delivered → Signed/Declined) advances automatically from server state.
+     Live-test finding #1 (2026-08-15): when the email send FAILED, the notice
+     turns amber and carries the full signing link so the owner can copy/send
+     it manually instead of believing the link went out. */
+  const [sendNotice, setSendNotice] = useState<{
+    kind: "success" | "warn";
+    text: string;
+    signUrl?: string;
+  } | null>(null);
   const [audit, setAudit] = useState<AgreementEnvelope | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
   async function handleSendAgreement(c: Client) {
@@ -417,7 +424,21 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     setSendNotice(null);
     try {
       const r = await api.sendAgreement(c.id);
-      setSendNotice(`Agreement sent to ${r.emailTo} — the sign link is valid for 30 days.`);
+      if (r.emailStatus === "sent") {
+        setSendNotice({
+          kind: "success",
+          text: `Agreement sent to ${r.emailTo} — the sign link is valid for 30 days.`,
+        });
+      } else {
+        // The envelope advanced to Sent and the link EXISTS (it is returned in
+        // the response) — only the email failed. Never show a green "sent";
+        // give the owner the URL to forward manually.
+        setSendNotice({
+          kind: "warn",
+          text: `Agreement link generated, but the email failed to send: ${r.emailError ?? "unknown error"}`,
+          signUrl: r.signUrl,
+        });
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Agreement send failed.");
@@ -1060,8 +1081,17 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         </div>
       )}
       {sendNotice && (
-        <div className="alert alert-success" role="status">
-          {sendNotice}
+        <div
+          className={sendNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+          role={sendNotice.kind === "success" ? "status" : "alert"}
+        >
+          {sendNotice.text}
+          {sendNotice.signUrl && (
+            <p className="created-line">
+              Signing link: <code className="sign-url">{sendNotice.signUrl}</code> — copy it and
+              send it to the client manually.
+            </p>
+          )}
         </div>
       )}
       {(audit || auditError) && (

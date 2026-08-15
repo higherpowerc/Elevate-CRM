@@ -63,6 +63,8 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
     email: string;
     password: string;
     verticalLabel: string;
+    emailStatus: "sent" | "failed" | "skipped";
+    emailError?: string;
   } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -138,13 +140,13 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
     setCreated(null);
     setBusy(true);
     try {
-      const { org, user } = await api.adminCreateOrg({
+      const { org, user, emailStatus, emailError } = await api.adminCreateOrg({
         name: name.trim(),
         email: email.trim(),
         password,
         vertical,
       });
-      setCreated({ orgName: org.name, email: user.email, password, verticalLabel: verticalLabel(vertical) });
+      setCreated({ orgName: org.name, email: user.email, password, verticalLabel: verticalLabel(vertical), emailStatus, emailError });
       setName("");
       setEmail("");
       setPassword("");
@@ -255,24 +257,47 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
             </div>
           )}
 
-          {created && (
-            <div className="alert alert-success" role="status">
-              <strong>Account created</strong>
-              <p className="created-line">
-                <b className={pii ? "pii-blur" : undefined}>{created.orgName}</b> · <span className={pii ? "pii-blur" : undefined}>{created.email}</span>
-              </p>
-              <p className="created-line">
-                Business type: <b>{created.verticalLabel}</b>
-              </p>
-              <p className="created-line">
-                Temp password: <code>{created.password}</code>
-              </p>
-              <p className="created-hint">
-                Share the temp password with the client securely (not by email). It is shown
-                only here, right after creation.
-              </p>
-            </div>
-          )}
+          {created &&
+            (created.emailStatus === "sent" ? (
+              <div className="alert alert-success" role="status">
+                <strong>Account created</strong>
+                <p className="created-line">
+                  <b className={pii ? "pii-blur" : undefined}>{created.orgName}</b> · <span className={pii ? "pii-blur" : undefined}>{created.email}</span>
+                </p>
+                <p className="created-line">
+                  Business type: <b>{created.verticalLabel}</b>
+                </p>
+                <p className="created-line">
+                  Temp password: <code>{created.password}</code>
+                </p>
+                <p className="created-hint">
+                  The welcome email with the login credentials was sent to {created.email}.
+                  The temp password is also shown here, right after creation, in case it is needed.
+                </p>
+              </div>
+            ) : (
+              /* Live-test finding #1 (2026-08-15): the account WAS created, but
+                 the welcome email did not go out (Resend test-mode 422, unset
+                 key, ...) — never show a green "sent" in that case; tell the
+                 owner to share the credentials manually. */
+              <div className="alert alert-warn" role="alert">
+                <strong>Account created — but the welcome email could not be sent</strong>
+                <p className="created-line">
+                  <b className={pii ? "pii-blur" : undefined}>{created.orgName}</b> · <span className={pii ? "pii-blur" : undefined}>{created.email}</span>
+                </p>
+                <p className="created-line">
+                  Business type: <b>{created.verticalLabel}</b>
+                </p>
+                <p className="created-line">
+                  Temp password: <code>{created.password}</code>
+                </p>
+                <p className="created-line">{created.emailError}</p>
+                <p className="created-hint">
+                  Share the credentials manually with the client — the welcome email was not
+                  delivered. It is shown only here, right after creation.
+                </p>
+              </div>
+            ))}
 
           <form onSubmit={handleCreate} className="form">
             <label className="field">
