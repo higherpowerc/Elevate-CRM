@@ -4216,17 +4216,17 @@ if grep -Fq '<AgreementTracker status={c.agreementStatus ?? "not_sent"} />' src/
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: AgreementTracker missing from the owner Onboarding Agreement cell"
 fi
-if grep -Fq '<option value="delivered">Delivered</option>' src/Clients.tsx && grep -Fq '<option value="declined">Declined</option>' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: agreement select offers delivered + declined (owner can set every lifecycle state manually)"
+if ! grep -Fq '<option value="delivered">Delivered</option>' src/Clients.tsx && ! grep -Fq '<option value="declined">Declined</option>' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: manual agreement status select removed (native e-signature replaces it)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: agreement select options missing delivered/declined"
+  FAIL=$((FAIL+1)); echo "  ✗ source: manual agreement status select still present — native signer should replace it"
 fi
 if grep -Fq '{!ownerOnboardingTab && canEdit && (' src/Clients.tsx && grep -Fq 'className="stage-select"' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: Stage select is owner-Onboarding-gated (owner Onboarding = badge only; tenants keep their picker)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: owner-Onboarding stage-select gate missing in src/Clients.tsx"
 fi
-echo "-- 41c. Bundle + CSS: tracker compiled, 5-state select shipped, owner Onboarding stage select gated in the built rows =="
+echo "-- 41c. Bundle + CSS: tracker compiled, manual select removed (native signer), owner Onboarding stage select gated in the built rows =="
 bun run build >/dev/null 2>&1
 NEWEST_JS41=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 NEWEST_CSS41=$(ls -t dist/index-*.css 2>/dev/null | head -1)
@@ -4251,10 +4251,10 @@ if [ -n "$NEWEST_JS41" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: stage select element missing from $NEWEST_JS41"
   fi
-  if grep -Fq 'value:"delivered"' "$NEWEST_JS41" && grep -Fq 'value:"declined"' "$NEWEST_JS41"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: agreement select options carry delivered + declined values"
+  if ! grep -Fq 'value:"delivered"' "$NEWEST_JS41" && ! grep -Fq 'value:"declined"' "$NEWEST_JS41"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: manual agreement select values (delivered/declined) removed from the built rows"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: delivered/declined option values missing from $NEWEST_JS41"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: manual agreement select values still present in $NEWEST_JS41"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 41 bundle check"
