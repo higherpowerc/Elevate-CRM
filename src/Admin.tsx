@@ -54,9 +54,9 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  /** 3f-1: the business type picker — "general" = no preset (current
-   *  behavior); any vertical seeds stages + custom fields for the new org. */
-  const [vertical, setVertical] = useState("general");
+  /** 3f-1: the business type picker (owner direction 2026-08-16 — the catalog
+   *  is B2B & B2C only; B2B is the default: "Mainly we will be selling B2B"). */
+  const [vertical, setVertical] = useState("b2b");
   const [formError, setFormError] = useState<string | null>(null);
   const [created, setCreated] = useState<{
     orgName: string;
@@ -151,7 +151,7 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
       setEmail("");
       setPassword("");
       setShowPassword(false);
-      setVertical("general");
+      setVertical("b2b");
       await load();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Create failed.");
@@ -321,9 +321,9 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                 ))}
               </select>
               <span className="field-hint">
-                The new workspace is pre-configured for this business — its pipeline stages and
-                custom fields are seeded automatically. The client can rename, reorder or remove
-                anything later in Settings.
+                The new workspace is pre-configured for this business type — its pipeline stages
+                are seeded automatically. The client can rename, reorder or add stages and fields
+                later in Settings.
               </span>
             </label>
             <label className="field">

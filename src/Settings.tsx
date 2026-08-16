@@ -91,7 +91,7 @@ export default function Settings({
   const [confirmRemoveField, setConfirmRemoveField] = useState<number | null>(null);
 
   /* 3f-1: the business type picker for the additive "Apply template" path */
-  const [applyVertical, setApplyVertical] = useState("general");
+  const [applyVertical, setApplyVertical] = useState("b2b");
 
   /* Adaptive intake (Phase 1): account-level vertical config */
   const [serviceModel, setServiceModel] = useState<OrgSettings["serviceModel"]>("both");
@@ -360,7 +360,13 @@ export default function Settings({
       setIndustry(settings.industry);
       setIntakeOpts(settings.intakeOpts);
       setIntakeGroups(settings.customIntakeGroups);
-      setApplyVertical(settings.verticalKey || "general");
+      // 3f-1 (owner direction 2026-08-16): the apply-select offers only
+      // B2B/B2C — default it to the org's stored type when it maps, else B2B
+      // (the default type; legacy keys from the retired catalog display as
+      // B2B and re-applying the B2B template is the migration path).
+      setApplyVertical(
+        ALL_VERTICALS.some((v) => v.key === settings.verticalKey) ? settings.verticalKey : "b2b",
+      );
       setRevenueModel(settings.revenueModel);
       setMonthlySubscriptionAmount(settings.monthlySubscriptionAmount);
     } catch (e) {
@@ -953,8 +959,8 @@ export default function Settings({
           <div className="admin-card-head">
             <h2 className="admin-card-title">Business type</h2>
             <p className="admin-card-sub">
-              The type this workspace was set up for — it seeded your pipeline stages and
-              custom fields when the account was created. You can switch anytime.
+              The type this workspace was set up for — it seeded your pipeline stages when the
+              account was created. You can switch anytime.
             </p>
           </div>
           <div className="form">

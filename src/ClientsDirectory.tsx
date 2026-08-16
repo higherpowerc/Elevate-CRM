@@ -301,15 +301,17 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
         <div className="card table-wrap">
           <table className="table clients-table">
             <colgroup>
-              <col style={{ width: "30%" }} />
-              <col style={{ width: "22%" }} />
-              <col style={{ width: "14%" }} />
+              <col style={{ width: "26%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "12%" }} />
               <col style={{ width: "10%" }} />
-              <col style={{ width: "24%" }} />
+              <col style={{ width: "16%" }} />
             </colgroup>
             <thead>
               <tr>
-                <th>Client</th>
+                <th>Client/business name</th>
+                <th>Address</th>
                 <th>Contact</th>
                 <th>Services</th>
                 <th className="num">Deal</th>
@@ -321,7 +323,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
                 const fullAddress = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
                 return (
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
-                    <td className="cell-strong" data-label="Client">
+                    <td className="cell-strong" data-label="Client/business name">
                       <div className="cell-company">
                         <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
                           {c.companyName}
@@ -334,17 +336,21 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
                         {c.archived && <span className="chip chip-archived">archived</span>}
                       </div>
                       {c.industry && <div className="cell-sub">{c.industry}</div>}
-                      {fullAddress && (
+                    </td>
+                    <td data-label="Address">
+                      {fullAddress ? (
                         <div className={`cell-sub addr-line${blurPii(pii)}`} title={fullAddress}>
                           {fullAddress}
                         </div>
+                      ) : (
+                        <span className="cell-muted">—</span>
                       )}
                     </td>
                     <td data-label="Contact">
                       <div className="cell-contact">
-                        <span className={pii ? "pii-blur" : undefined}>{c.contactName || "—"}</span>
                         {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
                         {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
+                        {!c.email && !c.phone && <span className="cell-muted">—</span>}
                       </div>
                     </td>
                     <td data-label="Services">

@@ -46,7 +46,6 @@ import {
   type TabPermissions,
 } from "./db";
 import {
-  GENERAL_VERTICAL,
   VERTICALS,
   VERTICAL_MAP,
   getVertical,
@@ -1322,9 +1321,9 @@ interface NewOrgInput {
   name: string;
   email: string;
   password: string;
-  /** Business type (vertical template key, 3f-1). "" / "general" = no
-   *  preset — the org starts from the default pipeline with no seeded
-   *  fields, exactly like before this feature. */
+  /** Business type (vertical template key, 3f-1; owner direction
+   *  2026-08-16 the catalog is B2B & B2C only). "" = no preset — the org
+   *  starts from the default pipeline with no seeded fields. */
   verticalKey: string;
 }
 
@@ -1349,8 +1348,10 @@ function validateNewOrg(
   if (!password) return { ok: false, error: "Password is required." };
   if (password.length < 8) return { ok: false, error: "Password must be at least 8 characters." };
 
-  // 3f-1: optional business type. Any known vertical key, or "general" /
-  // absent / "" for the no-preset org. Unknown keys are rejected.
+  // 3f-1: optional business type. Any known catalog key (b2b / b2c since
+  // 2026-08-16), or absent / "" for the no-preset org. Unknown keys —
+  // including the retired catalog's ('general','cleaning','landscaping',…)
+  // — are rejected.
   let verticalKey = "";
   if (body.vertical !== undefined && body.vertical !== null && body.vertical !== "") {
     if (typeof body.vertical !== "string") {
@@ -1360,7 +1361,6 @@ function validateNewOrg(
     if (!getVertical(verticalKey)) {
       return { ok: false, error: `Unknown business type: ${body.vertical}.` };
     }
-    if (verticalKey === GENERAL_VERTICAL.key) verticalKey = ""; // normalize
   }
 
   return { ok: true, value: { name, email, password, verticalKey } };
@@ -1371,8 +1371,8 @@ function validateNewOrg(
  * the single shared provisioning path used by BOTH the Admin "create client
  * account" form and the 3g-3 sold-lead auto-provisioning hook, so the two
  * never diverge. `verticalKey` seeds stages / vertical custom fields / the
- * account-level vertical config from the matching template; "" / "general"
- * keeps today's defaults (bare org).
+ * account-level vertical config from the matching template; "" keeps
+ * today's defaults (bare org).
  *
  * Email uniqueness is re-checked INSIDE the transaction (synchronous — no
  * interleaving can occur between the check and the insert), so a colliding
@@ -1404,8 +1404,9 @@ function insertOrgWithMember(input: {
             tpl.deliveryType,
             tpl.industry,
             tpl.key,
-            // Owner request 2026-08-14 — revenue model seeded by vertical
-            // (Med Spa → subscription; every other vertical → sales).
+            // Owner request 2026-08-14 — revenue model seeded by business
+            // type (both B2B and B2C → subscription; bare orgs keep the
+            // 'sales' column default).
             tpl.revenueModel,
           ).lastInsertRowid,
       );
@@ -2792,7 +2793,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         return err("Business type must be one of the provided options.", 400);
       }
       const key = body.verticalKey.trim().toLowerCase();
-      if (key === "" || key === GENERAL_VERTICAL.key) {
+      if (key === "" || key === "general") {  // legacy "no preset" reset
         sets.push("vertical_key = ?", "industry = ?", "service_model = ?", "delivery_type = ?");
         params.push("", "", "both", "both");
       } else {

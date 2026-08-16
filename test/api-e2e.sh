@@ -1324,153 +1324,130 @@ code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"customIntakeGrou
 code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"serviceModel":"both","deliveryType":"both","industry":"","intakeOpts":[]}' "$BASE/api/settings" > /dev/null
 
-echo "== 23. Vertical templates (3f-1): business-type delegation at signup =="
-echo "-- 23a. Admin creates a Pest Control org — stages + fields seeded =="
+echo "== 23. Business types (owner direction 2026-08-16): the catalog is B2B & B2C only =="
+echo "-- 23a. Admin creates a B2B org — generic pipeline seeded, no preset fields =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Pest Patrol LLC","email":"pest@example.com","password":"pestpass123","vertical":"pest_control"}' "$BASE/api/admin/orgs")
-check "admin creates Pest Control org → 201" 201 "$S"
-PEST_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
-JARPEST=$(mktemp)
-S=$(code -c "$JARPEST" -b "$JARPEST" -X POST -H 'Content-Type: application/json' \
-  -d '{"email":"pest@example.com","password":"pestpass123"}' "$BASE/api/auth/login")
-check "pest org login → 200" 200 "$S"
-S=$(code -b "$JARPEST" "$BASE/api/settings")
-check "pest org GET settings → 200" 200 "$S"
-grep -q '"stages":\["Leads","Inspections","Recurring treatments","Renewals"\]' /tmp/body.json && echo "  ✓ pest stages seeded (owner's exact names, in order)" || echo "  ✗ pest stages: $(cat /tmp/body.json)"
-grep -q '"verticalKey":"pest_control"' /tmp/body.json && echo "  ✓ verticalKey=pest_control seeded" || echo "  ✗ verticalKey: $(cat /tmp/body.json)"
-grep -q '"industry":"home_services"' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && grep -q '"deliveryType":"we_go"' /tmp/body.json && echo "  ✓ vertical settings seeded (home_services / both / we_go)" || echo "  ✗ vertical settings: $(cat /tmp/body.json)"
-python3 - <<'PY'
-import json
-d = json.load(open('/tmp/body.json'))['settings']
-fields = {f['name']: f for f in d['customFields']}
-want = {"Pest type": "select", "Treatment frequency": "select", "Renewal reminder": "text", "COI required": "checkbox"}
-assert set(fields) == set(want), fields
-for name, typ in want.items():
-    assert fields[name]['type'] == typ, (name, fields[name])
-assert fields['Pest type']['options'] == ["Ants","Rodents","Termites","Bed bugs","Cockroaches","Mosquitoes","Other"], fields['Pest type']
-assert fields['Treatment frequency']['options'] == ["Monthly","Quarterly","Semi-annual","Annual","One-time"], fields['Treatment frequency']
-print("  ✓ pest custom fields seeded with correct types + select options")
-PY
+  -d '{"name":"B2B Pilot LLC","email":"b2b@example.com","password":"b2bpass123","vertical":"b2b"}' "$BASE/api/admin/orgs")
+check "admin creates B2B org → 201" 201 "$S"
+B2B_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARB2B=$(mktemp)
+S=$(code -c "$JARB2B" -b "$JARB2B" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"b2b@example.com","password":"b2bpass123"}' "$BASE/api/auth/login")
+check "b2b org login → 200" 200 "$S"
+S=$(code -b "$JARB2B" "$BASE/api/settings")
+check "b2b org GET settings → 200" 200 "$S"
+grep -q '"stages":\["Leads","Contacted","Quoted","Won"\]' /tmp/body.json && echo "  ✓ B2B stages seeded (Leads → Contacted → Quoted → Won, in order)" || echo "  ✗ B2B stages: $(cat /tmp/body.json)"
+grep -q '"verticalKey":"b2b"' /tmp/body.json && echo "  ✓ verticalKey=b2b seeded" || echo "  ✗ verticalKey: $(cat /tmp/body.json)"
+grep -q '"industry":"professional"' /tmp/body.json && grep -q '"serviceModel":"commercial_only"' /tmp/body.json && grep -q '"deliveryType":"both"' /tmp/body.json && echo "  ✓ B2B vertical settings (professional / commercial_only / both)" || echo "  ✗ B2B settings: $(cat /tmp/body.json)"
+grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ B2B org has NO preset custom fields (accounts customize)" || echo "  ✗ B2B fields: $(cat /tmp/body.json)"
 
-echo "-- 23b. General (no preset) behaves exactly as before =="
+echo "-- 23b. B2C seeds the SAME generic pipeline; bare org unchanged; legacy keys rejected =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Generic Co","email":"generic@example.com","password":"genericpass123","vertical":"general"}' "$BASE/api/admin/orgs")
-check "admin creates General org → 201" 201 "$S"
-GEN_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
-JARGEN=$(mktemp)
-S=$(code -c "$JARGEN" -b "$JARGEN" -X POST -H 'Content-Type: application/json' \
-  -d '{"email":"generic@example.com","password":"genericpass123"}' "$BASE/api/auth/login")
-check "general org login → 200" 200 "$S"
-S=$(code -b "$JARGEN" "$BASE/api/settings")
-check "general org GET settings → 200" 200 "$S"
-grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ General org starts from default stages" || echo "  ✗ General stages: $(cat /tmp/body.json)"
-grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ General org has NO seeded custom fields" || echo "  ✗ General fields: $(cat /tmp/body.json)"
-grep -q '"verticalKey":""' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && echo "  ✓ General org verticalKey/industry empty" || echo "  ✗ General vertical: $(cat /tmp/body.json)"
+  -d '{"name":"B2C Shop LLC","email":"b2c@example.com","password":"b2cpass123","vertical":"b2c"}' "$BASE/api/admin/orgs")
+check "admin creates B2C org → 201" 201 "$S"
+B2C_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARB2C=$(mktemp)
+S=$(code -c "$JARB2C" -b "$JARB2C" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"b2c@example.com","password":"b2cpass123"}' "$BASE/api/auth/login")
+check "b2c org login → 200" 200 "$S"
+S=$(code -b "$JARB2C" "$BASE/api/settings")
+check "b2c org GET settings → 200" 200 "$S"
+grep -q '"stages":\["Leads","Contacted","Quoted","Won"\]' /tmp/body.json && echo "  ✓ B2C shares the SAME generic pipeline (Leads → Contacted → Quoted → Won)" || echo "  ✗ B2C stages: $(cat /tmp/body.json)"
+grep -q '"verticalKey":"b2c"' /tmp/body.json && echo "  ✓ verticalKey=b2c seeded" || echo "  ✗ verticalKey: $(cat /tmp/body.json)"
+grep -q '"industry":"home_services"' /tmp/body.json && grep -q '"serviceModel":"residential_only"' /tmp/body.json && grep -q '"deliveryType":"both"' /tmp/body.json && echo "  ✓ B2C vertical settings (home_services / residential_only / both)" || echo "  ✗ B2C settings: $(cat /tmp/body.json)"
+grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ B2C org has NO preset custom fields" || echo "  ✗ B2C fields: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"name":"No Vertical Co","email":"novertica@example.com","password":"noverticapass123"}' "$BASE/api/admin/orgs")
-check "admin creates org WITHOUT vertical → 201 (same as General)" 201 "$S"
+check "admin creates org WITHOUT vertical → 201 (bare org, default pipeline)" 201 "$S"
 NOVERT_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
 check "admin deletes No Vertical Co → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$NOVERT_ID")
+check "legacy vertical on create (landscaping) → 400 (catalog retired)" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Legacy Co","email":"legacy@example.com","password":"legacypass123","vertical":"landscaping"}' "$BASE/api/admin/orgs")
+check "legacy vertical on create (general) → 400 (no longer a type)" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Legacy Co2","email":"legacy2@example.com","password":"legacypass123","vertical":"general"}' "$BASE/api/admin/orgs")
 
 echo "-- 23c. Template seeds are org-isolated (no leak) =="
-S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Glow Med Spa","email":"glow@example.com","password":"glowpass123","vertical":"med_spa"}' "$BASE/api/admin/orgs")
-check "admin creates Med Spa org → 201" 201 "$S"
-MED_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
-JARMED=$(mktemp)
-S=$(code -c "$JARMED" -b "$JARMED" -X POST -H 'Content-Type: application/json' \
-  -d '{"email":"glow@example.com","password":"glowpass123"}' "$BASE/api/auth/login")
-check "med spa login → 200" 200 "$S"
-S=$(code -b "$JARMED" "$BASE/api/settings")
-check "med spa GET settings → 200" 200 "$S"
-grep -q '"stages":\["Leads","Consultations","Booked","Treatments","Retention"\]' /tmp/body.json && echo "  ✓ med spa stages seeded" || echo "  ✗ med spa stages: $(cat /tmp/body.json)"
-grep -q '"verticalKey":"med_spa"' /tmp/body.json && grep -q '"industry":"mobile_personal"' /tmp/body.json && grep -q '"deliveryType":"client_comes"' /tmp/body.json && echo "  ✓ med spa vertical settings (mobile_personal / client_comes)" || echo "  ✗ med spa settings: $(cat /tmp/body.json)"
-grep -qv 'Pest type' /tmp/body.json && grep -qv 'COI required' /tmp/body.json && echo "  ✓ med spa does NOT see pest fields (isolation)" || echo "  ✗ pest fields leaked to med spa: $(cat /tmp/body.json)"
-S=$(code -b "$JARPEST" "$BASE/api/settings")
-check "pest org settings still pest → 200" 200 "$S"
-grep -q '"verticalKey":"pest_control"' /tmp/body.json && grep -q '"name":"Pest type"' /tmp/body.json && grep -qv 'Consultations' /tmp/body.json && echo "  ✓ pest org unaffected by med spa (isolation)" || echo "  ✗ pest org: $(cat /tmp/body.json)"
+S=$(code -b "$JARB2B" "$BASE/api/settings")
+check "b2b org settings still b2b → 200" 200 "$S"
+grep -q '"verticalKey":"b2b"' /tmp/body.json && grep -q '"industry":"professional"' /tmp/body.json && echo "  ✓ B2B org unaffected by B2C creation (isolation)" || echo "  ✗ b2b org: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/settings")
-grep -qv 'Pest type' /tmp/body.json && grep -qv '"Leads","Inspections"' /tmp/body.json && echo "  ✓ owner org untouched by any template seed" || echo "  ✗ owner org got seeded stages/fields: $(cat /tmp/body.json)"
-check "bad vertical on create → 400" 400 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Bad Vert Co","email":"badvert@example.com","password":"badvertpass123","vertical":"quantum_cleaning"}' "$BASE/api/admin/orgs")
-check "member cannot create orgs (admin-only) → 403" 403 $(code -b "$JARPEST" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Hack Co","email":"hack@example.com","password":"hackpass123","vertical":"pest_control"}' "$BASE/api/admin/orgs")
+check "owner settings → 200" 200 "$S"
+grep -qv 'Contacted' /tmp/body.json && grep -qv '"verticalKey":"b2c"' /tmp/body.json && echo "  ✓ owner org untouched by any template seed" || echo "  ✗ owner org got seeded stages/fields: $(cat /tmp/body.json)"
+check "member cannot create orgs (admin-only) → 403" 403 $(code -b "$JARB2B" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Hack Co","email":"hack@example.com","password":"hackpass123","vertical":"b2c"}' "$BASE/api/admin/orgs")
 
-echo "-- 23d. Additive apply: missing stages/fields appended, existing untouched =="
-S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
-  -d '{"stages":["New leads","Inspections","Recurring treatments","Renewals"]}' "$BASE/api/settings")
-check "pest org renames a stage (Leads→New leads) → 200" 200 "$S"
-S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
-  -d '{"customFields":[{"name":"Pest type","type":"select","options":["Ants","Rodents","Termites","Bed bugs","Cockroaches","Mosquitoes","Other"]},{"name":"Treatment frequency","type":"select","options":["Monthly","Quarterly","Semi-annual","Annual","One-time"]},{"name":"Renewal reminder","type":"text"},{"name":"COI required","type":"checkbox"},{"name":"Extra field","type":"text"}]}' "$BASE/api/settings")
-check "pest org adds its own custom field → 200" 200 "$S"
-S=$(code -b "$JARPEST" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Termite Tower","clientType":"commercial","stage":"New leads","dealValue":900,"customFields":[{"name":"Pest type","value":"Termites"},{"name":"COI required","value":true}]}' "$BASE/api/clients")
-check "pest org creates client in renamed stage + seeded field values → 201" 201 "$S"
-grep -q '"name":"Pest type","value":"Termites"' /tmp/body.json && grep -q '"name":"COI required","value":"1"' /tmp/body.json && echo "  ✓ seeded select + checkbox values stored" || echo "  ✗ client values: $(cat /tmp/body.json)"
+echo "-- 23d. Additive apply: missing stages appended, existing untouched =="
+S=$(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["New leads","Contacted","Quoted","Won"]}' "$BASE/api/settings")
+check "b2c org renames a stage (Leads→New leads) → 200" 200 "$S"
+S=$(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"Extra field","type":"text"}]}' "$BASE/api/settings")
+check "b2c org adds its own custom field → 200" 200 "$S"
+S=$(code -b "$JARB2C" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"B2C Client One","clientType":"residential","stage":"New leads","dealValue":700,"customFields":[{"name":"Extra field","value":"x"}]}' "$BASE/api/clients")
+check "b2c org creates client in renamed stage + own field value → 201" 201 "$S"
+grep -q '"name":"Extra field","value":"x"' /tmp/body.json && echo "  ✓ own custom field value stored" || echo "  ✗ client values: $(cat /tmp/body.json)"
 grep -q '"stage":"New leads"' /tmp/body.json && echo "  ✓ client in renamed stage" || echo "  ✗ stage: $(cat /tmp/body.json)"
-S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
-  -d '{"verticalKey":"painting"}' "$BASE/api/settings")
-check "apply Painting template to pest org → 200" 200 "$S"
+S=$(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"b2b"}' "$BASE/api/settings")
+check "apply B2B template to b2c org → 200" 200 "$S"
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))['settings']
 stages = d['stages']
-assert stages == ["New leads","Inspections","Recurring treatments","Renewals","Leads","Estimates","Projects","Crews","Payments"], stages
-fields = {f['name']: f for f in d['customFields']}
-names = list(fields)
-assert names[0:4] == ["Pest type","Treatment frequency","Renewal reminder","COI required"], names
-assert names.index("Extra field") == 4, names
-assert names[-4:] == ["Interior / exterior","Square footage","Paint brand preference","Assigned crew"], names
-assert fields["Interior / exterior"]["type"] == "select" and fields["Interior / exterior"]["options"] == ["Interior","Exterior","Both"], fields["Interior / exterior"]
-assert d['verticalKey'] == 'painting' and d['industry'] == 'home_services' and d['deliveryType'] == 'we_go', d
-print("  ✓ additive apply: renamed stage kept, missing stages/fields appended, vertical settings updated")
+assert stages == ["New leads","Contacted","Quoted","Won","Leads"], stages
+assert [f['name'] for f in d['customFields']] == ["Extra field"], d['customFields']
+assert d['verticalKey'] == 'b2b' and d['industry'] == 'professional' and d['serviceModel'] == 'commercial_only' and d['deliveryType'] == 'both', d
+print("  ✓ additive apply: renamed stage kept, missing template stage (Leads) appended, vertical settings updated")
 PY
-S=$(code -b "$JARPEST" "$BASE/api/clients")
-check "pest client list after apply → 200" 200 "$S"
-grep -q 'Termite Tower' /tmp/body.json && grep -q '"stage":"New leads"' /tmp/body.json && echo "  ✓ client untouched by template apply (still in renamed stage)" || echo "  ✗ client after apply: $(cat /tmp/body.json)"
-S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
-  -d '{"verticalKey":"painting"}' "$BASE/api/settings")
+S=$(code -b "$JARB2C" "$BASE/api/clients")
+check "b2c client list after apply → 200" 200 "$S"
+grep -q 'B2C Client One' /tmp/body.json && grep -q '"stage":"New leads"' /tmp/body.json && echo "  ✓ client untouched by template apply (still in renamed stage)" || echo "  ✗ client after apply: $(cat /tmp/body.json)"
+S=$(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"b2b"}' "$BASE/api/settings")
 check "apply same template again → 200 (idempotent)" 200 "$S"
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))['settings']
-assert d['stages'] == ["New leads","Inspections","Recurring treatments","Renewals","Leads","Estimates","Projects","Crews","Payments"], d['stages']
-assert len(d['customFields']) == 9, len(d['customFields'])
+assert d['stages'] == ["New leads","Contacted","Quoted","Won","Leads"], d['stages']
+assert len(d['customFields']) == 1, len(d['customFields'])
 print("  ✓ re-apply adds nothing (no duplicates)")
 PY
-S=$(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+S=$(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
   -d '{"verticalKey":"general"}' "$BASE/api/settings")
-check "apply General (back to no preset) → 200" 200 "$S"
-grep -q '"verticalKey":""' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && echo "  ✓ General resets vertical config to defaults" || echo "  ✗ after general: $(cat /tmp/body.json)"
+check "apply legacy General (back to no preset) → 200" 200 "$S"
+grep -q '"verticalKey":""' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && echo "  ✓ legacy General resets vertical config to defaults" || echo "  ✗ after general: $(cat /tmp/body.json)"
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))['settings']
-assert d['stages'] == ["New leads","Inspections","Recurring treatments","Renewals","Leads","Estimates","Projects","Crews","Payments"], d['stages']
-assert len(d['customFields']) == 9, len(d['customFields'])
-print("  ✓ General apply leaves stages + fields untouched (non-destructive)")
+assert d['stages'] == ["New leads","Contacted","Quoted","Won","Leads"], d['stages']
+assert len(d['customFields']) == 1, len(d['customFields'])
+print("  ✓ legacy General apply leaves stages + fields untouched (non-destructive)")
 PY
-check "bad verticalKey on apply → 400" 400 $(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+check "bad verticalKey on apply → 400" 400 $(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
   -d '{"verticalKey":"quantum_cleaning"}' "$BASE/api/settings")
-check "non-string verticalKey on apply → 400" 400 $(code -b "$JARPEST" -X PUT -H 'Content-Type: application/json' \
+check "legacy verticalKey on apply → 400" 400 $(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
+  -d '{"verticalKey":"painting"}' "$BASE/api/settings")
+check "non-string verticalKey on apply → 400" 400 $(code -b "$JARB2C" -X PUT -H 'Content-Type: application/json' \
   -d '{"verticalKey":42}' "$BASE/api/settings")
 
-echo "-- 23e. Cross-org isolation for seeded definitions =="
-S=$(code -b "$JARMED" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Spa Client Zero","clientType":"residential","customFields":[{"name":"Pest type","value":"Termites"}]}' "$BASE/api/clients")
-check "med spa cannot write pest-org field → 400" 400 "$S"
+echo "-- 23e. Cross-org isolation for custom-field definitions =="
+S=$(code -b "$JARB2B" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Field Zero","clientType":"residential","customFields":[{"name":"Extra field","value":"nope"}]}' "$BASE/api/clients")
+check "b2b org cannot write a field it doesn't define → 400" 400 "$S"
 grep -q 'Unknown custom field' /tmp/body.json && echo "  ✓ error is the unknown-field guard" || echo "  ✗ error: $(cat /tmp/body.json)"
-S=$(code -b "$JARMED" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Spa Client One","clientType":"residential","customFields":[{"name":"Treatment types","value":"Laser"},{"name":"License number","value":"CA-993"}]}' "$BASE/api/clients")
-check "med spa writes its own seeded field values → 201" 201 "$S"
-grep -q '"name":"Treatment types","value":"Laser"' /tmp/body.json && grep -q '"name":"License number","value":"CA-993"' /tmp/body.json && echo "  ✓ med spa seeded select + text values round-trip" || echo "  ✗ med spa client: $(cat /tmp/body.json)"
+S=$(code -b "$JARB2C" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Field One","clientType":"residential","customFields":[{"name":"Extra field","value":"y"}]}' "$BASE/api/clients")
+check "b2c org writes its own field value → 201" 201 "$S"
+grep -q '"name":"Extra field","value":"y"' /tmp/body.json && echo "  ✓ own text field value round-trips" || echo "  ✗ b2c client: $(cat /tmp/body.json)"
 
 echo "-- 23f. UI surface strings in the built bundle =="
 NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
-  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q "General (no preset)" "$NEWEST_JS" && grep -q "Recurring treatments" "$NEWEST_JS" && grep -q "Pest type" "$NEWEST_JS"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + vertical seeds"
+  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C generic pipeline"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ vertical-template strings missing from $NEWEST_JS"
+    FAIL=$((FAIL+1)); echo "  ✗ B2B/B2C strings missing from $NEWEST_JS"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for bundle surface check"
@@ -1983,31 +1960,52 @@ else
 fi
 kill "$(cat "$BF_DIR/boot.pid")" 2>/dev/null
 rm -rf "$BF_DIR" /tmp/backfill_result.json /tmp/boot_verify.json
-echo "== 25d. Individual lead rows: no person name under 'Business name' + full name in Contact (live-test finding 2026-08-15) =="
-# Owner tables: an individual record's companyName holds the person's FULL
-# NAME, so the Business-name cell must show the DBA (or an em dash) — never
-# the name — and the Contact cell must lead with the full name (in place of
-# the redundant partial 'Contact name'). Tenant tables (header 'Client') are
-# unchanged. The universal 'Contact name' intake field is commercial-only.
-if grep -Fq 'function ownerBizName' src/Clients.tsx && \
+echo "== 25d. Individual lead rows: no person name under 'Business name'; full name in Contact — GLOBAL (owner AND tenant, owner direction 2026-08-16) =="
+# The PR #62 display rules (live-test finding 2026-08-15) are now GLOBAL: an
+# individual record's companyName holds the person's FULL NAME, so the primary
+# cell shows the DBA (or an em dash) ONLY under the owner's "Business name"
+# header — tenant tables (header "Client") show the full name — and the
+# Contact cell leads with the full name (not the redundant partial 'Contact
+# name') in BOTH workspaces. The universal 'Contact name' intake field is
+# commercial-only.
+if grep -Fq 'function primaryName' src/Clients.tsx && \
    grep -Fq 'ownerOrg && c.clientType !== "commercial" ? c.dbaName || "—" : c.companyName' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: ownerBizName helper (individual → dbaName or em dash, commercial → companyName)"
+  PASS=$((PASS+1)); echo "  ✓ source: primaryName helper (individual → dbaName or em dash under the owner's 'Business name' header; full name under 'Client')"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: ownerBizName helper missing from src/Clients.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: primaryName helper missing from src/Clients.tsx"
 fi
-if grep -Fq 'function ownerContactPrimary' src/Clients.tsx && \
-   grep -Fq 'ownerOrg && c.clientType !== "commercial" ? c.companyName : c.contactName || "—"' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: ownerContactPrimary helper (individual → full name, commercial → contactName)"
+if grep -Fq 'function contactPrimary' src/Clients.tsx && \
+   grep -Fq 'c.clientType !== "commercial" ? c.companyName : c.contactName || "—"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: contactPrimary helper (individual → full name, commercial → contactName) — owner AND tenant"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: ownerContactPrimary helper missing from src/Clients.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: contactPrimary helper missing from src/Clients.tsx"
 fi
-# Both owner tables must use the business-name helper: the Lost/DNC table AND
-# the main pipeline table.
-if [ "$(grep -c 'ownerBizName(ownerOrg, c)' src/Clients.tsx)" -ge 2 ] && \
-   grep -Fq 'ownerContactPrimary(ownerOrg, c)' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: ownerBizName wired into BOTH owner tables (Lost/DNC + main); Contact cell uses ownerContactPrimary"
+# Both pipeline tables must use the name helper (Lost/DNC table AND the main
+# pipeline table), and the Contact cell must use the global contact helper.
+if [ "$(grep -c 'primaryName(ownerOrg, c)' src/Clients.tsx)" -ge 2 ] && \
+   grep -Fq 'contactPrimary(c)' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: primaryName wired into BOTH pipeline tables (Lost/DNC + main); Contact cell uses contactPrimary"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: ownerBizName/ownerContactPrimary call sites missing in src/Clients.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: primaryName/contactPrimary call sites missing in src/Clients.tsx"
+fi
+# Clients directory (owner + tenant, live-test finding 2026-08-16): the table
+# reads Client/business name | Address | Contact | Services | Deal | Actions —
+# the address moved into its own column and the Contact column is email +
+# phone ONLY (no contactName).
+if grep -Fq 'Client/business name' src/ClientsDirectory.tsx && \
+   grep -Fq '<th>Address</th>' src/ClientsDirectory.tsx && \
+   grep -Fq 'data-label="Address"' src/ClientsDirectory.tsx && \
+   grep -Fq '<th>Contact</th>' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Clients tab headers = Client/business name | Address | Contact | Services | Deal | Actions"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Clients tab headers missing in src/ClientsDirectory.tsx"
+fi
+if ! grep -Fq 'c.contactName || "—"' src/ClientsDirectory.tsx && \
+   grep -Fq 'title={c.email}' src/ClientsDirectory.tsx && \
+   grep -Fq 'title={c.phone}' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: directory Contact column is email + phone only (contactName render removed)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: directory Contact column still renders contactName"
 fi
 # intakeRules: the 'Contact name' field must be inside the commercial-only
 # spread (one occurrence, gated on `commercial`) — never in the universal list.
@@ -2049,7 +2047,7 @@ fi
 echo "== 26. Sold-lead auto-provisioning (3g-3) =="
 
 ORG_COUNT() { curl -s -b "$JAR" "$BASE/api/admin/orgs" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['orgs']))"; }
-echo "-- 26a. Owner moves a lead into Sold → one clean vertical-seeded workspace =="
+echo "-- 26a. Owner moves a lead into Sold → one clean provisioned workspace =="
 BEFORE_ORG=$(ORG_COUNT)
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Willow Stone Contracting","contactName":"Mia Chen","email":"mia@willowstone.example","phone":"+1 555 0199","industry":"Landscaping","clientType":"commercial","dealValue":15000,"stage":"Leads","nextAction":"Send proposal","notes":"3g-3 test lead"}' \
@@ -2091,16 +2089,14 @@ check "provisioned member login with temp password → 200" 200 "$S"
 grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member role" || echo "  ✗ role: $(cat /tmp/body.json)"
 S=$(code -b "$JARPROV" "$BASE/api/settings")
 check "provisioned org GET settings → 200" 200 "$S"
-grep -q '"stages":\["Leads","Quotes","Recurring clients","Crews","Jobs"\]' /tmp/body.json && echo "  ✓ Landscaping stages seeded" || echo "  ✗ stages: $(cat /tmp/body.json)"
-grep -q '"verticalKey":"landscaping"' /tmp/body.json && grep -q '"industry":"home_services"' /tmp/body.json && grep -q '"serviceModel":"both"' /tmp/body.json && grep -q '"deliveryType":"we_go"' /tmp/body.json && echo "  ✓ vertical settings seeded (landscaping / home_services / both / we_go)" || echo "  ✗ vertical settings: $(cat /tmp/body.json)"
+grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ provisioned workspace starts from the plain default pipeline (no vertical match in the retired catalog)" || echo "  ✗ stages: $(cat /tmp/body.json)"
+grep -q '"verticalKey":""' /tmp/body.json && grep -q '"industry":""' /tmp/body.json && echo "  ✓ bare org: verticalKey/industry empty (the catalog is B2B/B2C — the tenant applies a type in Settings)" || echo "  ✗ vertical settings: $(cat /tmp/body.json)"
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))['settings']
-fields = {f['name']: f for f in d['customFields']}
-assert fields.get('Property size', {}).get('type') == 'text', fields
-assert fields.get('Service frequency', {}).get('type') == 'select', fields
-assert fields['Service frequency']['options'] == ["Weekly","Biweekly","Monthly","One-time"], fields['Service frequency']
-print("  ✓ seeded custom fields present (Property size text, Service frequency select)")
+assert d.get('customFields') == [], d.get('customFields')
+assert d.get('verticalKey') == '', d.get('verticalKey')
+print("  ✓ no preset custom fields (accounts customize)")
 PY
 S=$(code -b "$JARPROV" "$BASE/api/clients")
 grep -q '"clients":\[\]' /tmp/body.json && echo "  ✓ new workspace starts with ZERO clients" || echo "  ✗ clients: $(cat /tmp/body.json)"
@@ -3478,12 +3474,12 @@ S=$(code -c "$JAR33" -b "$JAR33" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
 check "33a: owner login" 200 "$S"
 S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Glow Med Spa","email":"glow33@example.com","password":"glow33pass","vertical":"med_spa"}' "$BASE/api/admin/orgs")
-check "33b: create Med Spa org (vertical med_spa)" 201 "$S"
+  -d '{"name":"Glow Co","email":"glow33@example.com","password":"glow33pass","vertical":"b2b"}' "$BASE/api/admin/orgs")
+check "33b: create B2B org (vertical b2b)" 201 "$S"
 MED33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
 S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"Sales Co","email":"sales33@example.com","password":"sales33pass","vertical":"landscaping"}' "$BASE/api/admin/orgs")
-check "33c: create Landscaping org" 201 "$S"
+  -d '{"name":"Sales Co","email":"sales33@example.com","password":"sales33pass","vertical":"b2c"}' "$BASE/api/admin/orgs")
+check "33c: create B2C org" 201 "$S"
 SAL33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
 S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
   -d '{"name":"Plain Co","email":"plain33@example.com","password":"plain33pass"}' "$BASE/api/admin/orgs")
@@ -3495,10 +3491,10 @@ import json, sys
 d = json.load(open('/tmp/body.json'))
 orgs = {o['id']: o for o in d['orgs']}
 med, sal, gen = (int(x) for x in sys.argv[1:4])
-assert orgs[med]['revenueModel'] == 'subscription', orgs[med]   # 33d
-assert orgs[sal]['revenueModel'] == 'sales', orgs[sal]          # 33e
-assert orgs[gen]['revenueModel'] == 'sales', orgs[gen]          # 33e2
-print("  ✓ 33d/33e/33e2: revenueModel seeded by vertical — med_spa=subscription, landscaping=sales, bare/general=sales (migration default for pre-existing orgs like Acme)")
+assert orgs[med]['revenueModel'] == 'subscription', orgs[med]   # 33d (b2b)
+assert orgs[sal]['revenueModel'] == 'subscription', orgs[sal]   # 33e (b2c — both new types are subscription)
+assert orgs[gen]['revenueModel'] == 'sales', orgs[gen]          # 33e2 (bare org)
+print("  ✓ 33d/33e/33e2: revenueModel seeded by business type — b2b & b2c=subscription, bare=sales (migration default for pre-existing orgs like Acme)")
 PY
 S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
   -d '{"monthlySubscriptionAmount":99.50}' "$BASE/api/admin/orgs/$MED33")

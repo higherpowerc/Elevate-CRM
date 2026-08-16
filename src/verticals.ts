@@ -1,17 +1,25 @@
 /**
- * Vertical template catalog (Adaptive Intake 3f-1) — data-only, shared by the
- * client (Admin create-account form, Settings) and the server (org seeding +
- * additive template apply). One entry per vertical; a future vertical = one
- * new entry here.
+ * Business-type template catalog (Adaptive Intake 3f-1; owner direction
+ * 2026-08-16) — data-only, shared by the client (Admin create-account form,
+ * Settings) and the server (org seeding + additive template apply). One entry
+ * per business type; a future type = one new entry here.
  *
  * When the owner provisions a client account they pick a Business type; the
- * new org is seeded from the matching template: its pipeline stage names, its
- * vertical-specific custom fields, and its account-level vertical settings
- * (industry / service model / delivery type). Every vertical shares ONE layout
- * engine — the template only pre-seeds per-org stages and custom fields, which
- * the tenant can rename/reorder/edit afterward exactly like any other tenant.
+ * new org is seeded from the matching template: its pipeline stage names and
+ * its account-level vertical settings (industry / service model / delivery
+ * type / revenue model). BOTH types share the SAME generic pipeline
+ * (Leads → Contacted → Quoted → Won) and seed NO preset custom fields —
+ * accounts customize their own stages and fields afterward, exactly like any
+ * other tenant.
  *
- * Nothing here is hardcoded per vertical in the UI: the Admin form and the
+ * The multi-vertical catalog (Cleaning, Landscaping, Med Spa, …) was
+ * collapsed to exactly two business types on 2026-08-16 ("we will no longer
+ * need multiple business types… Mainly we will be selling B2B but sometimes
+ * we will sell B2C"). Legacy stored keys ('general','cleaning','landscaping',
+ * …) are NOT in the catalog: verticalLabel() displays them as B2B and the
+ * server's plain-org path / "apply B2B template" is the migration route.
+ *
+ * Nothing here is hardcoded per type in the UI: the Admin form and the
  * Settings "apply" affordance both iterate this catalog generically.
  *
  * NOTE: this module must stay dependency-free (no imports from types.ts or
@@ -46,7 +54,7 @@ export interface VerticalTemplate {
   serviceModel: VerticalServiceModel;
   deliveryType: VerticalDeliveryType;
   /** Owner request 2026-08-14 — the revenue model seeded for a NEW org of
-   *  this type (Med Spa → subscription; every other vertical → sales). */
+   *  this type. */
   revenueModel: VerticalRevenueModel;
   /** Ordered pipeline stage names to seed for a new org. */
   defaultStages: string[];
@@ -54,183 +62,61 @@ export interface VerticalTemplate {
   defaultFields: VerticalFieldDef[];
 }
 
-/** The "no preset" option — current behavior (default stages, no seeded
- *  fields). Included in the catalog so the Admin select and the server treat
- *  it uniformly; applying it never touches stages or fields. */
-export const GENERAL_VERTICAL: VerticalTemplate = {
-  key: "general",
-  label: "General (no preset)",
-  industry: "",
-  serviceModel: "both",
+/** B2B — the default business type (owner direction 2026-08-16: "Mainly we
+ *  will be selling B2B"). Generic pipeline, no preset custom fields. */
+export const B2B_VERTICAL: VerticalTemplate = {
+  key: "b2b",
+  label: "B2B",
+  industry: "professional",
+  serviceModel: "commercial_only",
   deliveryType: "both",
-  revenueModel: "sales",
-  defaultStages: [],
+  revenueModel: "subscription",
+  defaultStages: ["Leads", "Contacted", "Quoted", "Won"],
   defaultFields: [],
 };
 
-/** Business types the owner can pick when provisioning a client account.
- *  Stage names are the owner's exact lists (title-cased); custom fields are
- *  the PM's proposals — typed (text/yesno/select) and org-scoped. */
-export const VERTICALS: VerticalTemplate[] = [
-  {
-    key: "cleaning",
-    label: "Cleaning",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Quotes", "Recurring bookings", "Cleaners"],
-    defaultFields: [
-      { label: "Service frequency", type: "select", options: ["Weekly", "Biweekly", "Monthly"] },
-      { label: "Pets on premises", type: "yesno" },
-      { label: "Access instructions", type: "text" },
-      { label: "Assigned cleaner", type: "text" },
-    ],
-  },
-  {
-    key: "plumbing",
-    label: "Plumbing",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Dispatch", "Jobs", "Estimates", "Recurring service"],
-    defaultFields: [
-      { label: "Emergency service", type: "yesno" },
-      { label: "Permit required", type: "yesno" },
-      { label: "Warranty", type: "text" },
-      { label: "Fixture / equipment type", type: "text" },
-    ],
-  },
-  {
-    key: "landscaping",
-    label: "Landscaping",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Quotes", "Recurring clients", "Crews", "Jobs"],
-    defaultFields: [
-      { label: "Property size", type: "text" },
-      { label: "Service frequency", type: "select", options: ["Weekly", "Biweekly", "Monthly", "One-time"] },
-      { label: "Full-service vs mowing", type: "select", options: ["Full-service", "Mowing only"] },
-      { label: "Assigned crew", type: "text" },
-    ],
-  },
-  {
-    key: "pest_control",
-    label: "Pest Control",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Inspections", "Recurring treatments", "Renewals"],
-    defaultFields: [
-      { label: "Pest type", type: "select", options: ["Ants", "Rodents", "Termites", "Bed bugs", "Cockroaches", "Mosquitoes", "Other"] },
-      { label: "Treatment frequency", type: "select", options: ["Monthly", "Quarterly", "Semi-annual", "Annual", "One-time"] },
-      { label: "Renewal reminder", type: "text" },
-      { label: "COI required", type: "yesno" },
-    ],
-  },
-  {
-    key: "pool_service",
-    label: "Pool Service",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Customers", "Routes", "Recurring service", "Repairs"],
-    defaultFields: [
-      { label: "Pool type", type: "select", options: ["In-ground", "Above-ground"] },
-      { label: "Route assignment", type: "text" },
-      { label: "Service day", type: "text" },
-      { label: "Repairs needed", type: "text" },
-    ],
-  },
-  {
-    key: "painting",
-    label: "Painting",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Estimates", "Projects", "Crews", "Payments"],
-    defaultFields: [
-      { label: "Interior / exterior", type: "select", options: ["Interior", "Exterior", "Both"] },
-      { label: "Square footage", type: "text" },
-      { label: "Paint brand preference", type: "text" },
-      { label: "Assigned crew", type: "text" },
-    ],
-  },
-  {
-    key: "flooring",
-    label: "Flooring",
-    industry: "home_services",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Measurements", "Estimates", "Installations"],
-    defaultFields: [
-      { label: "Material", type: "select", options: ["Hardwood", "Laminate", "Tile", "Carpet", "Vinyl", "Concrete", "Other"] },
-      { label: "Rooms / measurements", type: "text" },
-      { label: "Subfloor condition", type: "text" },
-      { label: "Installation date", type: "text" },
-    ],
-  },
-  {
-    key: "med_spa",
-    label: "Med Spa",
-    industry: "mobile_personal",
-    serviceModel: "both",
-    deliveryType: "client_comes",
-    revenueModel: "subscription",
-    defaultStages: ["Leads", "Consultations", "Booked", "Treatments", "Retention"],
-    defaultFields: [
-      { label: "License number", type: "text" },
-      { label: "Consultation date", type: "text" },
-      { label: "Treatment types", type: "select", options: ["Botox / injectables", "Laser", "Facials", "Body contouring", "IV therapy", "Other"] },
-      { label: "Insurance", type: "text" },
-    ],
-  },
-  {
-    key: "real_estate",
-    label: "Real Estate",
-    industry: "professional",
-    serviceModel: "both",
-    deliveryType: "we_go",
-    revenueModel: "sales",
-    defaultStages: ["Leads", "Tours", "Offers", "Under Contract", "Closed"],
-    defaultFields: [
-      { label: "Property type", type: "select", options: ["Single-family", "Condo", "Townhouse", "Multi-family", "Commercial", "Land"] },
-      { label: "Listing vs buying", type: "select", options: ["Listing", "Buying", "Both"] },
-      { label: "Closing date", type: "text" },
-      { label: "MLS #", type: "text" },
-    ],
-  },
-];
+/** B2C — the second (and only other) business type. Same generic pipeline,
+ *  no preset custom fields. */
+export const B2C_VERTICAL: VerticalTemplate = {
+  key: "b2c",
+  label: "B2C",
+  industry: "home_services",
+  serviceModel: "residential_only",
+  deliveryType: "both",
+  revenueModel: "subscription",
+  defaultStages: ["Leads", "Contacted", "Quoted", "Won"],
+  defaultFields: [],
+};
 
-/** All selectable business types in display order: General first, then the
- *  verticals. Used by the Admin create-account form and the Settings apply
+/** The two business types. Used by the server's sold-lead industry matching
+ *  (verticalForIndustry) — industry text no longer maps to the retired
+ *  catalog, so unmatched leads provision the plain default pipeline. */
+export const VERTICALS: VerticalTemplate[] = [B2B_VERTICAL, B2C_VERTICAL];
+
+/** All selectable business types in display order: B2B first (the default),
+ *  then B2C. Used by the Admin create-account form and the Settings apply
  *  affordance. */
-export const ALL_VERTICALS: VerticalTemplate[] = [GENERAL_VERTICAL, ...VERTICALS];
+export const ALL_VERTICALS: VerticalTemplate[] = VERTICALS;
 
-/** key → template for the real verticals (General is handled explicitly —
- *  see getVertical). */
+/** key → template. */
 export const VERTICAL_MAP: Record<string, VerticalTemplate> = Object.fromEntries(
   VERTICALS.map((v) => [v.key, v]),
 );
 
-/** Resolve a vertical key → template, or null when unknown. "general" (and the
- *  empty string) resolve to the no-preset template. */
+/** Resolve a business-type key → template, or null when unknown. Legacy keys
+ *  from the retired catalog ('general', 'cleaning', 'landscaping', …) are no
+ *  longer valid here — they resolve to null (the server's plain-org path) and
+ *  display as B2B via verticalLabel. */
 export function getVertical(key: string | null | undefined): VerticalTemplate | null {
-  if (!key) return GENERAL_VERTICAL;
-  return VERTICAL_MAP[key] ?? (key === GENERAL_VERTICAL.key ? GENERAL_VERTICAL : null);
+  if (!key) return null;
+  return VERTICAL_MAP[key] ?? null;
 }
 
-/** Display label for an org's stored vertical_key ("" = General). */
+/** Display label for an org's stored vertical_key. Unknown / empty / legacy
+ *  keys ('general','cleaning','landscaping',…) all display as B2B — the
+ *  default business type (owner direction 2026-08-16). */
 export function verticalLabel(key: string | null | undefined): string {
-  if (!key) return GENERAL_VERTICAL.label;
-  return VERTICAL_MAP[key]?.label ?? GENERAL_VERTICAL.label;
+  return VERTICAL_MAP[key ?? ""]?.label ?? B2B_VERTICAL.label;
 }
 
 /** Stored org custom-field shape (orgs.custom_fields entries). */
