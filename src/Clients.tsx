@@ -62,22 +62,26 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   return value;
 }
 
-/** Owner tables only (live-test finding 2026-08-15): an INDIVIDUAL record's
- *  personal name — companyName holds the person's FULL NAME — must never
- *  render under the owner's "Business name" header. Show the DBA name when
- *  present, else an em dash. Commercial records and every tenant table
- *  (header "Client") keep rendering companyName exactly as before. */
-function ownerBizName(ownerOrg: boolean, c: Client): string {
+/** GLOBAL name rule (owner direction 2026-08-16 — owner AND tenant pipeline
+ *  tables): the primary cell shows the record's business name — EXCEPT an
+ *  INDIVIDUAL record under the owner's "Business name" header, where
+ *  companyName holds the person's FULL NAME and must never render as a
+ *  business name: show the DBA name when present, else an em dash (PR #62).
+ *  Tenant tables (header "Client") always show companyName — for an
+ *  individual that IS their full name, exactly what the owner wants there.
+ *  Commercial records always show companyName. */
+function primaryName(ownerOrg: boolean, c: Client): string {
   return ownerOrg && c.clientType !== "commercial" ? c.dbaName || "—" : c.companyName;
 }
 
-/** Owner tables only (live-test finding 2026-08-15): the primary line of an
- *  individual record's Contact cell is the person's FULL NAME (companyName)
- *  — the universal "Contact name" field is hidden for individuals (their name
- *  is already captured by "Name *") and a leftover partial/redundant value
- *  must not render. Commercial records keep contactName. */
-function ownerContactPrimary(ownerOrg: boolean, c: Client): string {
-  return ownerOrg && c.clientType !== "commercial" ? c.companyName : c.contactName || "—";
+/** GLOBAL contact rule (owner direction 2026-08-16 — owner AND tenant): the
+ *  primary line of the Contact cell is the person's FULL NAME (companyName)
+ *  for individual records — the universal "Contact name" field is hidden for
+ *  individuals (their name is already captured by "Name *") and a leftover
+ *  partial/redundant value must never render — and contactName for commercial
+ *  records, followed by email + phone. */
+function contactPrimary(c: Client): string {
+  return c.clientType !== "commercial" ? c.companyName : c.contactName || "—";
 }
 
 /** Local YYYY-MM-DD — for the DNC quick row-action's "marked" date (owner
@@ -702,8 +706,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                 <tr key={c.id} className={c.archived ? "row-archived" : ""}>
                   <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Client"}>
                     <div className="cell-company">
-                      <span className={`cell-name${blurPii(pii)}`} title={ownerBizName(ownerOrg, c)}>
-                        {ownerBizName(ownerOrg, c)}
+                      <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
+                        {primaryName(ownerOrg, c)}
                       </span>
                       {c.lost && <span className="chip chip-lost">Lost</span>}
                       {c.dnc && <span className="chip chip-dnc">DNC</span>}
@@ -833,8 +837,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
                     <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Client"}>
                       <div className="cell-company">
-                        <span className={`cell-name${blurPii(pii)}`} title={ownerBizName(ownerOrg, c)}>
-                          {ownerBizName(ownerOrg, c)}
+                        <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
+                          {primaryName(ownerOrg, c)}
                         </span>
                         <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
                           {c.clientType === "commercial" ? "Commercial" : "Individual"}
@@ -873,7 +877,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </td>
                     <td data-label="Contact">
                       <div className="cell-contact">
-                        <span className={pii ? "pii-blur" : undefined}>{ownerContactPrimary(ownerOrg, c)}</span>
+                        <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
                         {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
                         {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
                       </div>
