@@ -33,6 +33,8 @@ check "POST tickets without cookie → 401" 401 $(code -b "$JAR" -X POST -H 'Con
 check "PATCH tickets without cookie → 401" 401 $(code -b "$JAR" -X PATCH -H 'Content-Type: application/json' \
   -d '{"status":"OPEN"}' "$BASE/api/tickets/1")
 check "admin orgs without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/admin/orgs")
+check "settings export without cookie → 401" 401 $(code -b "$JAR" "$BASE/api/settings/export")
+check "settings cancel without cookie → 401" 401 $(code -b "$JAR" -X POST "$BASE/api/settings/cancel")
 # Typed-delete confirmation is client-side; the DELETE endpoints must still
 # enforce auth/isolation server-side regardless of what the UI does.
 check "DELETE client without cookie → 401" 401 $(code -b "$JAR" -X DELETE "$BASE/api/clients/1")
@@ -5379,6 +5381,210 @@ kill "$MOCK45_PID" 2>/dev/null
 rm -f "$JA45" "$JT45"
 rm -rf "$MOCK45"
 echo "  ✓ 45: native e-signature shipped (PDF generation, unique sign link + email, public sign/decline page with audit, owner tracker auto-advance + audit view, owner-only enforcement)"
+
+echo "== 46. Phase 5 prep - self-serve data export (tenant self-service) =="
+# Two throwaway tenant orgs, each with its own data. The export must contain
+# ONLY the requesting org's rows - no cross-tenant leakage - and never any
+# credential (password hashes, sign tokens, temp passwords).
+S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "owner re-login for phase-5 prep -> 200" 200 "$S"
+EXA_EMAIL="exporta@phase5.example"
+EXA_PASS="exporta123"
+EXB_EMAIL="exportb@phase5.example"
+EXB_PASS="exportb123"
+JARA=$(mktemp); JARB=$(mktemp); JARX=$(mktemp)
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Export Org A\",\"email\":\"$EXA_EMAIL\",\"password\":\"$EXA_PASS\"}" "$BASE/api/admin/orgs")
+check "owner creates export org A -> 201" 201 "$S"
+EXA_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Export Org B\",\"email\":\"$EXB_EMAIL\",\"password\":\"$EXB_PASS\"}" "$BASE/api/admin/orgs")
+check "owner creates export org B -> 201" 201 "$S"
+EXB_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -c "$JARA" -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EXA_EMAIL\",\"password\":\"$EXA_PASS\"}" "$BASE/api/auth/login")
+check "org A admin login -> 200" 200 "$S"
+S=$(code -c "$JARB" -b "$JARB" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EXB_EMAIL\",\"password\":\"$EXB_PASS\"}" "$BASE/api/auth/login")
+check "org B admin login -> 200" 200 "$S"
+# Org A defines a custom field and creates a client (with a custom-field
+# value), a task, an invoice and a support ticket - everything the export
+# must include.
+S=$(code -b "$JARA" -X PUT -H 'Content-Type: application/json' \
+  -d '{"customFields":[{"name":"Color","type":"text"}]}' "$BASE/api/settings")
+check "org A defines custom field -> 200" 200 "$S"
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"A-Only Co","contactName":"Ann A","clientType":"commercial","address":"1 A Way","dealValue":1000,"stage":"Prospect","customFields":[{"name":"Color","value":"Blue"}]}' "$BASE/api/clients")
+check "org A creates client -> 201" 201 "$S"
+EXA_CLIENT=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"A follow-up\",\"clientId\":$EXA_CLIENT}" "$BASE/api/tasks")
+check "org A creates task -> 201" 201 "$S"
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$EXA_CLIENT,\"amount\":100.5,\"status\":\"sent\"}" "$BASE/api/invoices")
+check "org A creates invoice -> 201" 201 "$S"
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"A ticket","message":"A message","priority":"HIGH"}' "$BASE/api/tickets")
+check "org A creates ticket -> 201" 201 "$S"
+# Org B creates its own client (the cross-tenant canary).
+S=$(code -b "$JARB" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"B-Only Co","contactName":"Bob B","clientType":"commercial","address":"2 B Way","dealValue":2000,"stage":"Prospect"}' "$BASE/api/clients")
+check "org B creates client -> 201" 201 "$S"
+
+echo "-- 46a. Export returns ONLY the requesting org's data =="
+EXPA=$(curl -s -D /tmp/hdr.txt -o /tmp/body.json -w "%{http_code}" -b "$JARA" "$BASE/api/settings/export")
+check "org A export -> 200" 200 "$EXPA"
+grep -qi "Content-Disposition: attachment" /tmp/hdr.txt && echo "  OK export is an attachment download" || echo "  XX Content-Disposition missing: $(head -3 /tmp/hdr.txt)"
+grep -qi 'filename="crm-export-' /tmp/hdr.txt && echo "  OK attachment filename is crm-export-*.json" || echo "  XX filename wrong: $(cat /tmp/hdr.txt)"
+if EXA_ORG="$EXA_ORG" EXA_EMAIL="$EXA_EMAIL" python3 - <<'PY'
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert d['schemaVersion'] == 1, d
+assert d['org']['id'] == int(os.environ['EXA_ORG']), d['org']
+names = [c['company_name'] for c in d['clients']]
+assert names == ['A-Only Co'], names
+assert all(c['org_id'] == d['org']['id'] for c in d['clients']), 'client rows not org-scoped'
+assert len(d['tasks']) == 1 and d['tasks'][0]['title'] == 'A follow-up', d['tasks']
+assert len(d['invoices']) == 1 and float(d['invoices'][0]['amount']) == 100.5, d['invoices']
+assert len(d['tickets']) == 1 and d['tickets'][0]['subject'] == 'A ticket', d['tickets']
+assert any(f['name'] == 'Color' for f in d['org']['customFields']), d['org']['customFields']
+vals = d['clients'][0]['custom_fields']
+assert 'Color' in vals and 'Blue' in vals, vals
+emails = [u['email'] for u in d['users']]
+assert emails == [os.environ['EXA_EMAIL']], emails
+raw = open('/tmp/body.json').read()
+assert 'password_hash' not in raw and 'token_hash' not in raw and 'provisioned_temp_password' not in raw, 'credential leaked'
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  OK export payload: org A only (client/task/invoice/ticket/custom field/users) + no credentials"
+else FAIL=$((FAIL+1)); echo "  XX export payload wrong: $(head -c 400 /tmp/body.json)"; fi
+EXPB=$(curl -s -o /tmp/body.json -w "%{http_code}" -b "$JARB" "$BASE/api/settings/export")
+check "org B export -> 200" 200 "$EXPB"
+if EXB_ORG="$EXB_ORG" EXB_EMAIL="$EXB_EMAIL" python3 - <<'PY'
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert d['org']['id'] == int(os.environ['EXB_ORG']), d['org']
+names = [c['company_name'] for c in d['clients']]
+assert names == ['B-Only Co'], names
+assert len(d['tasks']) == 0 and len(d['invoices']) == 0 and len(d['tickets']) == 0, d
+emails = [u['email'] for u in d['users']]
+assert emails == [os.environ['EXB_EMAIL']], emails
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  OK B's export has no A rows (cross-tenant isolation)"
+else FAIL=$((FAIL+1)); echo "  XX cross-tenant leak in B's export: $(head -c 400 /tmp/body.json)"; fi
+EXPO=$(curl -s -o /tmp/body.json -w "%{http_code}" -b "$JAR" "$BASE/api/settings/export")
+check "owner org export -> 200" 200 "$EXPO"
+grep -qv 'A-Only Co\|B-Only Co' /tmp/body.json && echo "  OK owner export excludes tenant clients" || echo "  XX tenant data leaked into owner export: $(head -c 400 /tmp/body.json)"
+
+echo "-- 46b. Export + cancel auth gates (no cookie) =="
+check "export without cookie -> 401" 401 $(code -b "$JARX" "$BASE/api/settings/export")
+check "cancel without cookie -> 401" 401 $(code -b "$JARX" -X POST "$BASE/api/settings/cancel")
+
+echo "-- 46c. Restricted members: no settings access -> 403; settings view-only -> 200 =="
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"noview@phase5.example","password":"noview123","role":"member","permissions":{"clients":{"edit":false}}}' "$BASE/api/org/members")
+check "org A adds member without settings access -> 201" 201 "$S"
+JARNV=$(mktemp)
+S=$(code -c "$JARNV" -b "$JARNV" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"noview@phase5.example","password":"noview123"}' "$BASE/api/auth/login")
+check "no-settings member login -> 200" 200 "$S"
+check "no-settings member export -> 403" 403 $(code -b "$JARNV" "$BASE/api/settings/export")
+check "no-settings member settings GET -> 403" 403 $(code -b "$JARNV" "$BASE/api/settings")
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"viewonly@phase5.example","password":"viewonly123","role":"member","permissions":{"settings":{"edit":false},"clients":{"edit":false}}}' "$BASE/api/org/members")
+check "org A adds settings-view-only member -> 201" 201 "$S"
+JARVO=$(mktemp)
+S=$(code -c "$JARVO" -b "$JARVO" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"viewonly@phase5.example","password":"viewonly123"}' "$BASE/api/auth/login")
+check "view-only member login -> 200" 200 "$S"
+EXPV=$(curl -s -o /tmp/body.json -w "%{http_code}" -b "$JARVO" "$BASE/api/settings/export")
+check "view-only member export -> 200" 200 "$EXPV"
+grep -q 'A-Only Co' /tmp/body.json && echo "  OK view-only member export contains org A data" || echo "  XX view-only export wrong: $(head -c 400 /tmp/body.json)"
+
+echo "== 47. Phase 5 prep - self-serve cancel/offboarding =="
+CAN_EMAIL="cancelco@phase5.example"
+CAN_PASS="cancelco123"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"name\":\"Cancel Co\",\"email\":\"$CAN_EMAIL\",\"password\":\"$CAN_PASS\"}" "$BASE/api/admin/orgs")
+check "owner creates cancel org -> 201" 201 "$S"
+CAN_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARC=$(mktemp)
+S=$(code -c "$JARC" -b "$JARC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$CAN_EMAIL\",\"password\":\"$CAN_PASS\"}" "$BASE/api/auth/login")
+check "cancel-org admin login -> 200" 200 "$S"
+# Data that must survive the cancel (retention, not deletion).
+S=$(code -b "$JARC" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Cancel Co Client","contactName":"Cara C","clientType":"commercial","dealValue":500,"stage":"Prospect"}' "$BASE/api/clients")
+check "cancel org creates client -> 201" 201 "$S"
+S=$(code -b "$JARC" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Cancel Co task"}' "$BASE/api/tasks")
+check "cancel org creates task -> 201" 201 "$S"
+# A team member whose login must also be blocked after cancel.
+S=$(code -b "$JARC" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"cancelmember@phase5.example","password":"cancelmember123","role":"member"}' "$BASE/api/org/members")
+check "cancel org adds member -> 201" 201 "$S"
+JARCM=$(mktemp)
+S=$(code -c "$JARCM" -b "$JARCM" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"cancelmember@phase5.example","password":"cancelmember123"}' "$BASE/api/auth/login")
+check "cancel-org member login (pre-cancel) -> 200" 200 "$S"
+
+echo "-- 47a. Owner org cannot cancel itself =="
+S=$(code -b "$JAR" -X POST "$BASE/api/settings/cancel")
+check "owner org cancel -> 403" 403 "$S"
+grep -q "owner workspace cannot be canceled" /tmp/body.json && echo "  OK clear owner-guard message" || echo "  XX owner cancel response: $(cat /tmp/body.json)"
+
+echo "-- 47b. Cancel flips the org, blocks login, retains data =="
+S=$(code -b "$JARC" -X POST "$BASE/api/settings/cancel")
+check "org admin cancels own account -> 200" 200 "$S"
+grep -q '"ok":true' /tmp/body.json && echo "  OK cancel returns ok" || echo "  XX cancel response: $(cat /tmp/body.json)"
+grep -q '"retentionUntil":"' /tmp/body.json && echo "  OK cancel returns retentionUntil" || echo "  XX retentionUntil missing: $(cat /tmp/body.json)"
+check "canceled admin login -> 403" 403 $(code -b "$JARC" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$CAN_EMAIL\",\"password\":\"$CAN_PASS\"}" "$BASE/api/auth/login")
+grep -q 'account_canceled' /tmp/body.json && grep -q 'retained until' /tmp/body.json && echo "  OK login shows clear canceled message with retention date" || echo "  XX login message: $(cat /tmp/body.json)"
+check "canceled member login -> 403" 403 $(code -b "$JARCM" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"cancelmember@phase5.example","password":"cancelmember123"}' "$BASE/api/auth/login")
+# The pre-cancel sessions die server-side (requireAuth blocks canceled orgs).
+check "canceled admin existing session -> 403" 403 $(code -b "$JARC" "$BASE/api/clients")
+check "canceled admin export -> 403" 403 $(code -b "$JARC" "$BASE/api/settings/export")
+check "canceled admin settings -> 403" 403 $(code -b "$JARC" "$BASE/api/settings")
+# Data is RETAINED: the org still exists in the owner's list with its rows.
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "owner admin orgs list -> 200" 200 "$S"
+if CAN_ORG="$CAN_ORG" python3 - <<'PY'
+import json, os
+d = json.load(open('/tmp/body.json'))
+org = next(o for o in d['orgs'] if o['id'] == int(os.environ['CAN_ORG']))
+assert org['status'] == 'canceled', org
+assert org['clientCount'] == 1, org  # data retained, not hard-deleted
+assert org['retentionUntil'], org
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  OK org still listed as canceled with data retained (clientCount 1, retentionUntil set)"
+else FAIL=$((FAIL+1)); echo "  XX canceled org missing or data lost: $(head -c 400 /tmp/body.json)"; fi
+
+echo "-- 47c. Cleanup =="
+check "owner deletes export org A -> 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$EXA_ORG")
+check "owner deletes export org B -> 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$EXB_ORG")
+check "owner deletes canceled org -> 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$CAN_ORG")
+# Regression: org deletion must fully clean every child table (tickets,
+# agreement envelopes, users, ...) — no orphaned rows may keep a deleted org
+# listed in the owner's account list.
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "owner orgs list after cleanup -> 200" 200 "$S"
+if EXA_ORG="$EXA_ORG" EXB_ORG="$EXB_ORG" CAN_ORG="$CAN_ORG" python3 - <<'PY'
+import json, os
+d = json.load(open('/tmp/body.json'))
+ids = {int(os.environ[k]) for k in ('EXA_ORG', 'EXB_ORG', 'CAN_ORG')}
+present = {o['id'] for o in d['orgs']}
+assert not (ids & present), f"deleted orgs still listed: {ids & present}"
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  OK deleted orgs fully removed from owner list (no orphans)"
+else FAIL=$((FAIL+1)); echo "  XX deleted orgs still listed: $(head -c 300 /tmp/body.json)"; fi
+rm -f "$JARA" "$JARB" "$JARC" "$JARCM" "$JARNV" "$JARVO" "$JARX" /tmp/hdr.txt
+echo "  OK 46+47: self-serve data export + cancel/offboarding shipped (Phase 5 prep)"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 

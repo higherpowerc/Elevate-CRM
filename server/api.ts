@@ -147,6 +147,14 @@ interface AuthContext {
   role: Role;
 }
 
+/** Phase 5 prep — self-serve cancel: "YYYY-MM-DD HH:MM:SS" → "YYYY-MM-DD"
+ *  for the user-facing retention date ('' → "the end of the 30-day retention
+ *  period" as a defensive fallback). */
+function retentionDateLabel(raw: string | null | undefined): string {
+  const d = (raw ?? "").trim();
+  return d.length >= 10 ? d.slice(0, 10) : "the end of the 30-day retention period";
+}
+
 /** Returns { userId, orgId, role } or a 401 Response. */
 function requireAuth(req: Request): AuthContext | Response {
   const token = getCookie(req, SESSION_COOKIE);
@@ -154,6 +162,19 @@ function requireAuth(req: Request): AuthContext | Response {
   if (!userId) return err("Not signed in.", 401);
   const user = getUserById(userId);
   if (!user) return err("Not signed in.", 401);
+  // Phase 5 prep - self-serve cancel: a canceled org's users are blocked on
+  // EVERY authed route (not just login), so an already-issued session dies the
+  // moment the org is canceled. The message names the retention date so the
+  // user knows their data is not gone, just inaccessible. The owner org can
+  // never be canceled (the cancel route guards it), so this branch is
+  // unreachable for the platform admin.
+  const org = getOrg(user.orgId);
+  if (org && org.status === "canceled") {
+    return err(
+      `This account has been canceled. Your data is retained until ${"$"}{retentionDateLabel(org.retention_until)}. Contact support if this was a mistake.`,
+      403,
+    );
+  }
   return { userId: user.id, orgId: user.orgId, role: user.role };
 }
 
@@ -1286,6 +1307,11 @@ interface OrgRow {
   admin_reset_password: string;
   /** 3g-3: source lead's company/contact name ('' when not auto-provisioned). */
   provisioned_client_name: string;
+  /** Phase 5 prep — account lifecycle ('active' | 'canceled', '' when the
+   *  admin-list query predates the migration). */
+  status: string;
+  canceled_at: string;
+  retention_until: string;
   /** Owner request 2026-08-14 — what this client pays per month (owner-set
    *  in Admin) + how their own business makes money ("sales" | "subscription"). */
   monthly_subscription_amount: number;
@@ -1314,6 +1340,10 @@ function toOrg(row: OrgRow) {
     // makes money ("sales" | "subscription").
     monthlySubscriptionAmount: row.monthly_subscription_amount ?? 0,
     revenueModel: row.revenue_model ?? "sales",
+    // Phase 5 prep — account lifecycle ('' = never canceled / active).
+    status: row.status ?? "active",
+    canceledAt: row.canceled_at ?? "",
+    retentionUntil: row.retention_until ?? "",
   };
 }
 
@@ -1857,6 +1887,20 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     if (!user || !(await verifyPassword(password, user.password_hash))) {
       return err("Invalid email or password.", 401);
     }
+    // Phase 5 prep - self-serve cancel: a canceled org's credentials are
+    // rejected with a CLEAR message (never a generic failure). The owner org
+    // can never be canceled (the cancel route guards it), so this can never
+    // lock out the platform admin.
+    const loginOrg = getOrg(user.org_id);
+    if (loginOrg && loginOrg.status === "canceled") {
+      return json(
+        {
+          error: "account_canceled",
+          message: `This account has been canceled. Your data is retained until ${"$"}{retentionDateLabel(loginOrg.retention_until)}. Contact support if this was a mistake.`,
+        },
+        403,
+      );
+    }
     // 3g-3: the first successful login with the temp password clears it from
     // the owner's Admin list — the credential has been "delivered" (3g-4
     // emails it to the client). Never cleared by impersonation, which swaps
@@ -2126,6 +2170,9 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         `SELECT o.id, o.name, o.created_at,
                 o.monthly_subscription_amount,
                 o.revenue_model,
+                o.status,
+                o.canceled_at,
+                o.retention_until,
                 o.provisioned_from_client,
                 o.provisioned_temp_password,
                 o.admin_reset_password,
@@ -2249,7 +2296,15 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     db.transaction(() => {
       db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
       db.query("DELETE FROM tasks WHERE org_id = ?").run(id);
+      // Support tickets (PR #54) and agreement envelopes (PR #59) both FK to
+      // orgs — a tenant that opened a ticket (or signed an agreement) used to
+      // 500 the org delete on the FK; drop every child table's rows first.
+      db.query("DELETE FROM tickets WHERE org_id = ?").run(id);
+      db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
       db.query("DELETE FROM clients WHERE org_id = ?").run(id);
+      // 3g-3: provisioning events pointing at this org (plain columns, no FK —
+      // cleaned so no orphaned event rows reference a deleted org).
+      db.query("DELETE FROM provision_events WHERE new_org_id = ? OR source_org_id = ?").run(id, id);
       // 3k: password_resets references users — drop this org's tokens first.
       db.query("DELETE FROM password_resets WHERE user_id IN (SELECT id FROM users WHERE org_id = ?)").run(id);
       db.query("DELETE FROM users WHERE org_id = ?").run(id);
@@ -2888,6 +2943,130 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     });
   }
 
+  /* Phase 5 prep — self-serve data export (tenant self-service). The org
+     admin (or a member with settings READ access — the same gate as the
+     settings GET) downloads a JSON file of THEIR OWN org's rows: clients,
+     tasks, invoices, tickets, agreement envelopes, org settings + custom
+     field definitions, and the org's users. SANITIZED: no password hashes,
+     no reset/sign tokens, no temp passwords (credentials never leave the
+     server). Every query is scoped by the session org — there is no
+     cross-org addressing. Delivered as an attachment download
+     (Content-Disposition), so the browser saves a file. */
+  if (pathname === "/api/settings/export" && method === "GET") {
+    const deniedRead = denyTabRead(auth, "settings");
+    if (deniedRead) return deniedRead;
+    const org = getOrg(orgId);
+    if (!org) return err("Org not found.", 404);
+
+    const clients = db
+      .query("SELECT * FROM clients WHERE org_id = ? ORDER BY id ASC")
+      .all(orgId) as Record<string, unknown>[];
+    const tasks = db
+      .query("SELECT * FROM tasks WHERE org_id = ? ORDER BY id ASC")
+      .all(orgId) as Record<string, unknown>[];
+    const invoices = db
+      .query("SELECT * FROM invoices WHERE org_id = ? ORDER BY id ASC")
+      .all(orgId) as Record<string, unknown>[];
+    const tickets = db
+      .query("SELECT * FROM tickets WHERE org_id = ? ORDER BY id ASC")
+      .all(orgId) as Record<string, unknown>[];
+    // Agreement envelopes belong to the org that sent them (owner-workspace
+    // today, scoped by org_id either way). The sign TOKEN HASH is a
+    // credential — never exported.
+    const agreements = db
+      .query(
+        `SELECT id, client_id, status, expires_at, pdf_id, agreement_text, signer_name, signed_at, ip_address, consent, created_at, updated_at
+         FROM agreement_envelopes WHERE org_id = ? ORDER BY id ASC`,
+      )
+      .all(orgId) as Record<string, unknown>[];
+    // Users: explicit columns — NEVER password_hash. The org's temp passwords
+    // (provisioned_temp_password / admin_reset_password) are credentials too
+    // and live on the org row — excluded from the export entirely.
+    const users = db
+      .query(
+        `SELECT id, email, role, permissions, created_at, first_login_at FROM users WHERE org_id = ? ORDER BY id ASC`,
+      )
+      .all(orgId) as Record<string, unknown>[];
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      schemaVersion: 1,
+      org: {
+        id: org.id,
+        name: org.name,
+        createdAt: org.created_at,
+        stages: parseStages(org.stages),
+        customFields: parseCustomFields(org.custom_fields),
+        serviceModel: org.service_model,
+        deliveryType: org.delivery_type,
+        industry: org.industry,
+        intakeOpts: parseIntakeOpts(org.intake_opts),
+        customIntakeGroups: parseCustomIntakeGroups(org.custom_intake_groups),
+        verticalKey: org.vertical_key ?? "",
+        revenueModel: isRevenueModel(org.revenue_model) ? org.revenue_model : "sales",
+        monthlySubscriptionAmount: org.monthly_subscription_amount ?? 0,
+      },
+      users,
+      clients,
+      tasks,
+      invoices,
+      tickets,
+      agreements,
+    };
+
+    const slug =
+      org.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "org";
+    const date = new Date().toISOString().slice(0, 10);
+    return new Response(JSON.stringify(payload, null, 2), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="crm-export-${"$"}{slug}-${"$"}{date}.json"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  /* Phase 5 prep — self-serve cancel/offboarding (per-account subscription).
+     The org admin cancels their OWN account from Settings: org.status →
+     'canceled', users can no longer log in (login + every authed route are
+     blocked server-side) and NO data is hard-deleted — it is retained for
+     the 30-day retention window (retention_until = cancel time + 30 days).
+     The owner org (Elevate Studio) can never cancel itself: the platform
+     admin workspace is the product's operator console. The response clears
+     the session cookie so the UI signs the canceling admin out. */
+  if (pathname === "/api/settings/cancel" && method === "POST") {
+    const deniedOrgAdmin = requireOrgAdmin(auth);
+    if (deniedOrgAdmin) return deniedOrgAdmin;
+    if (isOwnerOrg(orgId)) {
+      return err("The owner workspace cannot be canceled.", 403);
+    }
+    const org = getOrg(orgId);
+    if (!org) return err("Org not found.", 404);
+    if (org.status === "canceled") {
+      return err("This account is already canceled.", 400);
+    }
+    db.query(
+      "UPDATE orgs SET status = 'canceled', canceled_at = datetime('now'), retention_until = datetime('now', '+30 days') WHERE id = ?",
+    ).run(orgId);
+    const updated = getOrg(orgId);
+    return json(
+      {
+        ok: true,
+        message:
+          "Your account has been canceled. Your data is retained for 30 days and no further charges will be made.",
+        canceledAt: updated?.canceled_at ?? "",
+        retentionUntil: updated?.retention_until ?? "",
+      },
+      200,
+      { "Set-Cookie": `${"$"}{SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` },
+    );
+  }
+
   /* Clients collection */
   if (pathname === "/api/clients" && method === "GET") {
     const deniedRead = denyTabRead(auth, "clients");
@@ -3443,21 +3622,33 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const taken = db.query("SELECT id FROM users WHERE email = ?").get(email);
     if (taken) return err("An account with this email already exists.", 400);
     const hash = await hashPassword(password);
-    // Default for a NEW restricted member: every tab present, all view-only
-    // (the admin adjusts via PATCH). New admins bypass permissions (stored {}).
-    const permissions =
-      role === "member"
-        ? JSON.stringify({
-            clients: { edit: false },
-            tasks: { edit: false },
-            finance: { edit: false },
-            settings: { edit: false },
-            support: { edit: false },
-          })
-        : "{}";
+    // New admins bypass permissions (stored {}). New restricted members:
+    // HONOR the admin's per-tab choices from the request — the Settings UI
+    // sends the full permission map on create (absent tab = no access, so a
+    // member created without settings access can never read settings, export
+    // org data, etc.). Only when the body sends NO permissions at all do we
+    // fall back to the historical default (every tab present, all view-only).
+    let permissionsJson: string;
+    if (role === "member") {
+      if (body.permissions !== undefined) {
+        const v = validatePermissions(body.permissions);
+        if (!v.ok) return err(v.error, 400);
+        permissionsJson = JSON.stringify(v.value);
+      } else {
+        permissionsJson = JSON.stringify({
+          clients: { edit: false },
+          tasks: { edit: false },
+          finance: { edit: false },
+          settings: { edit: false },
+          support: { edit: false },
+        });
+      }
+    } else {
+      permissionsJson = "{}";
+    }
     const info = db
       .query(`INSERT INTO users (email, password_hash, org_id, role, permissions) VALUES (?, ?, ?, ?, ?)`)
-      .run(email, hash, auth.orgId, role as Role, permissions);
+      .run(email, hash, auth.orgId, role as Role, permissionsJson);
     const row = db
       .query(`SELECT ${MEMBER_SELECT} WHERE id = ?`)
       .get(Number(info.lastInsertRowid)) as OrgMemberRow;

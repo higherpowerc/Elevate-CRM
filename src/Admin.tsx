@@ -436,6 +436,14 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                               auto-provisioned
                             </span>
                           )}
+                          {o.status === "canceled" && (
+                            <span
+                              className="chip chip-archived"
+                              title={o.retentionUntil ? `Canceled — data retained until ${o.retentionUntil.slice(0, 10)}` : "Canceled — data retained 30 days"}
+                            >
+                              canceled
+                            </span>
+                          )}
                         </div>
                         {/* 3g-3 — for auto-provisioned orgs: the source lead
                             name + the login credentials the owner hands over.
