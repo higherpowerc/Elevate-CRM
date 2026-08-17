@@ -6022,7 +6022,7 @@ console.log(r ? r.pdf_id : "");
 TS
 PDF48_ID=$(DB_FILE="$MOCK48/db/crm.db" CLIENT_NAME="Scroll Test LLC" bun "$MOCK48/pdfpath.ts" 2>/dev/null)
 PDF48="$MOCK48/db/agreements/$PDF48_ID.pdf"
-if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Scroll Test LLC" '!$[' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
+if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Scroll Test LLC" '![$' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
   PASS=$((PASS+1)); echo "  ✓ PDF: bracket placeholders replaced (client name + \$200.00 present; no literal [..] remains)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ PDF probe failed: $(cat "$MOCK48/probe.out" 2>/dev/null)"
