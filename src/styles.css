@@ -3647,8 +3647,15 @@ legend.field-label {
 }
 
 /* ── Native e-signature (owner direction 2026-08-15) ────────────── */
-/* Owner Settings → "Agreement template" textarea. */
-.agree-template-input { width: 100%; min-height: 220px; font-family: inherit; background: var(--bg, #0a0a0c); color: var(--ink, #f2f1ec); border: 1px solid var(--border, #2a2a31); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.55; resize: vertical; }
+/* Owner Administration → Agreements → "Agreement template" textarea. */
+/* Owner direction 2026-08-17 — the agreement template textarea is a proper
+   SCROLL BOX: a fixed comfortable height with vertical scrolling, so the long
+   legal template (~20 000 chars) never stretches the page. resize: vertical
+   keeps the owner able to grow it; the scrollbar is themed to the app. */
+.agree-template-input { width: 100%; height: 440px; max-height: 70vh; overflow-y: auto; font-family: inherit; background: var(--bg, #0a0a0c); color: var(--ink, #f2f1ec); border: 1px solid var(--border, #2a2a31); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.55; resize: vertical; }
+.agree-template-input::-webkit-scrollbar { width: 10px; }
+.agree-template-input::-webkit-scrollbar-thumb { background: #33333b; border-radius: 6px; }
+.agree-template-input::-webkit-scrollbar-track { background: transparent; }
 /* Owner Onboarding → Agreement audit modal grid. */
 .audit-grid { display: grid; gap: 10px; }
 .audit-grid p { margin: 0; display: flex; gap: 10px; font-size: 14px; }

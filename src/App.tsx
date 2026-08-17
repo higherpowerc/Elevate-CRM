@@ -413,7 +413,11 @@ export default function App() {
                 className={effectiveView === "admin" ? "tab active" : "tab"}
                 onClick={() => setView("admin")}
               >
-                Admin
+                {/* Owner direction 2026-08-17 — the owner's admin tab reads
+                    "Administration": it hosts the client-account list AND the
+                    Agreements section (the agreement template editor that
+                    used to live in Settings). One home, no duplicate. */}
+                Administration
               </button>
             )}
             {/* Owner live-test finding 2026-08-15 — "where are we storing

@@ -113,6 +113,47 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
     }
   }
 
+  /* Owner direction 2026-08-17 — the agreement template editor MOVED here
+     from Settings: the owner workspace's Administration area now hosts the
+     Agreements section (one home for the template — Settings is clean).
+     Loaded from the same owner-only /api/settings route the editor always
+     used; saved via updateSettings({ agreementTemplate }). Tenant workspaces
+     never see this (the server only returns/accepts the template for the
+     owner session, and Admin.tsx renders in the owner workspace only). */
+  const [agreementTemplate, setAgreementTemplate] = useState("");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [tplBusy, setTplBusy] = useState(false);
+  const [tplSaved, setTplSaved] = useState<string | null>(null);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const { settings } = await api.settings();
+      setAgreementTemplate(settings.agreementTemplate ?? "");
+      setSettingsLoaded(true);
+    } catch {
+      /* The orgs load already surfaces errors; the editor just stays empty. */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  async function saveAgreementTemplate() {
+    setTplBusy(true);
+    setTplSaved(null);
+    setError(null);
+    try {
+      await api.updateSettings({ agreementTemplate });
+      setTplSaved("Agreement template saved — new sends use this wording.");
+      await loadSettings();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setTplBusy(false);
+    }
+  }
+
   const load = useCallback(async () => {
     setError(null);
     try {
@@ -224,10 +265,10 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
       <div className="page-head">
         <div>
           <h1>
-            Client <em className="serif">accounts</em>
+            Owner <em className="serif">administration</em>
           </h1>
           <p className="page-sub">
-            Provision private workspaces — each client logs in and sees only their own data.
+            Client accounts, billing, and the agreement template sent to every client.
           </p>
         </div>
       </div>
@@ -549,6 +590,52 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
                 })}
               </tbody>
             </table>
+          )}
+        </div>
+      </div>
+
+      {/* Owner direction 2026-08-17 — Agreements section under Administration.
+          The agreement template editor MOVED here from Settings (one home, no
+          duplicate). The textarea is a fixed-height scroll box (see
+          .agree-template-input in styles.css) so the long legal template
+          (~20 000 chars) scrolls instead of stretching the page. Owner
+          workspace only. */}
+      <div className="card admin-form">
+        <div className="admin-card-head">
+          <h2 className="admin-card-title">Agreements</h2>
+          <p className="admin-card-sub">
+            The agreement sent to a client when you use the native e-signature (Onboarding tab
+            → Send Agreements). Placeholders: {"{{company}}"} (business name), {"{{client_name}}"}
+            (business name for a business client, full name for an individual), {"{{date}}"},
+            {"{{price}}"} / {"{{deal_value}}"} (deal value). Leave blank to use the built-in default.
+          </p>
+        </div>
+        <div className="form">
+          <label className="field">
+            <span className="field-label">Template</span>
+            <textarea
+              className="agree-template-input"
+              value={agreementTemplate}
+              onChange={(e) => setAgreementTemplate(e.target.value)}
+              rows={12}
+              maxLength={20000}
+              placeholder={
+                "CLIENT SERVICES AGREEMENT\n\nThis agreement is between {{company}} and {{client_name}}.\nDate: {{date}}\nMonthly price: {{price}} / {{deal_value}}"
+              }
+            />
+            <span className="field-hint">
+              {settingsLoaded
+                ? "Owner workspace only — client accounts never see this. Saved wording applies to new sends."
+                : "Loading the saved template…"}
+            </span>
+          </label>
+          <button className="btn btn-primary" disabled={tplBusy} type="button" onClick={saveAgreementTemplate}>
+            {tplBusy ? "Saving…" : "Save agreement template"}
+          </button>
+          {tplSaved && (
+            <div className="alert alert-success" role="status" style={{ marginTop: 12 }}>
+              {tplSaved}
+            </div>
           )}
         </div>
       </div>

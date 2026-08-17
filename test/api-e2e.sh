@@ -4980,8 +4980,8 @@ if [ -n "$NEWEST_JS44" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: view-only settings notice missing"
   fi
-  for ROW44 in "Dashboard" "Onboarding" "Admin" "Tickets" "Settings"; do
-    if grep -Fq "$ROW44" "$NEWEST_JS44"; then PASS=$((PASS+1)); echo "  ✓ bundle: owner nav label \"$ROW44\" present (owner nav unchanged)"
+  for ROW44 in "Dashboard" "Onboarding" "Administration" "Tickets" "Settings"; do
+    if grep -Fq "$ROW44" "$NEWEST_JS44"; then PASS=$((PASS+1)); echo "  ✓ bundle: owner nav label \"$ROW44\" present (owner nav — Admin tab renamed Administration per owner direction 2026-08-17)"
     else FAIL=$((FAIL+1)); echo "  ✗ bundle: owner nav label \"$ROW44\" missing from $NEWEST_JS44"; fi
   done
 else
@@ -5102,7 +5102,7 @@ S=$(code -c "$JA45" -b "$JA45" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$S45/api/auth/login")
 check "45a: owner login → 200" 200 "$S"
 S=$(code -b "$JA45" -X PUT -H 'Content-Type: application/json' \
-  -d '{"agreementTemplate":"AGREEMENT {{company}} / {{client_name}} / {{date}} / {{price}}\n\nTerms apply."}' "$S45/api/settings")
+  -d '{"agreementTemplate":"AGREEMENT {{company}} / {{client_name}} / {{date}} / {{price}} / {{deal_value}}\n\nTerms apply."}' "$S45/api/settings")
 check "45a: owner saves agreement template → 200" 200 "$S"
 S=$(code -b "$JA45" "$S45/api/settings")
 check "45a: settings GET → 200" 200 "$S"
@@ -5151,7 +5151,7 @@ ls "$MOCK45/db/agreements/"*.pdf >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  
 echo "-- 45c. Public page: first open → Delivered + IP captured == "
 S=$(code -b "$JAR" "$S45/sign/$TOKEN45")
 check "45c: public sign page → 200" 200 "$S"
-grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Harbor Legal LLP / Jordan Lee" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the rendered template with client details"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
+grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Harbor Legal LLP / Harbor Legal LLP" /tmp/body.json && grep -q "/ \$200.00 / \$200.00" /tmp/body.json && ! grep -q '{{' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the template with every placeholder filled ({{company}} + record-type {{client_name}} = business name + {{date}} + {{price}} + {{deal_value}} = \$200.00; no literal {{ left)"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
 S=$(code -b "$JA45" "$S45/api/agreements")
 check "45c: owner audit list → 200" 200 "$S"
 grep -q '"status":"delivered"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ first open advanced status to Delivered"; } || { FAIL=$((FAIL+1)); echo "  ✗ audit list: $(cat /tmp/body.json)"; }
@@ -5304,21 +5304,10 @@ else FAIL=$((FAIL+1)); echo "  ✗ source: index routes missing"; fi
 if grep -Fq "handleSendAgreement" src/Clients.tsx && grep -Fq "openAudit" src/Clients.tsx && grep -Fq "agreement_envelopes" server/db.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: owner UI (send + audit) + envelopes table"
 else FAIL=$((FAIL+1)); echo "  ✗ source: owner UI markers missing"; fi
-if grep -Fq "saveAgreementTemplate" src/Settings.tsx && grep -Fq "agreementTemplate" src/api.ts; then
-  PASS=$((PASS+1)); echo "  ✓ source: template editor (Settings) + api wiring"
-else FAIL=$((FAIL+1)); echo "  ✗ source: template editor markers missing"; fi
-echo "-- 45i. Email-send failures are VISIBLE (live-test finding #1) =="
-# Mock rejects fail@example.com with the real Resend test-mode 422.
-S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Fail Co","contactName":"Fay Mail","email":"fail@example.com","industry":"Other","clientType":"residential","dealValue":100,"stage":"Onboarding"}' "$S45/api/clients")
-check "45i: create fail-recipient client → 201" 201 "$S"
-FAILCO_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
-S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$FAILCO_ID}" "$S45/api/agreements/send")
-check "45i: send agreement to failing recipient → 200 (tracker still advances)" 200 "$S"
-if grep -q '"status":"sent"' /tmp/body.json && grep -q '"emailStatus":"failed"' /tmp/body.json && grep -q '"emailError"' /tmp/body.json && grep -q '"signUrl":"' /tmp/body.json; then
-  PASS=$((PASS+1)); echo "  ✓ agreement send reports emailStatus failed + emailError + signUrl (link still copyable manually)"
+if grep -Fq "saveAgreementTemplate" src/Admin.tsx && grep -Fq "agreementTemplate" src/api.ts && ! grep -Fq "saveAgreementTemplate" src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: template editor now under Administration (Admin.tsx) + api wiring; Settings no longer hosts it"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ agreement-send failure fields missing: $(cat /tmp/body.json)"
+  FAIL=$((FAIL+1)); echo "  ✗ source: template editor markers missing"
 fi
 grep -q "422" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ emailError surfaces the Resend 422 detail"; } || { FAIL=$((FAIL+1)); echo "  ✗ emailError lacks the 422 detail: $(cat /tmp/body.json)"; }
 S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
@@ -5374,6 +5363,113 @@ if [ -n "$NEWEST_JS45" ] && grep -Fq "No agreement documents yet" "$NEWEST_JS45"
   PASS=$((PASS+1)); echo "  ✓ bundle: Documents view shipped"
 else
   FAIL=$((FAIL+1)); echo "  ✗ bundle: Documents markers missing"; fi
+
+echo "-- 45l. PDF text auto-fills the record-type client name + every placeholder renders (owner direction 2026-08-17) =="
+# Owner live-test finding: the generated agreement PDF must show the CLIENT's
+# name on the 'Client: ...' line — the business name for a business client,
+# the person's FULL NAME (first + last) for an individual — consistent with
+# the global display rules. The old behavior rendered the commercial 'Contact
+# name' (the contact PERSON, or a partial/leftover value for individuals).
+# pdf-lib compresses content streams (FlateDecode), so probe the PDF by
+# inflating every stream and grepping the decoded text for the name strings.
+cat > "$MOCK45/pdfprobe.ts" <<'TS'
+import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
+const file = process.argv[2];
+const wants = process.argv.slice(3);
+const buf = readFileSync(file);
+const raw = buf.toString("latin1");
+let text = raw;
+const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+let m;
+const parts: string[] = [];
+while ((m = re.exec(raw)) !== null) {
+  try {
+    parts.push(inflateSync(Buffer.from(m[1], "latin1")).toString("latin1"));
+  } catch { /* not a flate stream — leave as-is */ }
+}
+text += "\n" + parts.join("\n");
+let ok = true;
+for (const w of wants) {
+  const neg = w.startsWith("!");
+  const needle = neg ? w.slice(1) : w;
+  const hit = text.includes(needle);
+  if (neg ? hit : !hit) { ok = false; console.log((neg ? "UNEXPECTED-PRESENT: " : "MISSING: ") + needle); }
+}
+console.log(ok ? "ok" : "FAIL");
+process.exit(ok ? 0 : 1);
+TS
+# Business client (Harbor Legal LLP, commercial) — the PDF must show the
+# BUSINESS name and must NOT show the contact person (Jordan Lee) anywhere.
+PDF45L=$(ls -t "$MOCK45/db/agreements/"*.pdf 2>/dev/null | head -1)
+if [ -n "$PDF45L" ] && DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/pdfprobe.ts" "$PDF45L" "Harbor Legal LLP" "!Jordan Lee" '!{{' '$200.00' > "$MOCK45/probe1.out" 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ PDF (business client): business name 'Harbor Legal LLP' present; contact person 'Jordan Lee' absent; {{price}} + {{deal_value}} both render \$200.00; no literal {{"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ PDF business probe failed: $(cat "$MOCK45/probe1.out" 2>/dev/null)"
+fi
+# Individual client — companyName holds the FULL NAME; a leftover partial
+# 'Contact name' must never leak into the document.
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Morgan Rivera","contactName":"Leftover Partial","email":"morgan@example.com","industry":"Home Services","clientType":"residential","dealValue":175,"stage":"Onboarding"}' "$S45/api/clients")
+check "45l: owner creates individual client (full name + leftover partial contact name) → 201" 201 "$S"
+MORGAN_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$MORGAN_ID}" "$S45/api/agreements/send")
+check "45l: send agreement for the individual → 200" 200 "$S"
+sleep 1
+TOKEN45M=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK45_EMAILS" | tail -1 | cut -d/ -f2)
+PDF45M=$(ls -t "$MOCK45/db/agreements/"*.pdf 2>/dev/null | head -1)
+if [ -n "$PDF45M" ] && DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/pdfprobe.ts" "$PDF45M" "Morgan Rivera" "!Leftover Partial" '!{{' '$175.00' > "$MOCK45/probe2.out" 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ PDF (individual): full name 'Morgan Rivera' present; leftover partial contact name absent; deal value \$175.00 rendered; no literal {{"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ PDF individual probe failed: $(cat "$MOCK45/probe2.out" 2>/dev/null)"
+fi
+# The public sign page shows the SAME document text (auto-filled name) while
+# the typed-signature field stays MANUAL (owner direction: document text ONLY).
+S=$(code -b "$JAR" "$S45/sign/$TOKEN45M")
+check "45l: individual sign page → 200" 200 "$S"
+if grep -q "Morgan Rivera" /tmp/body.json && ! grep -q "Leftover Partial" /tmp/body.json && grep -q "Your full name" /tmp/body.json && grep -q 'id="name"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ sign page: document text auto-fills the full name; typed-signature field remains a manual entry"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ individual sign page content: $(head -c 300 /tmp/body.json)"
+fi
+echo "-- 45m. Template editor lives under Administration -> Agreements (owner direction 2026-08-17) =="
+# One home for the editor: src/Admin.tsx (owner Administration tab) hosts the
+# Agreements section; src/Settings.tsx no longer renders it. Owner-workspace
+# only — tenant workspaces are untouched (Settings is tenant-rendered and
+# never had the card; the server still owner-gates the template route).
+if grep -Fq "saveAgreementTemplate" src/Admin.tsx && grep -Fq "Agreement template" src/Admin.tsx && grep -Fq "Agreements" src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Agreements section (editor + save) lives in src/Admin.tsx (Administration)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Agreements section markers missing from src/Admin.tsx"
+fi
+if ! grep -Fq "saveAgreementTemplate" src/Settings.tsx && ! grep -Fq "Agreement template" src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Settings no longer hosts the agreement template editor (no duplicate)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Settings still contains agreement template editor markers"
+fi
+if grep -Fq "Administration" src/App.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner nav tab reads Administration (App.tsx)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Administration nav label missing from src/App.tsx"
+fi
+# Scroll box (change 2): the textarea is a fixed-height scroll box.
+if awk '/\.agree-template-input \{/,/\}/' src/styles.css | grep -q "overflow-y" && awk '/\.agree-template-input \{/,/\}/' src/styles.css | grep -q "height: 440px"; then
+  PASS=$((PASS+1)); echo "  ✓ source: .agree-template-input is a scroll box (fixed height 440px + overflow-y)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: .agree-template-input scroll-box CSS missing from src/styles.css"
+fi
+# Bundle markers (the 45h build above is current — nothing rebuilt since).
+NEWEST_JS45=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS45" ] && grep -Fq "Administration" "$NEWEST_JS45" && grep -Fq "Agreements" "$NEWEST_JS45" && grep -Fq "Save agreement template" "$NEWEST_JS45"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: Administration nav + Agreements section (template editor) shipped"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: Administration/Agreements markers missing from $NEWEST_JS45"
+fi
+if [ -n "$NEWEST_JS45" ] && grep -Fq "Agreement template" "$NEWEST_JS45"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: 'Agreement template' still shipped (now from Admin.tsx)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: 'Agreement template' missing from $NEWEST_JS45"
+fi
 
 echo "-- 45j. Cleanup == "
 stop_crm "$MOCK45/srv.pid" 2>/dev/null
