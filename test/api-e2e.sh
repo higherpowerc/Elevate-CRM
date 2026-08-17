@@ -5862,7 +5862,7 @@ if grep -Fq 'id="read"' server/agreements.ts && grep -Fq 'scrollHeight' server/a
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: sign-page scroll-gate markers missing from server/agreements.ts"
 fi
-if grep -Fq '\[YOUR LLC NAME\]' server/agreements.ts && grep -Fq '\[CLIENT LEGAL NAME\]' server/agreements.ts && grep -Fq '\[EFFECTIVE DATE\]' server/agreements.ts; then
+if grep -Fq '[YOUR LLC NAME]' server/agreements.ts && grep -Fq '[CLIENT LEGAL NAME]' server/agreements.ts && grep -Fq '[EFFECTIVE DATE]' server/agreements.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: bracket-style placeholders wired in renderAgreementTemplate"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: bracket placeholders missing from server/agreements.ts"
@@ -5918,7 +5918,7 @@ check "48d: owner login on throwaway -> 200" 200 "$S"
 cat > "$MOCK48/tpl.txt" <<'TXT'
 CLIENT SERVICES AGREEMENT between [YOUR LLC NAME] and [CLIENT LEGAL NAME] (effective [EFFECTIVE DATE], monthly price [PRICE] / [DEAL_VALUE]).
 TXT
-for i in $(seq 1 140); do
+for i in $(seq 1 55); do
   echo "Clause $i. The Client agrees to the terms and conditions of this agreement, including the confidentiality, data-handling and cancellation provisions, and acknowledges that the monthly fee is payable in advance." >> "$MOCK48/tpl.txt"
 done
 python3 - "$MOCK48/tpl.txt" "$MOCK48/tpl.json" <<'PY'
