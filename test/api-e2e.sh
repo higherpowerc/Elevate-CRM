@@ -5151,7 +5151,7 @@ ls "$MOCK45/db/agreements/"*.pdf >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  
 echo "-- 45c. Public page: first open → Delivered + IP captured == "
 S=$(code -b "$JAR" "$S45/sign/$TOKEN45")
 check "45c: public sign page → 200" 200 "$S"
-grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Harbor Legal LLP / Harbor Legal LLP" /tmp/body.json && grep -q "/ \$200.00 / \$200.00" /tmp/body.json && ! grep -q '{{' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the template with every placeholder filled ({{company}} + record-type {{client_name}} = business name + {{date}} + {{price}} + {{deal_value}} = \$200.00; no literal {{ left)"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
+grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Elevate Studio / Harbor Legal LLP" /tmp/body.json && grep -q "/ \$200.00 / \$200.00" /tmp/body.json && ! grep -q '{{' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the template with every placeholder filled ({{company}} = the OWNER org name (Elevate Studio), NOT the client's; {{client_name}} = business name + {{date}} + {{price}} + {{deal_value}} = \$200.00; no literal {{ left)"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
 S=$(code -b "$JA45" "$S45/api/agreements")
 check "45c: owner audit list → 200" 200 "$S"
 grep -q '"status":"delivered"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ first open advanced status to Delivered"; } || { FAIL=$((FAIL+1)); echo "  ✗ audit list: $(cat /tmp/body.json)"; }
@@ -5965,7 +5965,7 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ Decline button wrongly disabled"
 fi
 # Bracket placeholders replaced (no literal bracket text left in the page).
-if grep -Fq 'Scroll Test LLC and Scroll Test LLC' "$P48" && ! grep -Fq '[YOUR LLC NAME]' "$P48" && ! grep -Fq '[CLIENT LEGAL NAME]' "$P48" && ! grep -Fq '[EFFECTIVE DATE]' "$P48" && ! grep -Fq '[PRICE]' "$P48" && ! grep -Fq '[DEAL_VALUE]' "$P48"; then
+if grep -Fq 'Elevate Studio and Scroll Test LLC' "$P48" && ! grep -Fq '[YOUR LLC NAME]' "$P48" && ! grep -Fq '[CLIENT LEGAL NAME]' "$P48" && ! grep -Fq '[EFFECTIVE DATE]' "$P48" && ! grep -Fq '[PRICE]' "$P48" && ! grep -Fq '[DEAL_VALUE]' "$P48"; then
   PASS=$((PASS+1)); echo "  ✓ bracket placeholders replaced in the sign page (no literal [..] left)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ bracket placeholders not fully replaced"
@@ -6022,10 +6022,30 @@ console.log(r ? r.pdf_id : "");
 TS
 PDF48_ID=$(DB_FILE="$MOCK48/db/crm.db" CLIENT_NAME="Scroll Test LLC" bun "$MOCK48/pdfpath.ts" 2>/dev/null)
 PDF48="$MOCK48/db/agreements/$PDF48_ID.pdf"
-if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Scroll Test LLC" '![$' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
-  PASS=$((PASS+1)); echo "  ✓ PDF: bracket placeholders replaced (client name + \$200.00 present; no literal [..] remains)"
+if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Elevate Studio" "Scroll Test LLC" '![$' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ PDF: bracket placeholders replaced (OWNER name Elevate Studio + client name + \$200.00 present; no literal [..] remains)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ PDF probe failed: $(cat "$MOCK48/probe.out" 2>/dev/null)"
+fi
+echo "-- 48g. Payment-link notice fix: ApiError imported as a VALUE (live-test finding: click showed no notice) == "
+# Root cause (2026-08-17, reproduced locally in a browser): the Clients tab
+# "Send payment link" click fired the fetch, the server answered 503, but NO
+# alert appeared. src/ClientsDirectory.tsx imported ApiError with a TYPE-only
+# import (type ApiError) while using it as a value in \`instanceof ApiError\`.
+# The bun build transpiler strips type-only imports without type-checking, so
+# the bundle carried a dangling \`ApiError\` identifier; at runtime the 503
+# catch threw ReferenceError before the notice (or the error branch) could
+# run. Fix: value import — the same pattern Login.tsx already uses.
+if grep -Fq 'import { api, ApiError, type ClientInput }' src/ClientsDirectory.tsx && ! grep -Fq 'import { api, type ApiError' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: ApiError imported as a VALUE in ClientsDirectory.tsx (instanceof resolves to the real class)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: ApiError still imported type-only in src/ClientsDirectory.tsx"
+fi
+NEWEST_JS48G=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS48G" ] && ! grep -Fq 'instanceof ApiError' "$NEWEST_JS48G"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: no dangling 'instanceof ApiError' reference (503 branch compiles against the real class)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: dangling ApiError reference still present in $NEWEST_JS48G"
 fi
 echo "-- 48f. Cleanup == "
 stop_crm "$MOCK48/srv.pid" 2>/dev/null
