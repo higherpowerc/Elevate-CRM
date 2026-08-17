@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type ApiError, type ClientInput } from "./api";
+/* ApiError must be imported as a VALUE (not `type ApiError`) — it is used in
+   `instanceof ApiError` below. A type-only import is stripped by the bun
+   build transpiler (no type-checker runs at build time), leaving a dangling
+   `ApiError` reference in the bundle that throws ReferenceError at runtime —
+   the payment-link 503 notice never rendered (live-test finding 2026-08-17). */
+import { api, ApiError, type ClientInput } from "./api";
 import { money, type Client, type CustomFieldDef, type DashboardData, type Stage } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { ServiceChips } from "./bits";

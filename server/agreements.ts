@@ -26,7 +26,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
-import { dataDir, db, getOrg, parseStages } from "./db";
+import { dataDir, db, getOrg, getOwnerOrgId, parseStages } from "./db";
 import type { ClientRow } from "./db";
 
 /** Sign links live 30 days from send. */
@@ -43,7 +43,8 @@ export function isAgreementStatus(v: unknown): v is AgreementStatus {
  * Built-in default template — used until the owner edits their own wording in
  * Administration → Agreements (the template editor). The placeholders are the
  * contract: {{company}}, {{client_name}}, {{date}}, {{price}} and the
- * {{deal_value}} alias (both render the deal value).
+ * {{deal_value}} alias (both render the deal value). {{company}} is the
+ * PROVIDER — the owner's LLC/company name (org settings), never the client's.
  */
 export const DEFAULT_AGREEMENT_TEMPLATE = [
   "CLIENT SERVICES AGREEMENT",
@@ -77,6 +78,13 @@ export const DEFAULT_AGREEMENT_TEMPLATE = [
 ].join("\n");
 
 export interface AgreementClientDetails {
+  /** The PROVIDER's company name — the owner's LLC/brand from the OWNER org's
+   *  settings (orgs.name of the owner org), never the client's business name.
+   *  This is what {{company}} and [YOUR LLC NAME] render (owner direction
+   *  2026-08-17). */
+  providerName: string;
+  /** The client's business name (B2B) or full name (individual) — what
+   *  {{client_name}} and [CLIENT LEGAL NAME] render. */
   companyName: string;
   clientName: string;
   email: string;
@@ -101,7 +109,10 @@ function clientAgreementName(client: ClientRow): string {
  *  Supported — TWO placeholder styles, mixable in the same template
  *  (live-test finding 2026-08-17: the owner's template uses bracket-style
  *  placeholders that were NOT being replaced):
- *    {{company}}          == [YOUR LLC NAME]    → the business name
+ *    {{company}}          == [YOUR LLC NAME]    → the PROVIDER's name (the
+ *       OWNER org's company name from org settings — owner direction
+ *       2026-08-17: "Owner company is my LLC name"; the CLIENT's name is
+ *       never substituted here)
  *    {{client_name}}      == [CLIENT LEGAL NAME] → the record-type client name
  *       (business name for a business, full name for an individual)
  *    {{date}}             == [EFFECTIVE DATE]   → today (YYYY-MM-DD)
@@ -114,8 +125,8 @@ export function renderAgreementTemplate(template: string, c: AgreementClientDeta
   // Formatted deal value (owner direction 2026-08-17): both {{price}} and
   // {{deal_value}} render as a dollar amount ("$200.00") in the document
   // text — the sign page and the generated PDF show the same formatted value.
-  const price = c.dealValue > 0 ? `$${c.dealValue.toFixed(2)}` : "—";
-  const company = c.companyName;
+  const price = c.dealValue > 0 ? "$" + c.dealValue.toFixed(2) : "—";
+  const company = c.providerName;
   const client = c.clientName || c.companyName;
   return (template && template.trim() !== "" ? template : DEFAULT_AGREEMENT_TEMPLATE)
     .replaceAll("{{company}}", company)
@@ -294,9 +305,17 @@ export function getEnvelopeByTokenHash(tokenHash: string): AgreementEnvelopeRow 
  * old link dies), marks the client sent, and returns the raw token + envelope
  * for the caller to email. The caller is responsible for owner-scoping the
  * client BEFORE calling (this module does no auth).
+ *
+ * {{company}} / [YOUR LLC NAME] render the PROVIDER — the OWNER org's company
+ * name (orgs.name of the owner org — getOwnerOrgId), owner direction
+ * 2026-08-17. The client's own name only ever feeds {{client_name}} /
+ * [CLIENT LEGAL NAME]. Agreements are owner-workspace-only, so the owner org
+ * is looked up directly (never derived from the client row).
  */
 export async function sendAgreement(client: ClientRow, template: string): Promise<{ token: string; envelope: AgreementEnvelopeRow }> {
+  const ownerOrg = getOrg(getOwnerOrgId());
   const text = renderAgreementTemplate(template, {
+    providerName: ownerOrg?.name ?? "",
     companyName: client.company_name,
     clientName: clientAgreementName(client),
     email: client.email,
