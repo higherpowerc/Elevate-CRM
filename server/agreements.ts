@@ -105,7 +105,10 @@ function clientAgreementName(client: ClientRow): string {
  *  the shipped default uses {{price}}). */
 export function renderAgreementTemplate(template: string, c: AgreementClientDetails): string {
   const date = new Date().toISOString().slice(0, 10);
-  const price = c.dealValue > 0 ? `${c.dealValue.toFixed(2)}` : "—";
+  // Formatted deal value (owner direction 2026-08-17): both {{price}} and
+  // {{deal_value}} render as a dollar amount ("$200.00") in the document
+  // text — the sign page and the generated PDF show the same formatted value.
+  const price = c.dealValue > 0 ? `$${c.dealValue.toFixed(2)}` : "—";
   return (template && template.trim() !== "" ? template : DEFAULT_AGREEMENT_TEMPLATE)
     .replaceAll("{{company}}", c.companyName)
     .replaceAll("{{client_name}}", c.clientName || c.companyName)

@@ -5309,7 +5309,6 @@ if grep -Fq "saveAgreementTemplate" src/Admin.tsx && grep -Fq "agreementTemplate
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: template editor markers missing"
 fi
-grep -q "422" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ emailError surfaces the Resend 422 detail"; } || { FAIL=$((FAIL+1)); echo "  ✗ emailError lacks the 422 detail: $(cat /tmp/body.json)"; }
 S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' \
   -d '{"name":"Fail Tenant LLC","email":"fail@example.com","password":"failpass123"}' "$S45/api/admin/orgs")
 check "45i: provision tenant with failing recipient → 201" 201 "$S"
@@ -5317,6 +5316,14 @@ if grep -q '"emailStatus":"failed"' /tmp/body.json && grep -q '"emailError"' /tm
   PASS=$((PASS+1)); echo "  ✓ provisioning reports emailStatus failed + emailError"
 else
   FAIL=$((FAIL+1)); echo "  ✗ provisioning failure fields missing: $(cat /tmp/body.json)"
+fi
+# The emailError must carry the Resend 422 detail (the mock rejects
+# fail@example.com with HTTP 422, like Resend test mode) — asserted against
+# THIS provisioning response, not a stale body from an earlier request.
+if grep -q '"emailError":"Resend returned 422' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ emailError surfaces the Resend 422 detail"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ emailError lacks the 422 detail: $(cat /tmp/body.json)"
 fi
 echo "-- 45k. Central Documents view (owner live-test finding: 'where are we storing these documents — they should be under admin') =="
 # The owner's Documents tab renders the existing owner-only audit API. Verify
@@ -5370,8 +5377,10 @@ echo "-- 45l. PDF text auto-fills the record-type client name + every placeholde
 # the person's FULL NAME (first + last) for an individual — consistent with
 # the global display rules. The old behavior rendered the commercial 'Contact
 # name' (the contact PERSON, or a partial/leftover value for individuals).
-# pdf-lib compresses content streams (FlateDecode), so probe the PDF by
-# inflating every stream and grepping the decoded text for the name strings.
+# pdf-lib compresses content streams (FlateDecode) AND encodes drawn text as
+# HEX strings (<4142...> Tj), so probe the PDF by inflating every stream and
+# decoding the page content streams (hex + literal strings) back to plain
+# text, then grepping that for the name/value strings.
 cat > "$MOCK45/pdfprobe.ts" <<'TS'
 import { readFileSync } from "node:fs";
 import { inflateSync } from "node:zlib";
@@ -5379,7 +5388,6 @@ const file = process.argv[2];
 const wants = process.argv.slice(3);
 const buf = readFileSync(file);
 const raw = buf.toString("latin1");
-let text = raw;
 const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
 let m;
 const parts: string[] = [];
@@ -5388,7 +5396,21 @@ while ((m = re.exec(raw)) !== null) {
     parts.push(inflateSync(Buffer.from(m[1], "latin1")).toString("latin1"));
   } catch { /* not a flate stream — leave as-is */ }
 }
-text += "\n" + parts.join("\n");
+const hexToText = (hex: string): string => {
+  const h = hex.replace(/\s+/g, "");
+  let out = "";
+  for (let i = 0; i + 1 < h.length; i += 2) out += String.fromCharCode(parseInt(h.slice(i, i + 2), 16));
+  return out;
+};
+let text = raw + "\n" + parts.join("\n");
+for (const part of parts) {
+  // Only page content streams carry drawn text (Tj/TJ operators) — decoding
+  // hex strings in object streams would just add font/metadata noise.
+  if (!part.includes("Tj") && !part.includes("TJ")) continue;
+  text += "\n" + part
+    .replace(/<([0-9A-Fa-f\s]+)>/g, (_: string, h: string) => hexToText(h))
+    .replace(/\(((?:\\.|[^\\()])*)\)/g, (_: string, s: string) => s.replace(/\\([\\()])/g, "$1"));
+}
 let ok = true;
 for (const w of wants) {
   const neg = w.startsWith("!");
@@ -5399,10 +5421,23 @@ for (const w of wants) {
 console.log(ok ? "ok" : "FAIL");
 process.exit(ok ? 0 : 1);
 TS
+# Select the PDF by the CLIENT's envelope (pdf_id in the DB), not by mtime —
+# earlier sends (Expired Co in 45f) would otherwise be picked as the "newest".
+cat > "$MOCK45/pdfpath.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+const r = db
+  .query(
+    "SELECT e.pdf_id FROM agreement_envelopes e JOIN clients c ON c.id = e.client_id WHERE c.company_name = ? ORDER BY e.id DESC LIMIT 1",
+  )
+  .get(process.env.CLIENT_NAME ?? "") as { pdf_id: string } | null;
+console.log(r ? r.pdf_id : "");
+TS
 # Business client (Harbor Legal LLP, commercial) — the PDF must show the
 # BUSINESS name and must NOT show the contact person (Jordan Lee) anywhere.
-PDF45L=$(ls -t "$MOCK45/db/agreements/"*.pdf 2>/dev/null | head -1)
-if [ -n "$PDF45L" ] && DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/pdfprobe.ts" "$PDF45L" "Harbor Legal LLP" "!Jordan Lee" '!{{' '$200.00' > "$MOCK45/probe1.out" 2>&1; then
+PDF45L_ID=$(DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Harbor Legal LLP" bun "$MOCK45/pdfpath.ts" 2>/dev/null)
+PDF45L="$MOCK45/db/agreements/$PDF45L_ID.pdf"
+if [ -n "$PDF45L_ID" ] && [ -f "$PDF45L" ] && DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/pdfprobe.ts" "$PDF45L" "Harbor Legal LLP" "!Jordan Lee" '!{{' '$200.00' > "$MOCK45/probe1.out" 2>&1; then
   PASS=$((PASS+1)); echo "  ✓ PDF (business client): business name 'Harbor Legal LLP' present; contact person 'Jordan Lee' absent; {{price}} + {{deal_value}} both render \$200.00; no literal {{"
 else
   FAIL=$((FAIL+1)); echo "  ✗ PDF business probe failed: $(cat "$MOCK45/probe1.out" 2>/dev/null)"
@@ -5417,8 +5452,9 @@ S=$(code -b "$JA45" -X POST -H 'Content-Type: application/json' -d "{\"clientId\
 check "45l: send agreement for the individual → 200" 200 "$S"
 sleep 1
 TOKEN45M=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK45_EMAILS" | tail -1 | cut -d/ -f2)
-PDF45M=$(ls -t "$MOCK45/db/agreements/"*.pdf 2>/dev/null | head -1)
-if [ -n "$PDF45M" ] && DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/pdfprobe.ts" "$PDF45M" "Morgan Rivera" "!Leftover Partial" '!{{' '$175.00' > "$MOCK45/probe2.out" 2>&1; then
+PDF45M_ID=$(DB_FILE="$MOCK45/db/crm.db" CLIENT_NAME="Morgan Rivera" bun "$MOCK45/pdfpath.ts" 2>/dev/null)
+PDF45M="$MOCK45/db/agreements/$PDF45M_ID.pdf"
+if [ -n "$PDF45M_ID" ] && [ -f "$PDF45M" ] && DB_FILE="$MOCK45/db/crm.db" bun "$MOCK45/pdfprobe.ts" "$PDF45M" "Morgan Rivera" "!Leftover Partial" '!{{' '$175.00' > "$MOCK45/probe2.out" 2>&1; then
   PASS=$((PASS+1)); echo "  ✓ PDF (individual): full name 'Morgan Rivera' present; leftover partial contact name absent; deal value \$175.00 rendered; no literal {{"
 else
   FAIL=$((FAIL+1)); echo "  ✗ PDF individual probe failed: $(cat "$MOCK45/probe2.out" 2>/dev/null)"
