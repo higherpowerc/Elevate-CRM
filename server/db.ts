@@ -875,6 +875,35 @@ db.exec(`
 }
 
 /**
+ * Self-serve cancel/offboarding migration (Phase 5 prep, owner direction —
+ * per-account subscription). Idempotent — safe on every boot.
+ *
+ * orgs gains the account lifecycle columns:
+ *   status          'active' (default) | 'canceled' — a canceled account's
+ *                   users can no longer log in (blocked server-side) and every
+ *                   authed route 403s, but NOTHING is hard-deleted: the rows
+ *                   stay in the DB for the 30-day data-retention window.
+ *   canceled_at     SQLite datetime when the org admin canceled ('' until then)
+ *   retention_until SQLite datetime = canceled_at + 30 days (contract: 30-day
+ *                   data retention). Displayed to the users at login/block time
+ *                   and returned to the canceling admin.
+ *
+ * All plain TEXT with DEFAULTs, so existing rows backfill cleanly and no FK
+ * games are needed (the same pattern every Phase 3 migration uses).
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  const addOrgCol = (name: string, ddl: string) => {
+    if (!orgCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE orgs ADD COLUMN ${ddl}`);
+    }
+  };
+  addOrgCol("status", "status TEXT NOT NULL DEFAULT 'active'");
+  addOrgCol("canceled_at", "canceled_at TEXT NOT NULL DEFAULT ''");
+  addOrgCol("retention_until", "retention_until TEXT NOT NULL DEFAULT ''");
+}
+
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
@@ -1076,13 +1105,19 @@ export interface OrgRow {
    *  {{date}}, {{price}}). '' = use the built-in default. Owner-only in the
    *  API; tenants never see or write it. */
   agreement_template: string;
+  /** Phase 5 prep — account lifecycle: 'active' | 'canceled' (a canceled
+   *  account's users are blocked from login + every authed route; data is
+   *  retained, not deleted). '' = never canceled. */
+  status: string;
+  canceled_at: string;
+  retention_until: string;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, status, canceled_at, retention_until, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }

@@ -121,6 +121,15 @@ export default function Settings({
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSaved, setPwSaved] = useState<string | null>(null);
 
+  /* Phase 5 prep — tenant self-service: data export + self-serve cancel. */
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [canceledInfo, setCanceledInfo] = useState<{ message: string; retentionUntil: string } | null>(null);
+
   async function savePassword(e: React.FormEvent) {
     e.preventDefault();
     setPwError(null);
@@ -148,6 +157,44 @@ export default function Settings({
       setPwError(err instanceof Error ? err.message : "Change failed.");
     } finally {
       setPwBusy(false);
+    }
+  }
+
+  /* Phase 5 prep — self-serve data export: downloads this workspace's own
+     data as a JSON file (server-scoped by org_id; credentials never leave
+     the server). Read-only — available to any settings reader. */
+  async function handleExport() {
+    setExportBusy(true);
+    setExportMsg(null);
+    setExportError(null);
+    try {
+      const res = await api.exportData();
+      setExportMsg(
+        `Downloaded ${res.filename} — it contains every record in this workspace.`,
+      );
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
+  /* Phase 5 prep — self-serve cancel (org admin only; the server guards the
+     owner workspace). Cancellation is effective immediately for sign-in; the
+     data is RETAINED 30 days (never hard-deleted). The server clears the
+     session cookie, so after success this page shows the canceled notice and
+     the next API call signs the shell out (the login page then shows the
+     server's clear "account canceled" message with the retention date). */
+  async function handleCancelAccount() {
+    setCancelBusy(true);
+    setCancelError(null);
+    try {
+      const res = await api.cancelAccount();
+      setCanceledInfo({ message: res.message, retentionUntil: res.retentionUntil });
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : "Could not cancel the account.");
+    } finally {
+      setCancelBusy(false);
     }
   }
 
@@ -1522,6 +1569,79 @@ export default function Settings({
             </button>
           </form>
         </div>
+
+        {/* Phase 5 prep — self-serve data export. Read-only: any settings
+            reader (org admin or a member with settings access) can download
+            this workspace's own data as a JSON file. The server scopes every
+            query by org_id, so the file can never contain another tenant's
+            rows. */}
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Your data</h2>
+            <p className="admin-card-sub">
+              Download everything in this workspace — clients, tasks, invoices, custom field
+              values, support tickets and agreements — as a JSON file. Only this workspace's
+              data is included, and no passwords or sign-in credentials.
+            </p>
+          </div>
+          {exportError && (
+            <div className="alert alert-error" role="alert">
+              {exportError}
+            </div>
+          )}
+          {exportMsg && (
+            <div className="alert alert-success" role="status">
+              {exportMsg}
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={handleExport}
+            disabled={exportBusy}
+          >
+            {exportBusy ? "Preparing…" : "Export my data"}
+          </button>
+        </div>
+
+        {/* Phase 5 prep — self-serve cancel/offboarding. ORG ADMIN ONLY and
+            never the owner workspace (the server 403s both). Cancellation is
+            effective immediately for sign-in; the data is RETAINED 30 days
+            (contract: 30-day data retention, no partial-month refunds). */}
+        {isOrgAdmin && !isOwnerOrg && (
+          <div className="card admin-form">
+            <div className="admin-card-head">
+              <h2 className="admin-card-title">Cancel account</h2>
+              <p className="admin-card-sub">
+                Canceling ends sign-in access to this workspace immediately. Your data is
+                retained for 30 days and no further charges are made; no partial-month
+                refunds are given.
+              </p>
+            </div>
+            {cancelError && (
+              <div className="alert alert-error" role="alert">
+                {cancelError}
+              </div>
+            )}
+            {canceledInfo && (
+              <div className="alert" role="status">
+                <strong>{canceledInfo.message}</strong>{" "}
+                {canceledInfo.retentionUntil
+                  ? `Your data is retained until ${canceledInfo.retentionUntil.slice(0, 10)}.`
+                  : ""}
+              </div>
+            )}
+            {!canceledInfo && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => setConfirmCancel(true)}
+              >
+                Cancel account…
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Team users per client account (owner request 2026-08-14) — the
@@ -1917,6 +2037,22 @@ export default function Settings({
           busy={busy}
           onCancel={() => setConfirmRemoveGroup(null)}
           onConfirm={() => removeGroup(confirmRemoveGroup)}
+        />
+      )}
+      {confirmCancel && (
+        <ConfirmDeleteModal
+          title="Cancel this account?"
+          entity={settings ? settings.orgName : "this workspace"}
+          note={
+            <p className="confirm-delete-note">
+              Everyone loses sign-in access immediately. Your data is retained for 30 days and
+              no further charges will be made. This cannot be undone from this account.
+            </p>
+          }
+          confirmLabel="Cancel account"
+          busy={cancelBusy}
+          onCancel={() => setConfirmCancel(false)}
+          onConfirm={handleCancelAccount}
         />
       )}
     </div>

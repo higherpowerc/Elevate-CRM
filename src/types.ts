@@ -349,6 +349,12 @@ export interface Org {
    *  ("sales" | "subscription"). Seeded by vertical; tenant-editable in
    *  Settings, owner-overridable in Admin. */
   revenueModel?: RevenueModel;
+  /** Phase 5 prep — account lifecycle: 'active' | 'canceled' ('' when the
+   *  server predates the migration). A canceled account's users are blocked;
+   *  the data stays retained until retentionUntil. */
+  status?: string;
+  canceledAt?: string;
+  retentionUntil?: string;
 }
 /** 3g-3: an owner notification that a sold lead got auto-provisioned. */
 export interface ProvisionEvent {

@@ -141,6 +141,49 @@ export const api = {
     }),
   deleteOrgMember: (id: number) =>
     request<{ ok: true }>(`/api/org/members/${id}`, { method: "DELETE" }),
+  /* Phase 5 prep — tenant self-service. exportData downloads the org's own
+     JSON export (session-cookie auth; the server 403s without settings read
+     access). The response is a file attachment — fetch + blob download rather
+     than request<> (which assumes a JSON body). cancelAccount flips the org to
+     'canceled' (org admin only; the owner org is guarded server-side) and the
+     server clears the session cookie. */
+  exportData: async (): Promise<{ ok: true; filename: string }> => {
+    const res = await fetch("/api/settings/export", { credentials: "include" });
+    if (res.status === 401) {
+      window.dispatchEvent(new Event("crm:unauthorized"));
+      throw new ApiError(401, "Not signed in.");
+    }
+    if (!res.ok) {
+      let msg = `Export failed (${res.status}).`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === "string") msg = body.error;
+      } catch {
+        /* no JSON body */
+      }
+      throw new ApiError(res.status, msg);
+    }
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const m = disposition.match(/filename="([^"]+)"/);
+    const filename = m
+      ? m[1]
+      : `crm-export-${new Date().toISOString().slice(0, 10)}.json`;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return { ok: true, filename };
+  },
+  cancelAccount: () =>
+    request<{ ok: true; message: string; canceledAt: string; retentionUntil: string }>(
+      "/api/settings/cancel",
+      { method: "POST" },
+    ),
 
   /* Owner-only admin endpoints (Phase 2 — tenant provisioning). A member
      calling these gets a 403 from the server. */
