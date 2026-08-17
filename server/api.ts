@@ -171,7 +171,7 @@ function requireAuth(req: Request): AuthContext | Response {
   const org = getOrg(user.orgId);
   if (org && org.status === "canceled") {
     return err(
-      `This account has been canceled. Your data is retained until ${"$"}{retentionDateLabel(org.retention_until)}. Contact support if this was a mistake.`,
+      `This account has been canceled. Your data is retained until ${retentionDateLabel(org.retention_until)}. Contact support if this was a mistake.`,
       403,
     );
   }
@@ -1896,7 +1896,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       return json(
         {
           error: "account_canceled",
-          message: `This account has been canceled. Your data is retained until ${"$"}{retentionDateLabel(loginOrg.retention_until)}. Contact support if this was a mistake.`,
+          message: `This account has been canceled. Your data is retained until ${retentionDateLabel(loginOrg.retention_until)}. Contact support if this was a mistake.`,
         },
         403,
       );
@@ -3025,7 +3025,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       status: 200,
       headers: {
         "Content-Type": "application/json; charset=utf-8",
-        "Content-Disposition": `attachment; filename="crm-export-${"$"}{slug}-${"$"}{date}.json"`,
+        "Content-Disposition": `attachment; filename="crm-export-${slug}-${date}.json"`,
         "Cache-Control": "no-store",
       },
     });
@@ -3063,7 +3063,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         retentionUntil: updated?.retention_until ?? "",
       },
       200,
-      { "Set-Cookie": `${"$"}{SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` },
+      { "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0` },
     );
   }
 
@@ -3174,17 +3174,46 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       );
       if (!v.ok) return err(v.error, 400);
       const c = v.value;
-      const sets = [
-        "company_name = ?", "contact_name = ?", "email = ?", "phone = ?", "industry = ?",
-        "services = ?", "custom_fields = ?", "deal_value = ?", "stage = ?", "next_action = ?", "notes = ?", "archived = ?",
-        "client_type = ?", "address = ?", "city = ?", "state = ?", "zip = ?", "website = ?", "lead_source = ?",
-      ];
-      const params: (string | number)[] = [
-        c.companyName, c.contactName, c.email, c.phone, c.industry,
-        JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
-        c.archived ? 1 : 0,
-        c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
-      ];
+      // AZ defect D4 (2026-08-17): TRUE partial updates — a column is
+      // persisted ONLY when the client sent the field. An omitted key NEVER
+      // clobbers the stored value (the documented partial-update rule that
+      // monthlyAmount / intake / lost-DNC / agreementStatus already follow).
+      // Previously this base SET list was unconditional, so a partial PUT
+      // reset the stage to the FIRST stage, zeroed dealValue and cleared
+      // notes/services/customFields/address etc.
+      const sets: string[] = [];
+      const params: (string | number)[] = [];
+      const set = (col: string, value: string | number) => {
+        sets.push(`${col} = ?`);
+        params.push(value);
+      };
+      // Body-presence gate: undefined/null = absent (keep stored value).
+      // dealValue/stage additionally treat "" like absent — the exact same
+      // gate validateClient uses before validating them.
+      const has = (k: string) => body[k] !== undefined && body[k] !== null;
+      const hasValue = (k: string) => {
+        const v = body[k];
+        return v !== undefined && v !== null && v !== "";
+      };
+      if (has("companyName")) set("company_name", c.companyName);
+      if (has("contactName")) set("contact_name", c.contactName);
+      if (has("email")) set("email", c.email);
+      if (has("phone")) set("phone", c.phone);
+      if (has("industry")) set("industry", c.industry);
+      if (has("services")) set("services", JSON.stringify(c.services));
+      if (has("customFields")) set("custom_fields", JSON.stringify(c.customFields));
+      if (hasValue("dealValue")) set("deal_value", c.dealValue);
+      if (hasValue("stage")) set("stage", c.stage);
+      if (has("nextAction")) set("next_action", c.nextAction);
+      if (has("notes")) set("notes", c.notes);
+      if (has("archived")) set("archived", c.archived ? 1 : 0);
+      if (has("clientType")) set("client_type", c.clientType);
+      if (has("address")) set("address", c.address);
+      if (has("city")) set("city", c.city);
+      if (has("state")) set("state", c.state);
+      if (has("zip")) set("zip", c.zip);
+      if (has("website")) set("website", c.website);
+      if (has("leadSource")) set("lead_source", c.leadSource);
       // Owner request 2026-08-14 — the record's monthly amount: persisted only
       // when present in the body (validateClient only sets it when the client
       // sent it), so partial updates never clobber an absent value.
