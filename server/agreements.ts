@@ -41,8 +41,9 @@ export function isAgreementStatus(v: unknown): v is AgreementStatus {
 
 /**
  * Built-in default template — used until the owner edits their own wording in
- * Settings (Settings → "Agreement template"). The placeholders are the
- * contract: {{company}}, {{client_name}}, {{date}}, {{price}}.
+ * Administration → Agreements (the template editor). The placeholders are the
+ * contract: {{company}}, {{client_name}}, {{date}}, {{price}} and the
+ * {{deal_value}} alias (both render the deal value).
  */
 export const DEFAULT_AGREEMENT_TEMPLATE = [
   "CLIENT SERVICES AGREEMENT",
@@ -82,15 +83,38 @@ export interface AgreementClientDetails {
   dealValue: number;
 }
 
-/** Substitute the template's placeholders with the client's details. */
+/**
+ * The client's name for the agreement DOCUMENT, per the GLOBAL display rules
+ * (owner direction 2026-08-16/17): for a business (commercial) record the
+ * company/business name; for an individual the person's full name (first +
+ * last). In this schema both live in company_name — the universal "Contact
+ * name" field is commercial-only and may hold a PARTIAL/leftover value for
+ * individuals, so it must never feed the document (live-test finding
+ * 2026-08-17: the "Client:" line in the generated PDF showed the contact
+ * person instead of the client).
+ */
+function clientAgreementName(client: ClientRow): string {
+  return client.company_name.trim() !== "" ? client.company_name : client.contact_name;
+}
+
+/** Substitute the template's placeholders with the client's details.
+ *  Supported: {{company}} (client's business name), {{client_name}} (the
+ *  record-type client name — business name for a business, full name for an
+ *  individual), {{date}}, {{price}} and {{deal_value}} (both render the deal
+ *  value — the owner's live MASTER SUBSCRIPTION template uses {{deal_value}},
+ *  the shipped default uses {{price}}). */
 export function renderAgreementTemplate(template: string, c: AgreementClientDetails): string {
   const date = new Date().toISOString().slice(0, 10);
+  // Formatted deal value (owner direction 2026-08-17): both {{price}} and
+  // {{deal_value}} render as a dollar amount ("$200.00") in the document
+  // text — the sign page and the generated PDF show the same formatted value.
   const price = c.dealValue > 0 ? `$${c.dealValue.toFixed(2)}` : "—";
   return (template && template.trim() !== "" ? template : DEFAULT_AGREEMENT_TEMPLATE)
     .replaceAll("{{company}}", c.companyName)
     .replaceAll("{{client_name}}", c.clientName || c.companyName)
     .replaceAll("{{date}}", date)
-    .replaceAll("{{price}}", price);
+    .replaceAll("{{price}}", price)
+    .replaceAll("{{deal_value}}", price);
 }
 
 /** Directory holding generated agreement PDFs (alongside the SQLite DB in the
@@ -260,7 +284,7 @@ export function getEnvelopeByTokenHash(tokenHash: string): AgreementEnvelopeRow 
 export async function sendAgreement(client: ClientRow, template: string): Promise<{ token: string; envelope: AgreementEnvelopeRow }> {
   const text = renderAgreementTemplate(template, {
     companyName: client.company_name,
-    clientName: client.contact_name,
+    clientName: clientAgreementName(client),
     email: client.email,
     dealValue: client.deal_value,
   });
