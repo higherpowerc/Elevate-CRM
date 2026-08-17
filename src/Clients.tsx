@@ -572,7 +572,10 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               Manage stages
             </button>
           )}
-          {canEdit && (
+          {/* Live-test finding 2026-08-17 — leads can ONLY be added from the
+              Leads tab (entry-point rule, PR #47). The Onboarding tab
+              (scope "middle") no longer renders the "+ New lead" button. */}
+          {canEdit && scope !== "middle" && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {addCta}
             </button>
@@ -668,7 +671,9 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   ? emptySub
                   : "Try a different search or filter."}
           </p>
-          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && (
+          {/* Live-test finding 2026-08-17 — same entry-point rule for the
+              empty state: no add-lead CTA on the Onboarding tab. */}
+          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && scope !== "middle" && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {emptyCta}
             </button>
@@ -1068,11 +1073,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         <ClientModal
           client={modal.mode === "edit" ? modal.client : undefined}
           stages={orgStages}
-          /* Owner request 2026-08-15 — "+ New lead" defaults to the bucket's
-             first stage: the owner Leads tab → stages[0], the owner
-             Onboarding tab → the FIRST MIDDLE stage (stages[1]). The tenant
-             pipeline and the old default already land on stages[0]. */
-          defaultStage={scope === "middle" ? orgStages[1] : undefined}
           customFieldDefs={customFieldDefs}
           intake={intake}
           busy={busy}

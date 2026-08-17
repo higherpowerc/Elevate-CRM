@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type ClientInput } from "./api";
+import { api, type ApiError, type ClientInput } from "./api";
 import { money, type Client, type CustomFieldDef, type DashboardData, type Stage } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { ServiceChips } from "./bits";
@@ -56,6 +56,12 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
     customIntakeGroups: [],
   });
   const [error, setError] = useState<string | null>(null);
+  /* Phase 5 prep — Stripe payment link (live-test finding 2026-08-17):
+     placeholder action on the owner's Clients tab. With Stripe not connected
+     the endpoint returns 503 and this notice explains that; when
+     STRIPE_SECRET_KEY is set the same button generates + emails a real link
+     and the notice shows it. */
+  const [payNotice, setPayNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
   /* Owner request 2026-08-14/15 — the owner's Clients tab (sold-customer
      directory) leads with the Client MRR KPI: sum of the owner's own client
      records' deal values in the terminal/"Sold" stage (paying clients sold),
@@ -182,6 +188,35 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
       setBusy(false);
     }
   }
+  /* Phase 5 prep — Stripe payment link (live-test finding 2026-08-17):
+     placeholder until STRIPE_SECRET_KEY is set. The endpoint returns 503
+     { error: "Stripe not configured" } when the key is missing; the UI then
+     explains the keys are not connected yet. When the key IS set the same
+     call creates a real Payment Link for $200.00/month and emails it to the
+     client — the notice then shows the link. */
+  async function handlePaymentLink(c: Client) {
+    setBusy(true);
+    setError(null);
+    setPayNotice(null);
+    try {
+      const r = await api.clientPaymentLink(c.id);
+      setPayNotice({
+        kind: "success",
+        text: `Payment link sent to ${r.emailTo}: ${r.url}`,
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 503) {
+        setPayNotice({
+          kind: "warn",
+          text: "Stripe is not connected yet. Once Stripe keys are added, this button will generate and send a payment link to the client.",
+        });
+      } else {
+        setError(e instanceof Error ? e.message : "Payment link failed.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleArchive(c: Client) {
     setBusy(true);
@@ -243,6 +278,14 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
       {error && (
         <div className="alert alert-error" role="alert">
           {error}
+        </div>
+      )}
+      {payNotice && (
+        <div
+          className={payNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+          role={payNotice.kind === "success" ? "status" : "alert"}
+        >
+          {payNotice.text}
         </div>
       )}
 
@@ -364,6 +407,22 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
                         {canEdit && (
                           <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
                             Edit
+                          </button>
+                        )}
+                        {/* Phase 5 prep — Stripe payment link (live-test
+                            finding 2026-08-17): OWNER-ONLY placeholder action
+                            on the Clients tab. With no STRIPE_SECRET_KEY the
+                            server answers 503 and the notice explains the keys
+                            are not connected yet; once the key is set the same
+                            button generates + emails a real Payment Link. */}
+                        {ownerOrg && canEdit && (
+                          <button
+                            className="icon-btn"
+                            title="Send a payment link for the $200/month subscription"
+                            aria-label={`Send payment link to ${c.companyName}`}
+                            onClick={() => handlePaymentLink(c)}
+                          >
+                            Send payment link
                           </button>
                         )}
                         {canEdit && (

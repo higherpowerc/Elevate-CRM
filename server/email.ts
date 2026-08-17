@@ -239,3 +239,34 @@ export function sendAgreementEmail(opts: {
     text,
   });
 }
+
+/** Phase 5 prep — Stripe payment link (live-test finding 2026-08-17): the
+ *  client's unique payment link for the $200.00/month CRM subscription. Sent
+ *  only when the payment-link endpoint successfully created the Stripe link
+ *  (the caller checks Stripe success BEFORE calling this). */
+export function sendPaymentLinkEmail(opts: {
+  to: string;
+  clientName: string;
+  linkUrl: string;
+}): Promise<SendEmailResult> {
+  const text = [
+    `Hi ${opts.clientName},`,
+    "",
+    "Your Elevate Studio CRM subscription is ready to activate.",
+    "",
+    "Use the secure payment link below to complete your first monthly payment:",
+    "",
+    opts.linkUrl,
+    "",
+    "The link is unique to you and takes you straight to checkout.",
+    "",
+    "If you have any questions, just reply to this email.",
+    "",
+    "— Elevate Studio",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: "Your payment link for Elevate Studio CRM",
+    text,
+  });
+}

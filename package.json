@@ -15,7 +15,8 @@
   "dependencies": {
     "pdf-lib": "^1.17.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "stripe": "^22.5.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
