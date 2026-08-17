@@ -64,7 +64,8 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { stripeClient } from "./stripe";
 import {
   AGREEMENT_TOKEN_TTL_MS,
   hashAgreementToken,
@@ -3143,6 +3144,63 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ client: toClient(row, isOwnerSession(auth)) }, 201);
   }
 
+  /* Phase 5 prep — Stripe payment link (live-test finding 2026-08-17):
+     OWNER-ONLY (requireAdmin, like the agreement routes — the owner bills
+     the client's $200/month subscription; tenant orgs never send payment
+     links). Creates a Stripe Payment Link for $200.00/month and emails it to
+     the client. Placeholder behavior: with no STRIPE_SECRET_KEY the endpoint
+     returns 503 { error: "Stripe not configured" } and the UI explains the
+     keys are not connected. Once the owner adds STRIPE_SECRET_KEY the same
+     code path creates a real Payment Link (stripeClient is a lazy singleton —
+     no Stripe code runs, or even imports eagerly, without the key) and emails
+     it via the existing Resend infra. */
+  const payMatch = pathname.match(/^\/api\/clients\/(\d+)\/payment-link$/);
+  if (payMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(payMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
+    if (!client) return err("Client not found.", 404);
+    const stripe = stripeClient();
+    if (!stripe) {
+      return json({ error: "Stripe not configured" }, 503);
+    }
+    if (client.email.trim() === "") {
+      return err(client.company_name + " has no email address — add one before sending a payment link.", 400);
+    }
+    try {
+      // $200.00/month — the CRM subscription price (owner direction
+      // 2026-08-15). A recurring price on a Payment Link starts a monthly
+      // subscription at checkout.
+      const price = await stripe.prices.create({
+        currency: "usd",
+        unit_amount: 20000,
+        recurring: { interval: "month" },
+        product_data: { name: "Elevate Studio CRM — monthly subscription" },
+      });
+      const link = await stripe.paymentLinks.create({
+        line_items: [{ price: price.id, quantity: 1 }],
+      });
+      // Email the link to the client ONLY after Stripe succeeded.
+      const email = await sendPaymentLinkEmail({
+        to: client.email,
+        clientName: client.contact_name || client.company_name,
+        linkUrl: link.url,
+      });
+      return json({
+        ok: true,
+        clientId: client.id,
+        url: link.url,
+        emailTo: client.email,
+        emailStatus: emailStatusOf(email),
+        emailError: email.ok ? undefined : email.error,
+      });
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      console.error("[stripe] payment link failed for client " + id + ": " + m);
+      return json({ error: "Stripe request failed: " + m }, 502);
+    }
+  }
   /* Client item */
   const itemMatch = pathname.match(/^\/api\/clients\/(\d+)$/);
   if (itemMatch) {

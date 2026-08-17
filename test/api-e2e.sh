@@ -5808,6 +5808,231 @@ else FAIL=$((FAIL+1)); echo "  XX deleted orgs still listed: $(head -c 300 /tmp/
 rm -f "$JARA" "$JARB" "$JARC" "$JARCM" "$JARNV" "$JARVO" "$JARX" /tmp/hdr.txt
 echo "  OK 46+47: self-serve data export + cancel/offboarding shipped (Phase 5 prep)"
 
+echo "== 48. Live-test findings 2026-08-17: sign-page scroll gate, bracket placeholders, payment-link placeholder =="
+# Owner's manual pass findings:
+#  1. the public sign page must show the agreement in a scroll box with a
+#     read-to-bottom gate (checkbox + Sign disabled until scrolled to bottom);
+#  3. the agreement template must ALSO accept bracket-style placeholders
+#     ([YOUR LLC NAME], [CLIENT LEGAL NAME], [EFFECTIVE DATE], [PRICE],
+#     [DEAL_VALUE]) alongside the {{}} styles;
+#  4. the Clients tab gains a "Send payment link" placeholder button + a
+#     /api/clients/:id/payment-link endpoint that answers 503
+#     { error: "Stripe not configured" } until STRIPE_SECRET_KEY is set.
+# Finding 2 (Onboarding "+ New lead" removed) is verified by source markers.
+echo "-- 48a. Payment-link endpoint: 503 until Stripe is configured (owner-only) == "
+S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "48a: owner re-login -> 200" 200 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"PayLink Test Co","contactName":"Pay P","email":"paylink@example.com","clientType":"commercial","dealValue":200,"stage":"Leads"}' "$BASE/api/clients")
+check "48a: owner creates a client for the payment-link test -> 201" 201 "$S"
+PAY48_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
+check "48a: payment-link without STRIPE_SECRET_KEY -> 503" 503 "$S"
+if grep -q '{"error":"Stripe not configured"}' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ body is exactly { error: \"Stripe not configured\" }"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ payment-link body: $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Pay Tenant","email":"paytenant@example.com","password":"PayTenant123!"}' "$BASE/api/admin/orgs")
+check "48a: owner provisions a tenant -> 201" 201 "$S"
+JPT=$(mktemp)
+S=$(code -c "$JPT" -b "$JPT" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"paytenant@example.com","password":"PayTenant123!"}' "$BASE/api/auth/login")
+check "48a: tenant login -> 200" 200 "$S"
+S=$(code -b "$JPT" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
+check "48a: tenant payment-link -> 403 (owner-only route)" 403 "$S"
+rm -f "$JPT"
+echo "-- 48b. Bundle: 'Send payment link' button shipped on the Clients tab == "
+NEWEST_JS48=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS48" ] && grep -Fq "Send payment link" "$NEWEST_JS48" && grep -Fq "Stripe is not connected yet" "$NEWEST_JS48"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: 'Send payment link' action + not-connected notice shipped"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: payment-link markers missing from $NEWEST_JS48"
+fi
+echo "-- 48c. Source markers: Onboarding '+ New lead' removed + scroll-gate JS == "
+if grep -Fq 'scope !== "middle"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Onboarding tab (scope middle) no longer renders the add-lead buttons"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Onboarding add-lead gate missing from src/Clients.tsx"
+fi
+if grep -Fq 'id="read"' server/agreements.ts && grep -Fq 'scrollHeight' server/agreements.ts && grep -Fq 'doc-scroll' server/agreements.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: sign page scroll box + read-to-bottom gate (id=read, scrollHeight gate, doc-scroll)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: sign-page scroll-gate markers missing from server/agreements.ts"
+fi
+if grep -Fq '\[YOUR LLC NAME\]' server/agreements.ts && grep -Fq '\[CLIENT LEGAL NAME\]' server/agreements.ts && grep -Fq '\[EFFECTIVE DATE\]' server/agreements.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: bracket-style placeholders wired in renderAgreementTemplate"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: bracket placeholders missing from server/agreements.ts"
+fi
+if grep -Fq '[YOUR LLC NAME]' src/Admin.tsx && grep -Fq 'Both styles work in the same template' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Administration -> Agreements help text lists both placeholder styles"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Agreements help text missing bracket-style placeholders"
+fi
+if grep -Fq 'stripeClient' server/api.ts && grep -Fq 'Stripe not configured' server/api.ts && grep -Fq 'requireAdmin' server/api.ts && grep -Fq 'sendPaymentLinkEmail' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: payment-link route (owner-only, guarded Stripe client, Resend email)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: payment-link route markers missing from server/api.ts"
+fi
+echo "-- 48d. Sign page: scroll box + read gate + bracket placeholders (long template) == "
+# Self-contained server like section 45: a throwaway CRM server on :3008 with
+# a fresh DB posts emails to a mock Resend on :3197. The MAIN server on $BASE
+# is untouched.
+MOCK48=$(mktemp -d)
+MOCK48_EMAILS="$MOCK48/emails.jsonl"
+: > "$MOCK48_EMAILS"
+cat > "$MOCK48/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const PORT = 3197;
+const OUT = process.env.MOCK48_OUT ?? "/tmp/mock48-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock48 resend on " + PORT);
+TS
+MOCK48_OUT="$MOCK48_EMAILS" nohup bun "$MOCK48/resend.ts" > "$MOCK48/resend.log" 2>&1 &
+MOCK48_PID=$!
+i=0; until curl -sf http://127.0.0.1:3197/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+curl -sf http://127.0.0.1:3197/health >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  ✓ mock Resend up on :3197"; } || { FAIL=$((FAIL+1)); echo "  ✗ mock Resend failed"; }
+start_crm 3008 "$MOCK48/db" "$MOCK48/srv.log" "$MOCK48/srv.pid" -u TEST_EMAIL_TO RESEND_API_KEY=test-key-123 RESEND_URL=http://127.0.0.1:3197
+S48=http://localhost:3008
+JA48=$(mktemp)
+S=$(code -c "$JA48" -b "$JA48" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$S48/api/auth/login")
+check "48d: owner login on throwaway -> 200" 200 "$S"
+# A LONG template (both placeholder styles mixed) that overflows the 440px
+# scroll box, plus the client's own business name to prove replacement.
+cat > "$MOCK48/tpl.txt" <<'TXT'
+CLIENT SERVICES AGREEMENT between [YOUR LLC NAME] and [CLIENT LEGAL NAME] (effective [EFFECTIVE DATE], monthly price [PRICE] / [DEAL_VALUE]).
+TXT
+for i in $(seq 1 140); do
+  echo "Clause $i. The Client agrees to the terms and conditions of this agreement, including the confidentiality, data-handling and cancellation provisions, and acknowledges that the monthly fee is payable in advance." >> "$MOCK48/tpl.txt"
+done
+python3 - "$MOCK48/tpl.txt" "$MOCK48/tpl.json" <<'PY'
+import json, sys
+json.dump({"agreementTemplate": open(sys.argv[1]).read()}, open(sys.argv[2], "w"))
+PY
+S=$(code -b "$JA48" -X PUT -H 'Content-Type: application/json' --data @"$MOCK48/tpl.json" "$S48/api/settings")
+check "48d: owner saves the long bracket-style template -> 200" 200 "$S"
+S=$(code -b "$JA48" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Scroll Test LLC","contactName":"Sam S","email":"scroll@example.com","clientType":"commercial","dealValue":200,"stage":"Leads"}' "$S48/api/clients")
+check "48d: owner creates client -> 201" 201 "$S"
+SC48_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA48" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$SC48_ID}" "$S48/api/agreements/send")
+check "48d: send agreement -> 200" 200 "$S"
+sleep 1
+TOKEN48=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK48_EMAILS" | head -1 | cut -d/ -f2)
+if [ -n "$TOKEN48" ] && [ ${#TOKEN48} -eq 64 ]; then
+  PASS=$((PASS+1)); echo "  ✓ sign token extracted from mock email (${#TOKEN48} chars)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ no sign token: $(cat "$MOCK48_EMAILS")"
+fi
+S=$(code -b "$JAR" "$S48/sign/$TOKEN48")
+check "48d: public sign page -> 200" 200 "$S"
+cp /tmp/body.json "$MOCK48/sign.html"
+P48="$MOCK48/sign.html"
+if grep -Fq 'class="doc doc-scroll"' "$P48" && grep -Fq 'id="doc"' "$P48"; then
+  PASS=$((PASS+1)); echo "  ✓ scroll box container present (doc doc-scroll)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ scroll box container missing"
+fi
+if grep -Fq 'I have read and agree to the terms above.' "$P48" && grep -Fq 'id="read" disabled' "$P48"; then
+  PASS=$((PASS+1)); echo "  ✓ read checkbox present and DISABLED by default (read-to-bottom gate)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ read checkbox / disabled default missing"
+fi
+if grep -Fq 'id="btn-sign" disabled' "$P48"; then
+  PASS=$((PASS+1)); echo "  ✓ Sign button starts DISABLED"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ Sign button not disabled by default"
+fi
+if grep -Fq 'id="btn-decline"' "$P48" && ! grep -Fq 'id="btn-decline" disabled' "$P48"; then
+  PASS=$((PASS+1)); echo "  ✓ Decline button stays enabled at all times"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ Decline button wrongly disabled"
+fi
+# Bracket placeholders replaced (no literal bracket text left in the page).
+if grep -Fq 'Scroll Test LLC and Scroll Test LLC' "$P48" && ! grep -Fq '[YOUR LLC NAME]' "$P48" && ! grep -Fq '[CLIENT LEGAL NAME]' "$P48" && ! grep -Fq '[EFFECTIVE DATE]' "$P48" && ! grep -Fq '[PRICE]' "$P48" && ! grep -Fq '[DEAL_VALUE]' "$P48"; then
+  PASS=$((PASS+1)); echo "  ✓ bracket placeholders replaced in the sign page (no literal [..] left)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bracket placeholders not fully replaced"
+fi
+if grep -Fq 'scrollHeight' "$P48" && grep -Fq 'addEventListener("scroll"' "$P48"; then
+  PASS=$((PASS+1)); echo "  ✓ scroll-gate JS wired (scroll listener + scrollHeight bottom test)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ scroll-gate JS missing"
+fi
+echo "-- 48e. PDF: bracket placeholders replaced, no literal [YOUR LLC NAME] remains == "
+cat > "$MOCK48/pdfprobe.ts" <<'TS'
+import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
+const file = process.argv[2];
+const wants = process.argv.slice(3);
+const buf = readFileSync(file);
+const raw = buf.toString("latin1");
+const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+let m;
+const parts: string[] = [];
+while ((m = re.exec(raw)) !== null) {
+  try { parts.push(inflateSync(Buffer.from(m[1], "latin1")).toString("latin1")); } catch { }
+}
+const hexToText = (hex: string): string => {
+  const h = hex.replace(/\s+/g, "");
+  let out = "";
+  for (let i = 0; i + 1 < h.length; i += 2) out += String.fromCharCode(parseInt(h.slice(i, i + 2), 16));
+  return out;
+};
+let text = raw + "\n" + parts.join("\n");
+for (const part of parts) {
+  if (!part.includes("Tj") && !part.includes("TJ")) continue;
+  text += "\n" + part
+    .replace(/<([0-9A-Fa-f\s]+)>/g, (_: string, h: string) => hexToText(h))
+    .replace(/\(((?:\\.|[^\\()])*)\)/g, (_: string, s: string) => s.replace(/\\([\\()])/g, "$1"));
+}
+let ok = true;
+for (const w of wants) {
+  const neg = w.startsWith("!");
+  const needle = neg ? w.slice(1) : w;
+  const hit = text.includes(needle);
+  if (neg ? hit : !hit) { ok = false; console.log((neg ? "UNEXPECTED-PRESENT: " : "MISSING: ") + needle); }
+}
+console.log(ok ? "ok" : "FAIL");
+process.exit(ok ? 0 : 1);
+TS
+cat > "$MOCK48/pdfpath.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DB_FILE ?? "");
+const r = db
+  .query("SELECT e.pdf_id FROM agreement_envelopes e JOIN clients c ON c.id = e.client_id WHERE c.company_name = ? ORDER BY e.id DESC LIMIT 1")
+  .get(process.env.CLIENT_NAME ?? "") as { pdf_id: string } | null;
+console.log(r ? r.pdf_id : "");
+TS
+PDF48_ID=$(DB_FILE="$MOCK48/db/crm.db" CLIENT_NAME="Scroll Test LLC" bun "$MOCK48/pdfpath.ts" 2>/dev/null)
+PDF48="$MOCK48/db/agreements/$PDF48_ID.pdf"
+if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Scroll Test LLC" '!$[' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ PDF: bracket placeholders replaced (client name + \$200.00 present; no literal [..] remains)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ PDF probe failed: $(cat "$MOCK48/probe.out" 2>/dev/null)"
+fi
+echo "-- 48f. Cleanup == "
+stop_crm "$MOCK48/srv.pid" 2>/dev/null
+kill "$MOCK48_PID" 2>/dev/null
+rm -f "$JA48"
+rm -rf "$MOCK48"
+echo "  ✓ 48: sign-page scroll gate + read-to-bottom checkbox, bracket-style template placeholders, payment-link placeholder shipped"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

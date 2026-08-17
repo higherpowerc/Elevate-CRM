@@ -605,9 +605,11 @@ export default function Admin({ ownerOrgId, onViewAccount }: Props) {
           <h2 className="admin-card-title">Agreements</h2>
           <p className="admin-card-sub">
             The agreement sent to a client when you use the native e-signature (Onboarding tab
-            → Send Agreements). Placeholders: {"{{company}}"} (business name), {"{{client_name}}"}
-            (business name for a business client, full name for an individual), {"{{date}}"},
-            {"{{price}}"} / {"{{deal_value}}"} (deal value). Leave blank to use the built-in default.
+            → Send Agreements). Placeholders: {"{{company}}"} / {"[YOUR LLC NAME]"} (business
+            name), {"{{client_name}}"} / {"[CLIENT LEGAL NAME]"} (business name for a business
+            client, full name for an individual), {"{{date}}"} / {"[EFFECTIVE DATE]"},{" "}
+            {"{{price}}"} / {"{{deal_value}}"} / {"[PRICE]"} / {"[DEAL_VALUE]"} (deal value).
+            Both styles work in the same template. Leave blank to use the built-in default.
           </p>
         </div>
         <div className="form">

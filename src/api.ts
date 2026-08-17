@@ -300,4 +300,18 @@ export const api = {
       token: string;
     }>("/api/agreements/send", { method: "POST", body: JSON.stringify({ clientId }) }),
   agreements: () => request<{ agreements: AgreementEnvelope[] }>("/api/agreements"),
+  /* Phase 5 prep — Stripe payment link (live-test finding 2026-08-17):
+     owner-only placeholder. With no STRIPE_SECRET_KEY the server returns 503
+     { error: "Stripe not configured" } (the UI explains the keys are not
+     connected); once the key is set the same call creates a real Payment
+     Link for $200.00/month and emails it to the client. */
+  clientPaymentLink: (id: number) =>
+    request<{
+      ok: true;
+      clientId: number;
+      url: string;
+      emailTo: string;
+      emailStatus: "sent" | "failed" | "skipped";
+      emailError?: string;
+    }>(`/api/clients/${id}/payment-link`, { method: "POST" }),
 };

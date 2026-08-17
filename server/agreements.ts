@@ -98,23 +98,37 @@ function clientAgreementName(client: ClientRow): string {
 }
 
 /** Substitute the template's placeholders with the client's details.
- *  Supported: {{company}} (client's business name), {{client_name}} (the
- *  record-type client name — business name for a business, full name for an
- *  individual), {{date}}, {{price}} and {{deal_value}} (both render the deal
- *  value — the owner's live MASTER SUBSCRIPTION template uses {{deal_value}},
- *  the shipped default uses {{price}}). */
+ *  Supported — TWO placeholder styles, mixable in the same template
+ *  (live-test finding 2026-08-17: the owner's template uses bracket-style
+ *  placeholders that were NOT being replaced):
+ *    {{company}}          == [YOUR LLC NAME]    → the business name
+ *    {{client_name}}      == [CLIENT LEGAL NAME] → the record-type client name
+ *       (business name for a business, full name for an individual)
+ *    {{date}}             == [EFFECTIVE DATE]   → today (YYYY-MM-DD)
+ *    {{price}} / {{deal_value}} == [PRICE] / [DEAL_VALUE] → the deal value
+ *       (both {{price}} and {{deal_value}} render the same dollar amount —
+ *       the owner's live MASTER SUBSCRIPTION template uses {{deal_value}},
+ *       the shipped default uses {{price}}). */
 export function renderAgreementTemplate(template: string, c: AgreementClientDetails): string {
   const date = new Date().toISOString().slice(0, 10);
   // Formatted deal value (owner direction 2026-08-17): both {{price}} and
   // {{deal_value}} render as a dollar amount ("$200.00") in the document
   // text — the sign page and the generated PDF show the same formatted value.
   const price = c.dealValue > 0 ? `$${c.dealValue.toFixed(2)}` : "—";
+  const company = c.companyName;
+  const client = c.clientName || c.companyName;
   return (template && template.trim() !== "" ? template : DEFAULT_AGREEMENT_TEMPLATE)
-    .replaceAll("{{company}}", c.companyName)
-    .replaceAll("{{client_name}}", c.clientName || c.companyName)
+    .replaceAll("{{company}}", company)
+    .replaceAll("{{client_name}}", client)
     .replaceAll("{{date}}", date)
     .replaceAll("{{price}}", price)
-    .replaceAll("{{deal_value}}", price);
+    .replaceAll("{{deal_value}}", price)
+    // Bracket-style aliases (the owner's template wording) — same values.
+    .replaceAll("[YOUR LLC NAME]", company)
+    .replaceAll("[CLIENT LEGAL NAME]", client)
+    .replaceAll("[EFFECTIVE DATE]", date)
+    .replaceAll("[PRICE]", price)
+    .replaceAll("[DEAL_VALUE]", price);
 }
 
 /** Directory holding generated agreement PDFs (alongside the SQLite DB in the
@@ -489,6 +503,13 @@ function page(title: string, body: string): Response {
   h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; }
   .sub { color: #a5a49c; margin: 0 0 32px; }
   .doc { background: #131316; border: 1px solid #24242a; border-radius: 12px; padding: 28px 30px; white-space: pre-wrap; font-size: 14px; color: #e4e3dc; margin-bottom: 28px; }
+  .doc-scroll { height: 440px; max-height: 70vh; overflow-y: auto; margin-bottom: 14px; }
+  .doc-scroll::-webkit-scrollbar { width: 10px; }
+  .doc-scroll::-webkit-scrollbar-thumb { background: #33333b; border-radius: 6px; }
+  .doc-scroll::-webkit-scrollbar-track { background: transparent; }
+  .read-gate { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: #c9c8c1; margin: 0 0 4px; }
+  .read-gate input { margin-top: 4px; }
+  .read-gate.disabled-hint { color: #8b8a84; font-style: italic; }
   .form { background: #131316; border: 1px solid #24242a; border-radius: 12px; padding: 24px 30px; }
   label { display: block; margin-bottom: 16px; font-size: 14px; }
   label span { display: block; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: #8b8a84; margin-bottom: 6px; }
@@ -561,31 +582,55 @@ export function renderSignPage(token: string, ip: string): Response {
     <div class="brand"><b>Elevate Studio</b> · agreement</div>
     <h1>Sign your agreement</h1>
     <p class="sub">Review the agreement below, then sign or decline. Signing is legally binding.</p>
-    <div class="doc">${esc(env.agreement_text)}</div>
+    <div class="doc doc-scroll" id="doc">${esc(env.agreement_text)}</div>
     <div class="form">
+      <label class="read-gate" id="read-wrap"><input type="checkbox" id="read" disabled />
+        <span>I have read and agree to the terms above.</span></label>
       <label><span>Your full name (typed signature)</span>
         <input type="text" id="name" autocomplete="name" placeholder="Your full name" maxlength="120" /></label>
       <label class="consent"><input type="checkbox" id="consent" />
         <span>I have read and agree to this agreement, and I consent to signing it electronically.</span></label>
       <div class="row">
-        <button class="sign" id="btn-sign">Sign agreement</button>
+        <button class="sign" id="btn-sign" disabled>Sign agreement</button>
         <button class="decline" id="btn-decline">Decline</button>
       </div>
       <div class="msg" id="msg"></div>
       <p class="meta"><a class="pdf" href="/agreement-pdf/${esc(env.pdf_id)}">Download a copy of the agreement (PDF)</a></p>
     </div>
     <script>
+      const docEl = document.getElementById("doc");
+      const readEl = document.getElementById("read");
       const nameEl = document.getElementById("name");
       const consentEl = document.getElementById("consent");
       const msgEl = document.getElementById("msg");
+      const signBtn = document.getElementById("btn-sign");
+      const declBtn = document.getElementById("btn-decline");
+      /* Read-to-bottom gate (live-test finding 2026-08-17): the agreement
+         document lives in a scroll box; the "I have read and agree to the
+         terms above" checkbox + the Sign button stay DISABLED until the
+         client reaches the bottom. When the text fits without scrolling
+         (scrollHeight <= clientHeight) the checkbox is enabled immediately.
+         The Decline button stays available at all times. */
+      function updateGate() {
+        const atBottom = docEl.scrollHeight - docEl.scrollTop - docEl.clientHeight < 4;
+        readEl.disabled = !atBottom;
+        if (!atBottom) readEl.checked = false;
+        signBtn.disabled = !(readEl.checked && consentEl.checked && nameEl.value.trim() !== "");
+      }
+      docEl.addEventListener("scroll", updateGate);
+      readEl.addEventListener("change", updateGate);
+      consentEl.addEventListener("change", updateGate);
+      nameEl.addEventListener("input", updateGate);
+      window.addEventListener("load", () => { docEl.scrollTop = 0; updateGate(); });
       async function act(action) {
         msgEl.className = "msg"; msgEl.textContent = "";
         if (action === "sign") {
           if (!nameEl.value.trim()) { msgEl.className = "msg err"; msgEl.textContent = "Please type your full name."; return; }
+          if (!readEl.checked) { msgEl.className = "msg err"; msgEl.textContent = "Please read the agreement and check the box to continue."; return; }
           if (!consentEl.checked) { msgEl.className = "msg err"; msgEl.textContent = "Please check the consent box to sign."; return; }
         }
-        document.getElementById("btn-sign").disabled = true;
-        document.getElementById("btn-decline").disabled = true;
+        signBtn.disabled = true;
+        declBtn.disabled = true;
         try {
           const r = await fetch(${JSON.stringify(actionUrl)}, {
             method: "POST",
@@ -594,11 +639,11 @@ export function renderSignPage(token: string, ip: string): Response {
           });
           const d = await r.json();
           if (d.ok) { window.location.href = ${JSON.stringify(`/sign/${token}`)}; }
-          else { msgEl.className = "msg err"; msgEl.textContent = d.error || "Something went wrong."; document.getElementById("btn-sign").disabled = false; document.getElementById("btn-decline").disabled = false; }
+          else { msgEl.className = "msg err"; msgEl.textContent = d.error || "Something went wrong."; signBtn.disabled = false; declBtn.disabled = false; }
         } catch {
           msgEl.className = "msg err"; msgEl.textContent = "Network error — please try again.";
-          document.getElementById("btn-sign").disabled = false;
-          document.getElementById("btn-decline").disabled = false;
+          signBtn.disabled = false;
+          declBtn.disabled = false;
         }
       }
       document.getElementById("btn-sign").onclick = () => act("sign");
