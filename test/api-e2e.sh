@@ -5437,6 +5437,11 @@ EXPA=$(curl -s -D /tmp/hdr.txt -o /tmp/body.json -w "%{http_code}" -b "$JARA" "$
 check "org A export -> 200" 200 "$EXPA"
 grep -qi "Content-Disposition: attachment" /tmp/hdr.txt && echo "  OK export is an attachment download" || echo "  XX Content-Disposition missing: $(head -3 /tmp/hdr.txt)"
 grep -qi 'filename="crm-export-' /tmp/hdr.txt && echo "  OK attachment filename is crm-export-*.json" || echo "  XX filename wrong: $(cat /tmp/hdr.txt)"
+# AZ defect D2 regression (2026-08-17): the filename must contain the REAL org
+# slug and date (never the literal ${slug}/${date} placeholders).
+if grep -qi 'filename="crm-export-export-org-a-' /tmp/hdr.txt; then PASS=$((PASS+1)); echo "  OK export filename contains the org slug"; else FAIL=$((FAIL+1)); echo "  XX export filename missing org slug: $(cat /tmp/hdr.txt)"; fi
+if grep -qE 'crm-export-[^" ]*[0-9]{4}-[0-9]{2}-[0-9]{2}' /tmp/hdr.txt; then PASS=$((PASS+1)); echo "  OK export filename contains a date"; else FAIL=$((FAIL+1)); echo "  XX export filename missing date: $(cat /tmp/hdr.txt)"; fi
+if grep -q '\${' /tmp/hdr.txt; then FAIL=$((FAIL+1)); echo "  XX export filename still has a literal \${ placeholder: $(cat /tmp/hdr.txt)"; else PASS=$((PASS+1)); echo "  OK export filename has no literal \${ placeholder"; fi
 if EXA_ORG="$EXA_ORG" EXA_EMAIL="$EXA_EMAIL" python3 - <<'PY'
 import json, os
 d = json.load(open('/tmp/body.json'))
@@ -5503,6 +5508,81 @@ EXPV=$(curl -s -o /tmp/body.json -w "%{http_code}" -b "$JARVO" "$BASE/api/settin
 check "view-only member export -> 200" 200 "$EXPV"
 grep -q 'A-Only Co' /tmp/body.json && echo "  OK view-only member export contains org A data" || echo "  XX view-only export wrong: $(head -c 400 /tmp/body.json)"
 
+echo "== 46c. Partial PUT never clobbers omitted fields (AZ defect D4) =="
+# A partial PUT that omits stage/dealValue/notes/services/customFields/
+# nextAction/address must update ONLY the sent fields — an absent key NEVER
+# resets the stored value (previously the base SET list was unconditional, so
+# a stage-only PUT reset the record to the FIRST stage and zeroed/cleared the
+# rest). Required keys (companyName/clientType) are still sent, exactly like
+# every real UI flow.
+S=$(code -b "$JARA" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Partial PUT Co","contactName":"Pat P","clientType":"commercial","email":"pat@pp.local","phone":"555-0101","address":"9 Partial Way","city":"Ptown","state":"AZ","zip":"85001","website":"https://pp.example","dealValue":1500,"stage":"Intake","notes":"Important notes","nextAction":"Call back","services":["CRM"],"customFields":[{"name":"Color","value":"Green"}]}' "$BASE/api/clients")
+check "org A creates partial-PUT client -> 201" 201 "$S"
+PP_CLIENT=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+if python3 - <<'PY'
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['stage'] == 'Intake', c['stage']
+assert c['dealValue'] == 1500, c['dealValue']
+assert c['notes'] == 'Important notes', c['notes']
+assert c['services'] == ['CRM'], c['services']
+assert c['nextAction'] == 'Call back', c['nextAction']
+assert c['address'] == '9 Partial Way', c['address']
+assert any(f['name'] == 'Color' and f['value'] == 'Green' for f in c['customFields']), c['customFields']
+print('ok')
+PY
+then PASS=$((PASS+1)); echo "  OK baseline: all fields stored as sent"
+else FAIL=$((FAIL+1)); echo "  XX baseline wrong: $(head -c 400 /tmp/body.json)"; fi
+# Partial PUT #1: change ONLY contactName — every omitted field must survive.
+S=$(code -b "$JARA" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Partial PUT Co","clientType":"commercial","contactName":"Patricia P"}' "$BASE/api/clients/$PP_CLIENT")
+check "partial PUT (contactName only) -> 200" 200 "$S"
+if python3 - <<'PY'
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['contactName'] == 'Patricia P', c['contactName']
+assert c['stage'] == 'Intake', c['stage']
+assert c['dealValue'] == 1500, c['dealValue']
+assert c['notes'] == 'Important notes', c['notes']
+assert c['services'] == ['CRM'], c['services']
+assert c['nextAction'] == 'Call back', c['nextAction']
+assert c['address'] == '9 Partial Way', c['address']
+assert any(f['name'] == 'Color' and f['value'] == 'Green' for f in c['customFields']), c['customFields']
+print('ok')
+PY
+then PASS=$((PASS+1)); echo "  OK omitted stage/dealValue/notes/services/customFields/nextAction/address untouched"
+else FAIL=$((FAIL+1)); echo "  XX partial PUT clobbered fields: $(head -c 400 /tmp/body.json)"; fi
+# Partial PUT #2: change ONLY stage — dealValue + notes must still survive.
+S=$(code -b "$JARA" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Partial PUT Co","clientType":"commercial","stage":"Kickoff"}' "$BASE/api/clients/$PP_CLIENT")
+check "partial PUT (stage only) -> 200" 200 "$S"
+if python3 - <<'PY'
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['stage'] == 'Kickoff', c['stage']
+assert c['dealValue'] == 1500, c['dealValue']
+assert c['notes'] == 'Important notes', c['notes']
+print('ok')
+PY
+then PASS=$((PASS+1)); echo "  OK stage updated; dealValue + notes survived"
+else FAIL=$((FAIL+1)); echo "  XX stage-only PUT clobbered fields: $(head -c 400 /tmp/body.json)"; fi
+# Partial PUT #3: toggle lost WITHOUT sending stage/dealValue — the record must
+# stay in Kickoff with its deal value intact (the AZ F6 probe contamination).
+S=$(code -b "$JARA" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Partial PUT Co","clientType":"commercial","lost":true}' "$BASE/api/clients/$PP_CLIENT")
+check "partial PUT (lost flag only) -> 200" 200 "$S"
+if python3 - <<'PY'
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['lost'] is True, c['lost']
+assert c['stage'] == 'Kickoff', c['stage']
+assert c['dealValue'] == 1500, c['dealValue']
+print('ok')
+PY
+then PASS=$((PASS+1)); echo "  OK lost toggled; stage + dealValue survived"
+else FAIL=$((FAIL+1)); echo "  XX lost-only PUT clobbered fields: $(head -c 400 /tmp/body.json)"; fi
+# Cleanup the D4 probe client.
+check "org A deletes partial-PUT client -> 200" 200 $(code -b "$JARA" -X DELETE "$BASE/api/clients/$PP_CLIENT")
 echo "== 47. Phase 5 prep - self-serve cancel/offboarding =="
 CAN_EMAIL="cancelco@phase5.example"
 CAN_PASS="cancelco123"
@@ -5536,13 +5616,23 @@ check "owner org cancel -> 403" 403 "$S"
 grep -q "owner workspace cannot be canceled" /tmp/body.json && echo "  OK clear owner-guard message" || echo "  XX owner cancel response: $(cat /tmp/body.json)"
 
 echo "-- 47b. Cancel flips the org, blocks login, retains data =="
-S=$(code -b "$JARC" -X POST "$BASE/api/settings/cancel")
+S=$(curl -s -D /tmp/cancel_hdr.txt -o /tmp/body.json -w "%{http_code}" -b "$JARC" -X POST "$BASE/api/settings/cancel")
 check "org admin cancels own account -> 200" 200 "$S"
 grep -q '"ok":true' /tmp/body.json && echo "  OK cancel returns ok" || echo "  XX cancel response: $(cat /tmp/body.json)"
 grep -q '"retentionUntil":"' /tmp/body.json && echo "  OK cancel returns retentionUntil" || echo "  XX retentionUntil missing: $(cat /tmp/body.json)"
+# AZ defect D3 regression (2026-08-17): the cancel response must clear the REAL
+# session cookie (elevate_session) — never a cookie literally named
+# ${SESSION_COOKIE} (the logout handler clears the real name).
+if grep -qi '^Set-Cookie: elevate_session=;' /tmp/cancel_hdr.txt; then PASS=$((PASS+1)); echo "  OK cancel clears the real elevate_session cookie"; else FAIL=$((FAIL+1)); echo "  XX cancel Set-Cookie wrong: $(grep -i '^Set-Cookie' /tmp/cancel_hdr.txt || cat /tmp/cancel_hdr.txt)"; fi
+if grep -q '\${SESSION_COOKIE}' /tmp/cancel_hdr.txt; then FAIL=$((FAIL+1)); echo "  XX cancel still clears a cookie named \${SESSION_COOKIE}"; else PASS=$((PASS+1)); echo "  OK no literal \${SESSION_COOKIE} in cancel headers"; fi
 check "canceled admin login -> 403" 403 $(code -b "$JARC" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$CAN_EMAIL\",\"password\":\"$CAN_PASS\"}" "$BASE/api/auth/login")
 grep -q 'account_canceled' /tmp/body.json && grep -q 'retained until' /tmp/body.json && echo "  OK login shows clear canceled message with retention date" || echo "  XX login message: $(cat /tmp/body.json)"
+# AZ defect D1 regression (2026-08-17): the message must contain a FORMATTED
+# retention date (e.g. 2026-09-16) — never the literal template placeholder
+# ${retentionDateLabel(...)}.
+if grep -q 'retained until 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' /tmp/body.json; then PASS=$((PASS+1)); echo "  OK login message has a formatted retention date"; else FAIL=$((FAIL+1)); echo "  XX login message lacks a formatted date: $(cat /tmp/body.json)"; fi
+if grep -q '\${' /tmp/body.json; then FAIL=$((FAIL+1)); echo "  XX login message still has a literal \${ placeholder: $(cat /tmp/body.json)"; else PASS=$((PASS+1)); echo "  OK login message has no literal \${ placeholder"; fi
 check "canceled member login -> 403" 403 $(code -b "$JARCM" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"cancelmember@phase5.example","password":"cancelmember123"}' "$BASE/api/auth/login")
 # The pre-cancel sessions die server-side (requireAuth blocks canceled orgs).
