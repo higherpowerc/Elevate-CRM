@@ -5568,6 +5568,21 @@ echo "-- 47c. Cleanup =="
 check "owner deletes export org A -> 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$EXA_ORG")
 check "owner deletes export org B -> 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$EXB_ORG")
 check "owner deletes canceled org -> 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$CAN_ORG")
+# Regression: org deletion must fully clean every child table (tickets,
+# agreement envelopes, users, ...) — no orphaned rows may keep a deleted org
+# listed in the owner's account list.
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "owner orgs list after cleanup -> 200" 200 "$S"
+if EXA_ORG="$EXA_ORG" EXB_ORG="$EXB_ORG" CAN_ORG="$CAN_ORG" python3 - <<'PY'
+import json, os
+d = json.load(open('/tmp/body.json'))
+ids = {int(os.environ[k]) for k in ('EXA_ORG', 'EXB_ORG', 'CAN_ORG')}
+present = {o['id'] for o in d['orgs']}
+assert not (ids & present), f"deleted orgs still listed: {ids & present}"
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  OK deleted orgs fully removed from owner list (no orphans)"
+else FAIL=$((FAIL+1)); echo "  XX deleted orgs still listed: $(head -c 300 /tmp/body.json)"; fi
 rm -f "$JARA" "$JARB" "$JARC" "$JARCM" "$JARNV" "$JARVO" "$JARX" /tmp/hdr.txt
 echo "  OK 46+47: self-serve data export + cancel/offboarding shipped (Phase 5 prep)"
 

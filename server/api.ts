@@ -2296,7 +2296,15 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     db.transaction(() => {
       db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
       db.query("DELETE FROM tasks WHERE org_id = ?").run(id);
+      // Support tickets (PR #54) and agreement envelopes (PR #59) both FK to
+      // orgs — a tenant that opened a ticket (or signed an agreement) used to
+      // 500 the org delete on the FK; drop every child table's rows first.
+      db.query("DELETE FROM tickets WHERE org_id = ?").run(id);
+      db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
       db.query("DELETE FROM clients WHERE org_id = ?").run(id);
+      // 3g-3: provisioning events pointing at this org (plain columns, no FK —
+      // cleaned so no orphaned event rows reference a deleted org).
+      db.query("DELETE FROM provision_events WHERE new_org_id = ? OR source_org_id = ?").run(id, id);
       // 3k: password_resets references users — drop this org's tokens first.
       db.query("DELETE FROM password_resets WHERE user_id IN (SELECT id FROM users WHERE org_id = ?)").run(id);
       db.query("DELETE FROM users WHERE org_id = ?").run(id);
@@ -3614,21 +3622,33 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const taken = db.query("SELECT id FROM users WHERE email = ?").get(email);
     if (taken) return err("An account with this email already exists.", 400);
     const hash = await hashPassword(password);
-    // Default for a NEW restricted member: every tab present, all view-only
-    // (the admin adjusts via PATCH). New admins bypass permissions (stored {}).
-    const permissions =
-      role === "member"
-        ? JSON.stringify({
-            clients: { edit: false },
-            tasks: { edit: false },
-            finance: { edit: false },
-            settings: { edit: false },
-            support: { edit: false },
-          })
-        : "{}";
+    // New admins bypass permissions (stored {}). New restricted members:
+    // HONOR the admin's per-tab choices from the request — the Settings UI
+    // sends the full permission map on create (absent tab = no access, so a
+    // member created without settings access can never read settings, export
+    // org data, etc.). Only when the body sends NO permissions at all do we
+    // fall back to the historical default (every tab present, all view-only).
+    let permissionsJson: string;
+    if (role === "member") {
+      if (body.permissions !== undefined) {
+        const v = validatePermissions(body.permissions);
+        if (!v.ok) return err(v.error, 400);
+        permissionsJson = JSON.stringify(v.value);
+      } else {
+        permissionsJson = JSON.stringify({
+          clients: { edit: false },
+          tasks: { edit: false },
+          finance: { edit: false },
+          settings: { edit: false },
+          support: { edit: false },
+        });
+      }
+    } else {
+      permissionsJson = "{}";
+    }
     const info = db
       .query(`INSERT INTO users (email, password_hash, org_id, role, permissions) VALUES (?, ?, ?, ?, ?)`)
-      .run(email, hash, auth.orgId, role as Role, permissions);
+      .run(email, hash, auth.orgId, role as Role, permissionsJson);
     const row = db
       .query(`SELECT ${MEMBER_SELECT} WHERE id = ?`)
       .get(Number(info.lastInsertRowid)) as OrgMemberRow;
