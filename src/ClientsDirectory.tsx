@@ -349,12 +349,12 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
         <div className="card table-wrap">
           <table className="table clients-table">
             <colgroup>
-              <col style={{ width: "26%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "10%" }} />
+              <col style={{ width: "24%" }} />
               <col style={{ width: "16%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "22%" }} />
             </colgroup>
             <thead>
               <tr>
@@ -427,7 +427,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
                             aria-label={`Send payment link to ${c.companyName}`}
                             onClick={() => handlePaymentLink(c)}
                           >
-                            Send payment link
+                            Payment link
                           </button>
                         )}
                         {canEdit && (

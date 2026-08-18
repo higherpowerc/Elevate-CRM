@@ -1771,6 +1771,7 @@ legend.field-label {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex-wrap: wrap;
   white-space: nowrap;
   min-width: 0;
 }

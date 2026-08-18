@@ -5815,7 +5815,7 @@ echo "== 48. Live-test findings 2026-08-17: sign-page scroll gate, bracket place
 #  3. the agreement template must ALSO accept bracket-style placeholders
 #     ([YOUR LLC NAME], [CLIENT LEGAL NAME], [EFFECTIVE DATE], [PRICE],
 #     [DEAL_VALUE]) alongside the {{}} styles;
-#  4. the Clients tab gains a "Send payment link" placeholder button + a
+#  4. the Clients tab gains a "Payment link" placeholder button + a
 #     /api/clients/:id/payment-link endpoint that answers 503
 #     { error: "Stripe not configured" } until STRIPE_SECRET_KEY is set.
 # Finding 2 (Onboarding "+ New lead" removed) is verified by source markers.
@@ -5844,10 +5844,10 @@ check "48a: tenant login -> 200" 200 "$S"
 S=$(code -b "$JPT" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
 check "48a: tenant payment-link -> 403 (owner-only route)" 403 "$S"
 rm -f "$JPT"
-echo "-- 48b. Bundle: 'Send payment link' button shipped on the Clients tab == "
+echo "-- 48b. Bundle: 'Payment link' button shipped on the Clients tab == "
 NEWEST_JS48=$(ls -t dist/index-*.js 2>/dev/null | head -1)
-if [ -n "$NEWEST_JS48" ] && grep -Fq "Send payment link" "$NEWEST_JS48" && grep -Fq "Stripe is not connected yet" "$NEWEST_JS48"; then
-  PASS=$((PASS+1)); echo "  ✓ bundle: 'Send payment link' action + not-connected notice shipped"
+if [ -n "$NEWEST_JS48" ] && grep -Fq "Payment link" "$NEWEST_JS48" && grep -Fq "Stripe is not connected yet" "$NEWEST_JS48"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: 'Payment link' action + not-connected notice shipped"
 else
   FAIL=$((FAIL+1)); echo "  ✗ bundle: payment-link markers missing from $NEWEST_JS48"
 fi
@@ -6029,7 +6029,7 @@ else
 fi
 echo "-- 48g. Payment-link notice fix: ApiError imported as a VALUE (live-test finding: click showed no notice) == "
 # Root cause (2026-08-17, reproduced locally in a browser): the Clients tab
-# "Send payment link" click fired the fetch, the server answered 503, but NO
+# "Payment link" click fired the fetch, the server answered 503, but NO
 # alert appeared. src/ClientsDirectory.tsx imported ApiError with a TYPE-only
 # import (type ApiError) while using it as a value in \`instanceof ApiError\`.
 # The bun build transpiler strips type-only imports without type-checking, so
