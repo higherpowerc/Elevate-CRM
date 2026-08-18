@@ -3703,7 +3703,11 @@ echo "-- 33 bundle surface: MRR/revenue strings in the shipped bundle --"
 bun run build >/dev/null 2>&1
 NEWEST_JS33=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS33" ]; then
-  for STR33 in "Client MRR" "Sales this month" "Subscriptions" "Revenue model" "Monthly billing amount" "Save revenue model"; do
+  # Owner live-test reorg 2026-08-18: "Monthly billing amount" was Admin's
+  # per-account billing input label — that column is REMOVED from the
+  # accounts table (see 40c), so the string no longer ships. The other
+  # MRR/revenue strings (dashboard KPI cards + tenant Settings toggle) stand.
+  for STR33 in "Client MRR" "Sales this month" "Subscriptions" "Revenue model" "Save revenue model"; do
     if grep -Fq "$STR33" "$NEWEST_JS33"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR33\""
     else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR33\""; fi
   done
@@ -3996,13 +4000,16 @@ code -b "$JAR36" -X DELETE "$BASE/api/clients/$A36_ID" > /dev/null
 rm -f "$JAR36" "$JART36" /tmp/s36-settings.json
 echo "  ✓ 36f: agreement test client + tenant org removed"
 echo "== 37. Owner-workspace UI fixes (2026-08-15) =="
-echo "-- 37a. Admin tab: form above, table full width, no control overlap =="
+echo "-- 37a. Accounts panel (owner Clients tab): form above, table full width, no control overlap =="
 # Owner bug report 2026-08-15 (re-reported): the old .admin-grid was a
 # 2-column layout (380px create-form column + 1fr table) with table-layout:
-# fixed and no explicit column widths, so the 6 dense columns squeezed the
-# billing controls and action buttons into overlap at ~1280px. The fix is
-# CSS-only (single-column restack + explicit widths + wrap guards), so the
-# checks lock the built CSS/JS surface.
+# fixed and no explicit column widths, so the dense columns squeezed the
+# action buttons into overlap at ~1280px. The fix is CSS-only (single-column
+# restack + explicit widths + wrap guards). Owner live-test reorg 2026-08-18:
+# the panel moved from Administration to the owner's Clients tab — same
+# classes, same guards; and the "Billing $" column is GONE (accounts table is
+# exactly 5 columns now: Clients | Members | Client records | Created |
+# Actions).
 NEWEST_JS37=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 NEWEST_CSS37=$(ls -t dist/index-*.css 2>/dev/null | head -1)
 if [ -n "$NEWEST_CSS37" ]; then
@@ -4016,19 +4023,24 @@ if [ -n "$NEWEST_CSS37" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ css: .admin-grid single-column rule missing from $NEWEST_CSS37"
   fi
-  if grep -Fq "admin-table .row-actions,.admin-table .admin-billing-edit{flex-wrap:wrap}" "$NEWEST_CSS37"; then
-    PASS=$((PASS+1)); echo "  ✓ css: Admin actions + billing controls wrap inside their fixed columns (no overlap)"
+  if grep -Fq "admin-table .row-actions{flex-wrap:wrap}" "$NEWEST_CSS37"; then
+    PASS=$((PASS+1)); echo "  ✓ css: accounts-table action rows wrap inside their fixed column (no overlap)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ css: Admin wrap guards missing from $NEWEST_CSS37"
+    FAIL=$((FAIL+1)); echo "  ✗ css: accounts wrap guards missing from $NEWEST_CSS37"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 37 admin-layout check"
 fi
 if [ -n "$NEWEST_JS37" ]; then
-  if grep -Fq 'width:"7%"' "$NEWEST_JS37" && grep -Fq 'width:"25%"' "$NEWEST_JS37" && grep -Fq 'width:"9%"' "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: Admin table has explicit column widths (compact numeric, wide billing/actions)"
+  if grep -Eq 'width:"26%"}},void 0,!1,void 0,this),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"9%"}}' "$NEWEST_JS37" && grep -Eq 'width:"15%"}},void 0,!1,void 0,this),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"38%"}}' "$NEWEST_JS37" && ! grep -Fq 'width:"7%"' "$NEWEST_JS37" && ! grep -Fq 'Billing $' "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table is 5 columns (Clients 26 | Members 9 | Records 12 | Created 15 | Actions 38) — Billing $ gone"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: Admin colgroup widths missing from $NEWEST_JS37"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 5-col colgroup widths missing or Billing remnants in $NEWEST_JS37"
+  fi
+  if grep -Fq 'width: "26%"' src/Accounts.tsx && grep -Fq 'width: "9%"' src/Accounts.tsx && grep -Fq 'width: "12%"' src/Accounts.tsx && grep -Fq 'width: "15%"' src/Accounts.tsx && grep -Fq 'width: "38%"' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup sums to 100% (26/9/12/15/38)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 5-col colgroup missing from src/Accounts.tsx"
   fi
   if ! grep -Fq 'width:"33%"' "$NEWEST_JS37" && ! grep -Fq 'width:"23%"' "$NEWEST_JS37"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: old equal-split Admin colgroup widths are gone"
@@ -4038,11 +4050,13 @@ if [ -n "$NEWEST_JS37" ]; then
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 37 admin-layout check"
 fi
-echo "-- 37b. Entry-point rule: only Admin adds clients, only Leads adds leads (owner workspace) =="
-# Owner direction 2026-08-15: the ONLY place to add a client is the Admin
-# tab's "create client account" form; the ONLY place to add a lead is the
-# Leads tab. The owner's "+ New client" affordances are gone from the
-# Dashboard and the Clients directory (tenant workspaces keep theirs).
+echo "-- 37b. Entry-point rule: Accounts panel (owner Clients tab) adds clients, only Leads adds leads =="
+# Owner direction 2026-08-15: the ONLY place to add a client is the "create
+# client account" form — since 2026-08-18 that form lives in the Accounts
+# panel on the OWNER's CLIENTS tab (it moved out of Administration; see 40b).
+# The ONLY place to add a lead is the Leads tab. The owner's "+ New client"
+# affordances are gone from the Dashboard and the Clients directory (tenant
+# workspaces keep theirs).
 if [ -n "$NEWEST_JS37" ]; then
   if ! grep -Fq "onNewClient" "$NEWEST_JS37"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: owner Dashboard \"+ New client\" provisioning affordance removed (onNewClient gone)"
@@ -4055,7 +4069,7 @@ if [ -n "$NEWEST_JS37" ]; then
     FAIL=$((FAIL+1)); echo "  ✗ bundle: \"+ New lead\" missing from $NEWEST_JS37"
   fi
   if grep -Fq "Create client account" "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: Admin \"create client account\" form remains the single client entry point"
+    PASS=$((PASS+1)); echo "  ✓ bundle: \"Create client account\" form ships (Accounts panel on the owner Clients tab)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: \"Create client account\" missing from $NEWEST_JS37"
   fi
@@ -4079,7 +4093,7 @@ else
   PASS=$((PASS+1)); echo "  ✓ source: no onNewClient references remain (Dashboard/App clean)"
 fi
 echo "-- 37c. Done =="
-echo "  ✓ 37: owner-workspace UI fixes verified (Admin restack + entry-point rule)"
+echo "  ✓ 37: owner-workspace UI fixes verified (accounts-panel restack + entry-point rule)"
 echo "== 38. Owner-workspace UI fixes 2 (2026-08-15): Leads Next-action cell + table-fit sweep =="
 echo "-- 38a. Fix A: owner Leads tab Next-action cell shows ONLY the Start Onboarding button =="
 # Owner bug report 2026-08-15: the nextAction text span rendered ABOVE the
@@ -4350,12 +4364,16 @@ then
 else
   FAIL=$((FAIL+1)); echo "  ✗ 40a2: five-card KPI row structure wrong"; cat "$PASS_TMP"
 fi
-echo "-- 40b. Admin tab: the owner's own workspace hidden from the client-account list =="
-# Owner direction 2026-08-15 — the Admin client-account list is for CLIENT
+echo "-- 40b. Accounts panel (owner Clients tab): the owner's own workspace hidden from the account list =="
+# Owner direction 2026-08-15 — the client-account list is for CLIENT
 # workspaces: the owner org is filtered out of the table rows, the
 # "N workspaces" count, and (with the row gone) its View-account / delete /
 # edit affordances. The server API /api/admin/orgs is UNCHANGED (still the
-# full list); the filter is UI-side only.
+# full list); the filter is UI-side only. Owner live-test reorg 2026-08-18 —
+# the account list + create/reset/delete controls MOVED from src/Admin.tsx
+# (Administration) to src/Accounts.tsx, rendered by the owner's Clients tab,
+# so these source locks now target src/Accounts.tsx (Admin.tsx keeps only the
+# Agreements editor).
 S=$(code -b "$JAR" "$BASE/api/admin/orgs")
 check "40b: server /api/admin/orgs still returns the full list" 200 "$S"
 if python3 - "$DEFAULT_ORG_ID" <<'PY' 2>"$PASS_TMP"
@@ -4370,20 +4388,27 @@ then
 else
   FAIL=$((FAIL+1)); echo "  ✗ 40b: server API no longer returns the owner org"; cat "$PASS_TMP"
 fi
-if grep -Fq 'const visibleOrgs = orgs' src/Admin.tsx && grep -Fq 'o.id !== ownerOrgId' src/Admin.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: Admin filters the owner org out (visibleOrgs = orgs minus owner)"
+if grep -Fq 'const visibleOrgs = orgs' src/Accounts.tsx && grep -Fq 'o.id !== ownerOrgId' src/Accounts.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Accounts filters the owner org out (visibleOrgs = orgs minus owner)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: Admin owner-org filter missing from src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: Accounts owner-org filter missing from src/Accounts.tsx"
 fi
-if grep -Fq 'visibleOrgs.length' src/Admin.tsx && grep -Fq 'visibleOrgs.length === 0' src/Admin.tsx && grep -Fq 'visibleOrgs.map' src/Admin.tsx; then
+if grep -Fq 'visibleOrgs.length' src/Accounts.tsx && grep -Fq 'visibleOrgs.length === 0' src/Accounts.tsx && grep -Fq 'visibleOrgs.map' src/Accounts.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: filtered list drives the workspaces count, empty state and table rows"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: visibleOrgs not wired to count/empty/rows in src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: visibleOrgs not wired to count/empty/rows in src/Accounts.tsx"
 fi
-if ! grep -Fq 'chip-owner' src/Admin.tsx && ! grep -Fq 'The owner workspace cannot be deleted' src/Admin.tsx; then
+if ! grep -Fq 'chip-owner' src/Accounts.tsx && ! grep -Fq 'The owner workspace cannot be deleted' src/Accounts.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: owner-row chip + owner-row billing/action branches removed (row itself filtered out)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: owner-row UI remnants still in src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: owner-row UI remnants still in src/Accounts.tsx"
+fi
+# The move means EXACTLY ONE home for account management: Admin.tsx keeps
+# only the Agreements editor — no visibleOrgs / create-account form remnants.
+if ! grep -Fq 'visibleOrgs' src/Admin.tsx && ! grep -Fq 'Create client account' src/Admin.tsx && ! grep -Fq 'onViewAccount' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Admin.tsx no longer hosts account management (one home = Clients tab Accounts panel)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: account-management remnants still in src/Admin.tsx"
 fi
 if [ -n "$NEWEST_JS40" ]; then
   if grep -Fq 'View account' "$NEWEST_JS40" && grep -Fq 'Reset password' "$NEWEST_JS40"; then
@@ -4392,47 +4417,51 @@ if [ -n "$NEWEST_JS40" ]; then
     FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant-row affordances missing from $NEWEST_JS40"
   fi
 fi
-echo "-- 40c. Admin tab: per-account Billing-model revenue select removed (billing amount kept) =="
-# Owner direction 2026-08-15 — one product, subscription-based: the Admin
-# per-account "Sales"/"Subscriptions" revenue-model select is gone, along with
-# its local state and revenueModel in the adminUpdateOrg payload. The
-# billing-amount input stays (Phase 5 billing prep). Server, vertical seeding
-# and the TENANT revenue toggle in Settings are untouched.
-if ! grep -Fq 'billing-model' src/Admin.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: Admin has no billing-model select"
+echo "-- 40c. Accounts panel: 'Billing $' column REMOVED (owner live-test reorg 2026-08-18) =="
+# Owner live-test reorg 2026-08-18 — the per-account "Billing $" column no
+# longer exists in the accounts table: the billing-model selector was removed
+# in PR #52 and per-account billing amounts are Phase 5 prep only, so the
+# column only confused live testing. The WHOLE billing edit UI is gone: no
+# billing-amount input, no "Billing $"/"Billing $ / model" header, no
+# adminUpdateOrg({monthlySubscriptionAmount}) call in the UI. The server
+# PATCH endpoint is untouched (33f/33h1/33h2 still exercise it; a future
+# Phase 5 build will re-surface the amount), and the TENANT revenue toggle in
+# Settings is untouched (40d).
+if ! grep -Fq 'billing-model' src/Accounts.tsx && ! grep -Fq 'billing-model' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: no billing-model select in Accounts or Admin"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: billing-model select still present in src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: billing-model select still present in src/Accounts.tsx / src/Admin.tsx"
 fi
-if grep -Fq 'adminUpdateOrg(o.id, { monthlySubscriptionAmount: amount })' src/Admin.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: Admin save sends only { monthlySubscriptionAmount } (no revenueModel)"
+if ! grep -Fq 'billing-amount' src/Accounts.tsx && ! grep -Fq 'billing-amount' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: billing-amount input removed from the accounts panel"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: adminUpdateOrg payload wrong in src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: billing-amount still present in src/Accounts.tsx / src/Admin.tsx"
 fi
-if grep -Fq 'billing-amount' src/Admin.tsx && grep -Fq 'Billing $' src/Admin.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: billing-amount input kept (Phase 5 prep); column header reads 'Billing $'"
+if ! grep -Fq 'Billing $' src/Accounts.tsx && ! grep -Fq 'Billing $' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: no 'Billing $' column header anywhere in the account UI"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: billing-amount input or Billing header missing from src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: 'Billing $' header still present in src/Accounts.tsx / src/Admin.tsx"
+fi
+if ! grep -Fq 'monthlySubscriptionAmount' src/Accounts.tsx && ! grep -Fq 'monthlySubscriptionAmount' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: no monthlySubscriptionAmount edit call in the account UI (server PATCH still covered by 33h)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: monthlySubscriptionAmount still referenced in src/Accounts.tsx / src/Admin.tsx"
 fi
 if ! grep -Fq 'revenueModel' src/Admin.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: no revenueModel references remain in Admin"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: revenueModel still referenced in src/Admin.tsx"
 fi
-if ! grep -Fq '.billing-model' src/styles.css && grep -Fq '.billing-amount' src/styles.css; then
-  PASS=$((PASS+1)); echo "  ✓ css: dead .billing-model rules removed; .billing-amount white-on-black rule kept"
+if ! grep -Fq '.billing-model' src/styles.css && ! grep -Fq '.billing-amount' src/styles.css; then
+  PASS=$((PASS+1)); echo "  ✓ css: dead .billing-model AND .billing-amount rules removed"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ css: .billing-model rules still present in src/styles.css"
+  FAIL=$((FAIL+1)); echo "  ✗ css: .billing-model or .billing-amount rules still present in src/styles.css"
 fi
 if [ -n "$NEWEST_JS40" ]; then
-  if ! grep -Fq 'billing-model' "$NEWEST_JS40" && grep -Fq 'billing-amount' "$NEWEST_JS40"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: billing-model select gone from the shipped bundle; billing-amount input kept"
+  if ! grep -Fq 'billing-model' "$NEWEST_JS40" && ! grep -Fq 'billing-amount' "$NEWEST_JS40" && ! grep -Fq 'Billing $' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: billing-model / billing-amount / 'Billing $' all gone from the shipped bundle"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: billing-model/billing-amount mismatch in $NEWEST_JS40"
-  fi
-  if grep -Fq 'Billing $' "$NEWEST_JS40" && ! grep -Fq 'Billing $ / model' "$NEWEST_JS40"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: Admin billing column header updated ('Billing $', no '/ model')"
-  else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: Admin billing header wrong in $NEWEST_JS40"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: billing remnants still in $NEWEST_JS40"
   fi
 fi
 echo "-- 40d. Tenant revenue toggle + server untouched =="
