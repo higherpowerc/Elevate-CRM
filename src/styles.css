@@ -1666,6 +1666,17 @@ legend.field-label {
   gap: 6px;
   min-width: 0;
 }
+/* Owner direction 2026-08-18 — the owner's Payment column cell: the status
+   badge (Sent amber / Paid green) with the tiny "Mark paid" action beside it
+   on the Onboarding tab. Row layout (badge + button side by side) so the
+   fixed-width column stays table-fit; wraps on narrow tables. */
+.pay-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 /* Owner cockpit B (PR #53) — the compact DocuSign lifecycle stepper in the
    owner's Onboarding Agreement cell: a 4-dot progress row (Not sent → Sent →
    Delivered → Signed) with completed dots filled and the current step

@@ -313,6 +313,17 @@ const FORGOT_OK = {
 
 /* ── Client row → API shape ─────────────────────────────────────────── */
 
+/** Owner direction 2026-08-18 — payment-link status vocabulary for the
+ *  $200/month subscription (owner-only, like agreementStatus):
+ *  "none" (no link sent yet) | "sent" (link emailed — yellow) | "paid"
+ *  (payment received — green). */
+const PAYMENT_STATUSES = ["none", "sent", "paid"] as const;
+type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+function isPaymentStatus(v: unknown): v is PaymentStatus {
+  return typeof v === "string" && (PAYMENT_STATUSES as readonly string[]).includes(v);
+}
+
+
 /** Owner cockpit B (owner direction 2026-08-15) — `ownerOrg` (the caller's
  *  role is admin) controls whether the DocuSign agreement status appears in
  *  the serialized client. Tenant orgs (role=member) get the exact same shape
@@ -407,7 +418,18 @@ function toClient(row: ClientRow, ownerOrg = false) {
     monthlyAmount: row.monthly_amount ?? 0,
     // Owner cockpit B (owner direction 2026-08-15) — OWNER-only DocuSign
     // agreement status. Absent from tenant responses entirely.
-    ...(ownerOrg ? { agreementStatus: isAgreementStatus(row.agreement_status) ? row.agreement_status : "not_sent" } : {}),
+    ...(ownerOrg
+      ? {
+          agreementStatus: isAgreementStatus(row.agreement_status) ? row.agreement_status : "not_sent",
+          // Owner direction 2026-08-18 — payment-link status (none|sent|paid),
+          // the emailed link URL and when the payment was received. OWNER-only,
+          // the SAME rule as agreementStatus (comment above): tenant orgs never
+          // get the keys, ever.
+          paymentStatus: isPaymentStatus(row.payment_status) ? row.payment_status : "none",
+          paymentLinkUrl: row.payment_link_url,
+          paidAt: row.paid_at,
+        }
+      : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -3163,6 +3185,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const id = Number(payMatch[1]);
     const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
     if (!client) return err("Client not found.", 404);
+    // Owner direction 2026-08-18 — THE rule: the payment link must NOT be
+    // operational unless the client's agreement is fully signed. Unsigned →
+    // 409 ALWAYS (before any Stripe state is consulted); signed + no
+    // STRIPE_SECRET_KEY → the 503 below (unchanged).
+    if (client.agreement_status !== "signed") {
+      return err(
+        client.company_name + " hasn't signed the agreement yet — send the payment link only after the agreement is signed.",
+        409,
+      );
+    }
     const stripe = stripeClient();
     if (!stripe) {
       return json({ error: "Stripe not configured" }, 503);
@@ -3189,6 +3221,12 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         clientName: client.contact_name || client.company_name,
         linkUrl: link.url,
       });
+      // Owner direction 2026-08-18 — the status flip happens ONLY after Stripe
+      // AND the email both succeeded: payment_status none → sent (the Payment
+      // column turns yellow), and the emailed link is stored for the tooltip.
+      db.query(
+        "UPDATE clients SET payment_status = 'sent', payment_link_url = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+      ).run(link.url, client.id, orgId);
       return json({
         ok: true,
         clientId: client.id,
@@ -3196,12 +3234,33 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         emailTo: client.email,
         emailStatus: emailStatusOf(email),
         emailError: email.ok ? undefined : email.error,
+        paymentStatus: "sent",
       });
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       console.error("[stripe] payment link failed for client " + id + ": " + m);
       return json({ error: "Stripe request failed: " + m }, 502);
     }
+  }
+
+  /* Owner direction 2026-08-18 — interim "mark payment received" endpoint.
+     Stripe webhooks do not exist yet, so this is the manual way the owner
+     flips the Payment column yellow (sent) → green (paid) during live
+     testing. In Phase 5 a Stripe webhook (checkout.session.completed /
+     invoice.paid) will call the same UPDATE automatically; this endpoint
+     remains the manual fallback. OWNER-ONLY (requireAdmin), like the
+     payment-link route. */
+  const paidMatch = pathname.match(/^\/api\/clients\/(\d+)\/payment-paid$/);
+  if (paidMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(paidMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
+    if (!client) return err("Client not found.", 404);
+    db.query(
+      "UPDATE clients SET payment_status = 'paid', paid_at = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+    ).run(new Date().toISOString(), id, orgId);
+    return json({ ok: true, paymentStatus: "paid" });
   }
   /* Client item */
   const itemMatch = pathname.match(/^\/api\/clients\/(\d+)$/);

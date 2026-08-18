@@ -5833,7 +5833,12 @@ S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
 check "48a: owner creates a client for the payment-link test -> 201" 201 "$S"
 PAY48_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 S=$(code -b "$JAR" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
-check "48a: payment-link without STRIPE_SECRET_KEY -> 503" 503 "$S"
+check "48a: payment-link on an UNSIGNED agreement -> 409 (signed-agreement gate 2026-08-18)" 409 "$S"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"PayLink Test Co","clientType":"commercial","dealValue":200,"stage":"Leads","agreementStatus":"signed"}' "$BASE/api/clients/$PAY48_ID")
+check "48a: owner PUT agreementStatus=signed -> 200" 200 "$S"
+S=$(code -b "$JAR" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
+check "48a: payment-link signed + no STRIPE_SECRET_KEY -> 503 (unchanged placeholder)" 503 "$S"
 if grep -q '{"error":"Stripe not configured"}' /tmp/body.json; then
   PASS=$((PASS+1)); echo "  ✓ body is exactly { error: \"Stripe not configured\" }"
 else
