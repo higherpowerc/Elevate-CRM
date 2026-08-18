@@ -4192,15 +4192,19 @@ if [ "$(grep -c '{!ownerLeadsTab && <th>Stage</th>}' src/Clients.tsx)" -ge 2 ] &
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Lost/DNC Stage gating missing from src/Clients.tsx"
 fi
-if grep -Fq 'ownerLeadsTab ? (' src/Clients.tsx && grep -Fq 'width: "21%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx && grep -Fq 'width: "12%"' src/Clients.tsx && grep -Fq 'width: "9%"' src/Clients.tsx && grep -Fq 'width: "20%"' src/Clients.tsx && grep -Fq 'width: "22%"' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: owner Leads colgroup is the 6-col 21/16/12/9/20/22 branch (sums 100%)"
+# Owner direction 2026-08-18 (payment-status PR): the owner colgroup layout
+# changed — owner Leads is now 7 cols 19/15/11/9/17/10/19 (the Payment column
+# sits between Next action and Actions); owner Onboarding/Clients 8 cols
+# 17/14/10/8/13/12/10/16; tenant views keep Stage, 7 cols 21/15/11/8/15/12/18.
+if grep -Fq 'ownerLeadsTab ? (' src/Clients.tsx && grep -Fq 'width: "19%"' src/Clients.tsx && grep -Fq 'width: "9%"' src/Clients.tsx && grep -Fq 'width: "17%"' src/Clients.tsx && grep -Fq 'width: "10%"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Leads colgroup is the 7-col 19/15/11/9/17/10/19 branch (sums 100%)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: 6-col owner Leads colgroup branch missing in src/Clients.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: 7-col owner Leads colgroup branch missing in src/Clients.tsx"
 fi
-if grep -Fq 'ownerOrg ? "19%" : "21%"' src/Clients.tsx && grep -Fq 'ownerOrg ? "18%" : "18%"' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: 7-col fallback colgroup retained (owner Onboarding + tenant views keep Stage)"
+if grep -Fq 'width: "14%"' src/Clients.tsx && grep -Fq 'width: "13%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx && grep -Fq 'width: "21%"' src/Clients.tsx && grep -Fq 'width: "18%"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Onboarding/Clients 8-col (17/14/10/8/13/12/10/16) + tenant 7-col (21/15/11/8/15/12/18) colgroup branches retained"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: 7-col fallback colgroup missing from src/Clients.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: 8-col owner / 7-col tenant colgroup branches missing from src/Clients.tsx"
 fi
 if [ -n "$NEWEST_JS39" ]; then
   if grep -Eq 'children:"Stage"},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("th",{children:"Next action"' "$NEWEST_JS39"; then
@@ -4213,15 +4217,15 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage td missing from $NEWEST_JS39"
   fi
-  if grep -Eq 'width:"21%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"16%"}}' "$NEWEST_JS39"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: 6-col owner Leads colgroup present (21/16/12… sequence)"
+  if grep -Eq 'width:"19%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"15%"}}' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner Leads 7-col colgroup present (19/15… sequence, Payment column added)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: 6-col owner Leads colgroup missing from $NEWEST_JS39"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col owner Leads colgroup missing from $NEWEST_JS39"
   fi
-  if grep -Eq 'width:[A-Za-z0-9$_]+\?"19%":"21%"' "$NEWEST_JS39" && grep -Eq 'width:[A-Za-z0-9$_]+\?"18%":"18%"' "$NEWEST_JS39"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: 7-col fallback colgroup retained (owner Onboarding + tenants keep Stage)"
+  if grep -Eq 'width:"17%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"14%"}}' "$NEWEST_JS39" && grep -Eq 'width:"21%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"15%"}}' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner 8-col (17/14… seq) + tenant 7-col (21/15… seq) colgroups retained"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col fallback colgroup missing from $NEWEST_JS39"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: 8-col/7-col colgroup sequences missing from $NEWEST_JS39"
   fi
   if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39" && ! grep -Eq 'jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC Stage cell is owner-gated in the built rows (hidden on owner Leads, kept for tenants)"
@@ -5853,6 +5857,63 @@ S=$(code -c "$JPT" -b "$JPT" -X POST -H 'Content-Type: application/json' \
 check "48a: tenant login -> 200" 200 "$S"
 S=$(code -b "$JPT" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
 check "48a: tenant payment-link -> 403 (owner-only route)" 403 "$S"
+echo "-- 48a2. Payment column + mark-paid (owner direction 2026-08-18) ================ "
+# Source markers (a)-(d): the signed-agreement gate title, the Payment column
+# header, the disabled expression and the mark-paid handler/endpoint.
+if grep -Fq 'Agreement must be signed before sending a payment link' src/Clients.tsx && grep -Fq '<th>Payment</th>' src/Clients.tsx && grep -Fq 'busy || c.agreementStatus !== "signed"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Payment column (th) + signed-gate button title/disabled expression in src/Clients.tsx"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Payment column / signed-gate markers missing from src/Clients.tsx"
+fi
+if grep -Fq 'handleMarkPaid' src/Clients.tsx && grep -Fq 'api.clientPaymentPaid(c.id)' src/Clients.tsx && grep -Fq '/payment-paid' server/api.ts && grep -Fq 'payment_status = '"'"'paid'"'"'' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: mark-paid handler + owner-only POST /api/clients/:id/payment-paid endpoint"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: mark-paid handler/endpoint markers missing"
+fi
+# Stripe is not configured locally, so the payment_status='sent' flip cannot
+# come from the endpoint — force the DB state directly (bun:sqlite on the main
+# throwaway DB) to exercise the owner-only mark-paid flow end to end.
+cat > /tmp/setpay.ts <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.SETPAY_DB ?? "data/crm.db");
+const st = process.argv[2] ?? "sent";
+const id = Number(process.argv[3]);
+db.run("UPDATE clients SET payment_status = ?, payment_link_url = ?, updated_at = datetime('now') WHERE id = ?", [st, "https://pay.example/pl/" + id, id]);
+console.log("ok");
+TS
+SETPAY_DB="data/crm.db" bun /tmp/setpay.ts sent "$PAY48_ID" >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  ✓ 48a2: forced payment_status=sent for the throwaway client (DB fixture)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 48a2: DB fixture failed"; }
+S=$(code -b "$JAR" "$BASE/api/clients/$PAY48_ID")
+check "48a2: owner GET client (payment_status forced sent) -> 200" 200 "$S"
+grep -q '"paymentStatus":"sent"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 48a2: owner payload carries paymentStatus "sent""; } || { FAIL=$((FAIL+1)); echo "  ✗ 48a2: owner payload paymentStatus: $(cat /tmp/body.json)"; }
+S=$(code -b "$JAR" -X POST "$BASE/api/clients/$PAY48_ID/payment-paid")
+check "48a2: owner mark-paid on a 'sent' client -> 200" 200 "$S"
+if grep -q '"ok":true' /tmp/body.json && grep -q '"paymentStatus":"paid"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ 48a2: payment-paid body is { ok: true, paymentStatus: "paid" }"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 48a2: payment-paid body: $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JAR" "$BASE/api/clients/$PAY48_ID")
+check "48a2: owner GET client after mark-paid -> 200" 200 "$S"
+grep -q '"paymentStatus":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 48a2: owner payload reflects paymentStatus "paid" after mark-paid"; } || { FAIL=$((FAIL+1)); echo "  ✗ 48a2: paymentStatus not updated: $(cat /tmp/body.json)"; }
+grep -q '"paidAt":"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 48a2: paidAt timestamp persisted"; } || { FAIL=$((FAIL+1)); echo "  ✗ 48a2: paidAt missing: $(cat /tmp/body.json)"; }
+S=$(code -b "$JAR" "$BASE/api/clients")
+check "48a2: owner clients list -> 200" 200 "$S"
+grep -q '"id":'$PAY48_ID',' /tmp/body.json && grep -q '"paymentStatus":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 48a2: owner LIST payload carries the updated paymentStatus "paid""; } || { FAIL=$((FAIL+1)); echo "  ✗ 48a2: list payload paymentStatus not 'paid'"; }
+S=$(code -b "$JPT" -X POST "$BASE/api/clients/$PAY48_ID/payment-paid")
+check "48a2: tenant (non-owner) payment-paid -> 403 (owner-only route)" 403 "$S"
+S=$(code -b "$JPT" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Pay Co","email":"tenantpayco@example.com","clientType":"commercial","dealValue":100,"stage":"Prospect"}' "$BASE/api/clients")
+check "48a2: tenant creates its own client -> 201" 201 "$S"
+TPC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JPT" "$BASE/api/clients/$TPC_ID")
+check "48a2: tenant GET its client -> 200" 200 "$S"
+if ! grep -q '"paymentStatus"' /tmp/body.json && ! grep -q '"agreementStatus"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ 48a2: tenant payload carries NO paymentStatus/agreementStatus keys (owner-only fields)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 48a2: tenant payload leaked owner-only keys: $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JAR" -X DELETE "$BASE/api/clients/$PAY48_ID")
+check "48a2: throwaway PayLink client deleted (cleanup)" 200 "$S"
 rm -f "$JPT"
 echo "-- 48b. Bundle: 'Payment link' button shipped on the Onboarding tab == "
 NEWEST_JS48=$(ls -t dist/index-*.js 2>/dev/null | head -1)
@@ -5860,6 +5921,16 @@ if [ -n "$NEWEST_JS48" ] && grep -Fq "Payment link" "$NEWEST_JS48" && grep -Fq "
   PASS=$((PASS+1)); echo "  ✓ bundle: 'Payment link' action + not-connected notice shipped"
 else
   FAIL=$((FAIL+1)); echo "  ✗ bundle: payment-link markers missing from $NEWEST_JS48"
+fi
+if [ -n "$NEWEST_JS48" ] && grep -Fq "Agreement must be signed before sending a payment link" "$NEWEST_JS48" && grep -Eq 'jsxDEV\("th",{children:"Payment"}' "$NEWEST_JS48"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: Payment column header + signed-gate button title shipped"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: Payment-column bundle markers missing from $NEWEST_JS48"
+fi
+if [ -n "$NEWEST_JS48" ] && grep -Fq "Mark paid" "$NEWEST_JS48"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle: 'Mark paid' action shipped (Payment column)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle: 'Mark paid' missing from $NEWEST_JS48"
 fi
 echo "-- 48c. Source markers: Onboarding '+ New lead' removed + scroll-gate JS == "
 if grep -Fq 'scope !== "middle"' src/Clients.tsx; then
