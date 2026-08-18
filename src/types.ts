@@ -166,6 +166,9 @@ export interface Client {
   paymentStatus?: PaymentStatus;
   paymentLinkUrl?: string;
   paidAt?: string;
+  /** Phase 5 — the owner-entered amount (USD cents) the last Stripe payment
+   *  link was sent for. OWNER-only, like paymentStatus. */
+  paymentAmountCents?: number;
   createdAt: string;
   updatedAt: string;
 }

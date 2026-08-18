@@ -43,6 +43,10 @@ export interface SendEmailInput {
    *  only sends client-facing mail (owner mail, when it exists, can opt out
    *  by passing false). */
   testRedirect?: boolean;
+  /** Phase 5 — optional file attachments (Resend's `attachments` array).
+   *  `content` is base64. The e2e mock records them as-is, so the billing
+   *  suite asserts the PDF attachment lands. */
+  attachments?: { filename: string; content: string; content_type: string }[];
 }
 
 /** The best public URL for the app: the triggering request's origin when one
@@ -81,6 +85,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       text,
     };
     if (input.html) body.html = input.html;
+    if (input.attachments && input.attachments.length > 0) body.attachments = input.attachments;
     const res = await fetch(RESEND_API, {
       method: "POST",
       headers: {
@@ -241,20 +246,31 @@ export function sendAgreementEmail(opts: {
 }
 
 /** Phase 5 prep — Stripe payment link (live-test finding 2026-08-17): the
- *  client's unique payment link for the $200.00/month CRM subscription. Sent
+ *  client's unique payment link for their Revzenta CRM subscription. Sent
  *  only when the payment-link endpoint successfully created the Stripe link
- *  (the caller checks Stripe success BEFORE calling this). */
+ *  (the caller checks Stripe success BEFORE calling this). The amount is the
+ *  OWNER-entered figure at bill time (no hard-coded rates) — it shows in the
+ *  email so the client knows what they're approving. */
 export function sendPaymentLinkEmail(opts: {
   to: string;
   clientName: string;
   linkUrl: string;
+  amountCents?: number;
+  interval?: "month" | "one_time";
 }): Promise<SendEmailResult> {
-  const text = [
+  const amountText =
+    opts.amountCents && opts.amountCents > 0
+      ? `Your ${opts.interval === "one_time" ? "invoice" : "monthly"} amount is ${fmtUsd(opts.amountCents)}.`
+      : "";
+  const lines = [
     `Hi ${opts.clientName},`,
     "",
     "Your Revzenta CRM subscription is ready to activate.",
     "",
-    "Use the secure payment link below to complete your first monthly payment:",
+  ];
+  if (amountText) lines.push(amountText, "");
+  lines.push(
+    "Use the secure payment link below to complete your payment:",
     "",
     opts.linkUrl,
     "",
@@ -263,10 +279,51 @@ export function sendPaymentLinkEmail(opts: {
     "If you have any questions, just reply to this email.",
     "",
     "— Revzenta",
-  ].join("\n");
+  );
   return sendEmail({
     to: opts.to,
     subject: "Your payment link for Revzenta CRM",
+    text: lines.join("\n"),
+  });
+}
+
+function fmtUsd(cents: number): string {
+  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+/** Phase 5 — invoice-paid email. Sent the moment a Stripe webhook records a
+ *  real payment: the client gets a short summary + the invoice PDF attached.
+ *  `pdfBase64` is the base64 invoice PDF (server/invoices.ts); the mock
+ *  Resend the e2e suite uses records the attachment so the suite asserts it. */
+export function sendInvoiceEmail(opts: {
+  to: string;
+  clientName: string;
+  amountCents: number;
+  paidAt: string;
+  invoiceNumber: string;
+  pdfBase64: string;
+}): Promise<SendEmailResult> {
+  const text = [
+    `Hi ${opts.clientName},`,
+    "",
+    `We received your payment of ${fmtUsd(opts.amountCents)} — thank you!`,
+    "",
+    `Invoice #${opts.invoiceNumber} is paid in full and attached to this email.`,
+    "",
+    "If you have any questions, just reply to this email.",
+    "",
+    "— Revzenta",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: `Invoice ${opts.invoiceNumber} is paid — ${fmtUsd(opts.amountCents)} received`,
     text,
+    attachments: [
+      {
+        filename: `invoice-${opts.invoiceNumber}.pdf`,
+        content: opts.pdfBase64,
+        content_type: "application/pdf",
+      },
+    ],
   });
 }

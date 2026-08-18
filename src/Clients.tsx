@@ -501,14 +501,28 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     // until then (see the Onboarding row), and the server enforces the same
     // rule (409) — this early return is a cheap belt-and-suspenders guard.
     if (c.agreementStatus !== "signed") return;
+    // Phase 5 (owner direction 2026-08-18) — the owner types the bill amount
+    // at send time; no hard-coded rates. Prefill from the client's stored
+    // monthly subscription amount when there is one.
+    const prefill = c.monthlyAmount > 0 ? String(c.monthlyAmount) : "";
+    const entered = window.prompt(
+      `Bill ${c.companyName} — enter the payment amount in USD (e.g. 200 or 199.99).`,
+      prefill,
+    );
+    if (entered === null) return; // canceled
+    const amount = Number(entered);
+    if (!entered.trim() || !Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a valid payment amount in dollars.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setPayNotice(null);
     try {
-      const r = await api.clientPaymentLink(c.id);
+      const r = await api.clientPaymentLink(c.id, { amount, interval: "month" });
       setPayNotice({
         kind: "success",
-        text: `Payment link sent to ${r.emailTo}: ${r.url}`,
+        text: `Payment link for ${money(r.amountCents / 100)} sent to ${r.emailTo}: ${r.url}`,
       });
       // Live update: the Payment column flips none → Sent (yellow) via the
       // same refetch the agreement lifecycle uses.
