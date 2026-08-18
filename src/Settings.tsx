@@ -1553,45 +1553,6 @@ export default function Settings({
             {exportBusy ? "Preparing…" : "Export my data"}
           </button>
         </div>
-
-        {/* Phase 5 prep — self-serve cancel/offboarding. ORG ADMIN ONLY and
-            never the owner workspace (the server 403s both). Cancellation is
-            effective immediately for sign-in; the data is RETAINED 30 days
-            (contract: 30-day data retention, no partial-month refunds). */}
-        {isOrgAdmin && !isOwnerOrg && (
-          <div className="card admin-form">
-            <div className="admin-card-head">
-              <h2 className="admin-card-title">Cancel account</h2>
-              <p className="admin-card-sub">
-                Canceling ends sign-in access to this workspace immediately. Your data is
-                retained for 30 days and no further charges are made; no partial-month
-                refunds are given.
-              </p>
-            </div>
-            {cancelError && (
-              <div className="alert alert-error" role="alert">
-                {cancelError}
-              </div>
-            )}
-            {canceledInfo && (
-              <div className="alert" role="status">
-                <strong>{canceledInfo.message}</strong>{" "}
-                {canceledInfo.retentionUntil
-                  ? `Your data is retained until ${canceledInfo.retentionUntil.slice(0, 10)}.`
-                  : ""}
-              </div>
-            )}
-            {!canceledInfo && (
-              <button
-                type="button"
-                className="btn btn-danger"
-                onClick={() => setConfirmCancel(true)}
-              >
-                Cancel account…
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Team users per client account (owner request 2026-08-14) — the
@@ -1942,6 +1903,46 @@ export default function Settings({
             )}
           </div>
         </>
+      )}
+
+      {/* Phase 5 prep — self-serve cancel/offboarding. Rendered LAST as the
+          final section of Settings. ORG ADMIN ONLY and never the owner
+          workspace (the server 403s both). Cancellation is effective
+          immediately for sign-in; the data is RETAINED 30 days (contract:
+          30-day data retention, no partial-month refunds). */}
+      {isOrgAdmin && !isOwnerOrg && (
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Cancel account</h2>
+            <p className="admin-card-sub">
+              Canceling ends sign-in access to this workspace immediately. Your data is
+              retained for 30 days and no further charges are made; no partial-month
+              refunds are given.
+            </p>
+          </div>
+          {cancelError && (
+            <div className="alert alert-error" role="alert">
+              {cancelError}
+            </div>
+          )}
+          {canceledInfo && (
+            <div className="alert" role="status">
+              <strong>{canceledInfo.message}</strong>{" "}
+              {canceledInfo.retentionUntil
+                ? `Your data is retained until ${canceledInfo.retentionUntil.slice(0, 10)}.`
+                : ""}
+            </div>
+          )}
+          {!canceledInfo && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={() => setConfirmCancel(true)}
+            >
+              Cancel account…
+            </button>
+          )}
+        </div>
       )}
       {deletingMember && (
         <ConfirmDeleteModal
