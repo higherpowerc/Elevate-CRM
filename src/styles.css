@@ -1917,15 +1917,34 @@ legend.field-label {
 
 /* ── Admin (tenant provisioning) ─────────────────────────────── */
 
+/* Owner live-test reorg 2026-08-18 — the Accounts panel sits at the bottom
+   of the owner's Clients tab (the sold-clients records directory stays the
+   heart of the tab; account management moves below it as its own section). */
+.accounts-section {
+  margin-top: 26px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+.accounts-head {
+  margin-bottom: 18px;
+}
+.accounts-head h2 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+
 .admin-grid {
   display: grid;
   /* Owner bug report 2026-08-15 (re-reported) — the two-column grid
-     (380px create-form column + 1fr table) squeezed the 6-column
-     client-accounts table: with table-layout:fixed and no explicit column
-     widths the billing controls (amount + model + Save) and the action
+     (380px create-form column + 1fr table) squeezed the client-accounts
+     table: with table-layout:fixed and no explicit column widths the action
      buttons overlapped their neighbors at ~1280px. Restacked: the "create
      client account" form sits ABOVE and the client-accounts table takes the
-     full width below it. */
+     full width below it. The Accounts panel moved from Administration to the
+     owner's Clients tab on 2026-08-18 (single hub for account management);
+     the layout + wrap guards came along unchanged. */
   grid-template-columns: 1fr;
   gap: 18px;
   align-items: start;
@@ -1975,14 +1994,11 @@ legend.field-label {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Owner bug report 2026-08-15 — the Admin table's billing controls and
-   action buttons must never overlap: they wrap inside their fixed column
-   instead of overflowing into the neighboring cell (same pattern as the
-   owner Leads tab's actions column). */
+/* Owner bug report 2026-08-15 — the accounts table's action buttons must
+   never overlap: they wrap inside their fixed column instead of overflowing
+   into the neighboring cell (same pattern as the owner Leads tab's actions
+   column). */
 .admin-table .row-actions {
-  flex-wrap: wrap;
-}
-.admin-table .admin-billing-edit {
   flex-wrap: wrap;
 }
 
@@ -3447,32 +3463,7 @@ legend.field-label {
   font-size: 20px;
   color: var(--lime);
 }
-.admin-billing-edit {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.admin-billing-inputs {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.billing-amount {
-  width: 88px;
-}
-/* Owner direction 2026-08-15 — Admin billing amount: white text on a black
-   background (the per-account revenue-model select is removed — one product,
-   subscription-based; the billing-amount input stays as Phase 5 prep). */
-.admin-billing-inputs .billing-amount {
-  background: #000;
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.35);
-}
 @media (max-width: 760px) {
-  .admin-billing-edit {
-    align-items: flex-start;
-    flex-direction: column;
-  }
   .page-actions-col {
     align-items: flex-start;
   }

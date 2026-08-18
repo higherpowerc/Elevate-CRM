@@ -188,10 +188,10 @@ export default function App() {
     setOnboardingStage(null);
   }, []);
 
-  /* Phase 3d — "View account" from the owner's Admin tab: the server swaps
-     this session into the tenant's member user. Land on that tenant's
-     dashboard — their nav, data, branding and role rules now apply as if the
-     owner had logged in as them. */
+  /* Phase 3d — "View account" from the owner's Clients tab (Accounts panel):
+     the server swaps this session into the tenant's member user. Land on that
+     tenant's dashboard — their nav, data, branding and role rules now apply as
+     if the owner had logged in as them. */
   const handleImpersonate = useCallback(async (orgId: number) => {
     const res = await api.adminImpersonate(orgId);
     setUser(res.user);
@@ -415,9 +415,10 @@ export default function App() {
                 onClick={() => setView("admin")}
               >
                 {/* Owner direction 2026-08-17 — the owner's admin tab reads
-                    "Administration": it hosts the client-account list AND the
-                    Agreements section (the agreement template editor that
-                    used to live in Settings). One home, no duplicate. */}
+                    "Administration": it hosts the Agreements section (the
+                    agreement template editor that used to live in Settings).
+                    One home, no duplicate. Client-ACCOUNT management lives on
+                    the Clients tab since 2026-08-18. */}
                 Administration
               </button>
             )}
@@ -517,13 +518,25 @@ export default function App() {
              dashboard routes middle stages to their single Leads tab. */
           <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} canEdit />
         ) : effectiveView === "clients" ? (
-          <ClientsDirectory stages={stages} ownerOrg={isOwnerOrg} canEdit={canEditTab("clients")} />
+          /* Owner live-test reorg 2026-08-18 — the owner's Clients tab hosts
+             the ACCOUNT management panel (create / view / reset / delete) via
+             ClientsDirectory's Accounts sub-component. */
+          <ClientsDirectory
+            stages={stages}
+            ownerOrg={isOwnerOrg}
+            canEdit={canEditTab("clients")}
+            ownerOrgId={isOwnerOrg ? user.orgId : undefined}
+            onViewAccount={isOwnerOrg ? handleImpersonate : undefined}
+          />
         ) : effectiveView === "tasks" ? (
           <Tasks canEdit={canEditTab("tasks")} />
         ) : effectiveView === "finance" ? (
           <Finance canEdit={canEditTab("finance")} />
         ) : effectiveView === "admin" ? (
-          <Admin ownerOrgId={user.orgId} onViewAccount={handleImpersonate} />
+          /* Administration now hosts the Agreements (template editor) section
+             only — client-account management moved to the Clients tab
+             (2026-08-18). */
+          <Admin />
         ) : effectiveView === "documents" ? (
           <Documents />
         ) : effectiveView === "tickets" ? (
