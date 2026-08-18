@@ -868,6 +868,41 @@ db.exec(`
     db.exec("ALTER TABLE clients ADD COLUMN agreement_status TEXT NOT NULL DEFAULT 'not_sent'");
   }
 }
+
+/**
+ * Payment-status migration (owner direction 2026-08-18). Idempotent — safe on
+ * every boot.
+ *
+ * clients gains the OWNER-only payment columns for the $200/month subscription
+ * payment link:
+ *   payment_status   TEXT NOT NULL DEFAULT 'none' — none (no link sent yet)
+ *                    | sent (link emailed — yellow) | paid (payment received —
+ *                    green). The owner's Payment column in the clients table
+ *                    renders from this.
+ *   payment_link_url TEXT NOT NULL DEFAULT '' — the Stripe Payment Link URL
+ *                    emailed to the client ('' until the first successful
+ *                    send). Shown in the Sent badge's tooltip.
+ *   paid_at          TEXT NOT NULL DEFAULT '' — ISO timestamp of when the
+ *                    payment was recorded as received ('' until paid). Shown
+ *                    in the Paid badge's tooltip.
+ *
+ * Plain TEXT columns with DEFAULTs, so existing rows backfill cleanly (the
+ * same pattern every Phase 3 migration uses). The values are exposed to and
+ * written by the OWNER org only — tenant orgs never receive the keys (the
+ * agreement_status isolation rule).
+ */
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${ddl}`);
+    }
+  };
+  addCol("payment_status", "payment_status TEXT NOT NULL DEFAULT 'none'");
+  addCol("payment_link_url", "payment_link_url TEXT NOT NULL DEFAULT ''");
+  addCol("paid_at", "paid_at TEXT NOT NULL DEFAULT ''");
+}
+
 /**
  * Native e-signature (owner direction 2026-08-15) — the owner's editable
  * agreement template lives on the OWNER org row (orgs.agreement_template).
@@ -1212,6 +1247,16 @@ export interface ClientRow {
    *  (default "not_sent"). Tracked
    *  manually by the OWNER org only; tenant orgs never receive/write it. */
   agreement_status: string;
+  /** Owner direction 2026-08-18 — payment-link status for the $200/month
+   *  subscription: "none" | "sent" | "paid" (default "none"). OWNER-only,
+   *  like agreement_status; tenant orgs never receive/write it. */
+  payment_status: string;
+  /** The Stripe Payment Link URL emailed to the client ('' until sent).
+   *  Owner-only, like payment_status. */
+  payment_link_url: string;
+  /** When the payment was recorded as received — ISO timestamp ('' until
+   *  paid). Owner-only, like payment_status. */
+  paid_at: string;
 }
 
 export interface TaskRow {

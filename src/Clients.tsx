@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent
    throws ReferenceError at runtime — the payment-link 503 notice never
    rendered (live-test finding 2026-08-17, fixed in PR #68). */
 import { api, ApiError, type ClientInput } from "./api";
-import { money, fmtDate, type AgreementEnvelope, type Client, type CustomFieldDef, type Stage, type AgreementStatus } from "./types";
+import { money, fmtDate, type AgreementEnvelope, type Client, type CustomFieldDef, type Stage, type AgreementStatus, type PaymentStatus } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
@@ -110,6 +110,17 @@ const AGREEMENT_META: Record<AgreementStatus, { label: string; tone: string }> =
   delivered: { label: "Delivered", tone: "tone-blue" },
   signed: { label: "Signed", tone: "tone-green" },
   declined: { label: "Declined", tone: "tone-red" },
+};
+
+/** Owner direction 2026-08-18 — the Payment column status vocabulary: badge
+ *  label + tone. none → the cell renders a muted em dash (no link sent yet),
+ *  sent → amber (link emailed, waiting on the client's payment — yellow),
+ *  paid → green (payment received). Same badge/tone styling as the agreement
+ *  badges (AGREEMENT_META). */
+const PAYMENT_META: Record<PaymentStatus, { label: string; tone: string }> = {
+  none: { label: "—", tone: "tone-gray" },
+  sent: { label: "Sent", tone: "tone-amber" },
+  paid: { label: "Paid", tone: "tone-green" },
 };
 
 /** Owner cockpit B (PR #53) — the compact DocuSign lifecycle stepper shown
@@ -485,6 +496,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
      link. Owner-workspace-only, scope "middle". */
   const [payNotice, setPayNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
   async function handlePaymentLink(c: Client) {
+    // Owner direction 2026-08-18 — the payment link must NOT be operational
+    // until the client's agreement is fully signed. The button is disabled
+    // until then (see the Onboarding row), and the server enforces the same
+    // rule (409) — this early return is a cheap belt-and-suspenders guard.
+    if (c.agreementStatus !== "signed") return;
     setBusy(true);
     setError(null);
     setPayNotice(null);
@@ -494,6 +510,9 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         kind: "success",
         text: `Payment link sent to ${r.emailTo}: ${r.url}`,
       });
+      // Live update: the Payment column flips none → Sent (yellow) via the
+      // same refetch the agreement lifecycle uses.
+      await load();
     } catch (e) {
       if (e instanceof ApiError && e.status === 503) {
         setPayNotice({
@@ -503,6 +522,29 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       } else {
         setError(e instanceof Error ? e.message : "Payment link failed.");
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** Owner direction 2026-08-18 — manual "mark paid" (interim): flips the
+   *  Payment column yellow (Sent) → green (Paid) via the owner-only
+   *  payment-paid endpoint. A Stripe webhook auto-flips it in Phase 5; this
+   *  is the manual path during live testing. The refetch after the call makes
+   *  the row show Paid immediately (same live-update lifecycle as the
+   *  agreement status). */
+  async function handleMarkPaid(c: Client) {
+    setBusy(true);
+    setError(null);
+    setPayNotice(null);
+    try {
+      await api.clientPaymentPaid(c.id);
+      setPayNotice({
+        kind: "success",
+        text: `Payment recorded as received for ${c.companyName} — the Payment column now shows Paid.`,
+      });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not mark the payment as received.");
     } finally {
       setBusy(false);
     }
@@ -835,28 +877,41 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   column, the Next-action stack and the extra Lost/DNC actions
                   while the 3i table-fit rule still holds (100% total). Owner
                   bug report 2026-08-15 — the owner's LEADS tab drops the
-                  Stage column entirely: 6 columns (Business name / Contact /
-                  Services / Deal / Next action / Actions = 21/16/12/9/20/22).
-                  The owner's Onboarding tab and every tenant view keep the
-                  7-column layout with Stage. */}
+                  Stage column entirely. Owner direction 2026-08-18 — the
+                  Payment column sits between Next action and Actions in every
+                  OWNER view (Leads: 7 cols 19/15/11/9/17/10/19; Onboarding +
+                  Clients directory: 8 cols 17/14/10/8/13/12/10/16). Tenant
+                  views keep their exact 7-col layout (21/15/11/8/15/12/18). */}
               {ownerLeadsTab ? (
                 <>
-                  <col style={{ width: "21%" }} />
-                  <col style={{ width: "16%" }} />
-                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "19%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "11%" }} />
                   <col style={{ width: "9%" }} />
-                  <col style={{ width: "20%" }} />
-                  <col style={{ width: "22%" }} />
+                  <col style={{ width: "17%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "19%" }} />
+                </>
+              ) : ownerOrg ? (
+                <>
+                  <col style={{ width: "17%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "13%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "16%" }} />
                 </>
               ) : (
                 <>
-                  <col style={{ width: ownerOrg ? "19%" : "21%" }} />
-                  <col style={{ width: ownerOrg ? "14%" : "15%" }} />
+                  <col style={{ width: "21%" }} />
+                  <col style={{ width: "15%" }} />
                   <col style={{ width: "11%" }} />
                   <col style={{ width: "8%" }} />
                   <col style={{ width: "15%" }} />
-                  <col style={{ width: ownerOrg ? "15%" : "12%" }} />
-                  <col style={{ width: ownerOrg ? "18%" : "18%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "18%" }} />
                 </>
               )}
             </colgroup>
@@ -871,6 +926,10 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                 <th className="num">Deal</th>
                 {!ownerLeadsTab && <th>Stage</th>}
                 <th>Next action</th>
+                {/* Owner direction 2026-08-18 — the Payment column: owner
+                    views only (tenants never see the key in the payload), sits
+                    between Next action and Actions. */}
+                {ownerOrg && <th>Payment</th>}
                 <th className="actions-th">Actions</th>
               </tr>
             </thead>
@@ -1034,6 +1093,50 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         )}
                       </div>
                     </td>
+                    {ownerOrg && (
+                      /* Owner direction 2026-08-18 — the Payment column: live
+                         status of the $200/month subscription payment link,
+                         matching the agreement-status pattern (server-persisted
+                         paymentStatus, refetched by the list lifecycle — no
+                         polling). none → muted dash; sent → amber badge (title
+                         carries the emailed link URL); paid → green badge
+                         (title carries when the payment was received). The
+                         owner's Onboarding tab adds a tiny "Mark paid" action
+                         next to the Sent badge (interim manual flip until the
+                         Phase 5 Stripe webhook). */
+                      <td data-label="Payment">
+                        {c.paymentStatus === "none" || !c.paymentStatus ? (
+                          <span className="cell-muted">—</span>
+                        ) : (
+                          <div className="pay-cell">
+                            <span
+                              className={`badge ${PAYMENT_META[c.paymentStatus].tone}`}
+                              title={
+                                c.paymentStatus === "sent"
+                                  ? `Payment link: ${c.paymentLinkUrl || "sent to client"}`
+                                  : c.paymentStatus === "paid" && c.paidAt
+                                    ? `Paid ${new Date(c.paidAt).toLocaleString()}`
+                                    : PAYMENT_META[c.paymentStatus].label
+                              }
+                            >
+                              {PAYMENT_META[c.paymentStatus].label}
+                            </span>
+                            {ownerOnboardingTab && canEdit && c.paymentStatus === "sent" && (
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                title="Mark the client's payment as received"
+                                aria-label={`Mark payment received for ${c.companyName}`}
+                                onClick={() => handleMarkPaid(c)}
+                                disabled={busy}
+                              >
+                                Mark paid
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    )}
                     <td data-label="Actions">
                       <div className="row-actions">
                         {canEdit && (
@@ -1073,10 +1176,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           <button
                             type="button"
                             className="icon-btn"
-                            title="Send a payment link for the $200/month subscription"
+                            title={
+                              c.agreementStatus === "signed"
+                                ? "Send a payment link for the $200/month subscription"
+                                : "Agreement must be signed before sending a payment link"
+                            }
                             aria-label={`Send payment link to ${c.companyName}`}
                             onClick={() => handlePaymentLink(c)}
-                            disabled={busy}
+                            disabled={busy || c.agreementStatus !== "signed"}
                           >
                             Payment link
                           </button>

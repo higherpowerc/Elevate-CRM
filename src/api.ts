@@ -313,5 +313,11 @@ export const api = {
       emailTo: string;
       emailStatus: "sent" | "failed" | "skipped";
       emailError?: string;
+      paymentStatus: "sent";
     }>(`/api/clients/${id}/payment-link`, { method: "POST" }),
+  /* Owner direction 2026-08-18 — interim manual "mark payment received"
+     (owner-only, like clientPaymentLink). Flips the Payment column yellow →
+     green until a Stripe webhook auto-flips it in Phase 5. */
+  clientPaymentPaid: (id: number) =>
+    request<{ ok: true; paymentStatus: "paid" }>(`/api/clients/${id}/payment-paid`, { method: "POST" }),
 };

@@ -84,6 +84,15 @@ export type RevenueModel = (typeof REVENUE_MODELS)[number];
  *  orgs never receive this field (absent from their API responses). */
 export type AgreementStatus = "not_sent" | "sent" | "delivered" | "signed" | "declined";
 
+/** Owner direction 2026-08-18 — per-client payment-link status for the
+ *  $200/month subscription: "none" (no link sent yet) → "sent" (link emailed —
+ *  yellow, waiting on the client) → "paid" (payment received — green). The
+ *  OWNER's clients table renders this as the Payment column (next to Next
+ *  action), with live updates from the server after the payment-link send and
+ *  the manual mark-paid action. OWNER-workspace-only: tenant orgs never
+ *  receive the field (absent from their API responses). */
+export type PaymentStatus = "none" | "sent" | "paid";
+
 export interface Client {
   id: number;
   companyName: string;
@@ -151,6 +160,12 @@ export interface Client {
    *  (tenant orgs never receive the key). Optional so the client modal and
    *  tenant code never have to know about it. */
   agreementStatus?: AgreementStatus;
+  /** Owner direction 2026-08-18 — payment-link status + the emailed link URL
+   *  and paid-at timestamp. OWNER-workspace-only (tenant responses never
+   *  carry the keys). Optional so tenant code never has to know about them. */
+  paymentStatus?: PaymentStatus;
+  paymentLinkUrl?: string;
+  paidAt?: string;
   createdAt: string;
   updatedAt: string;
 }
