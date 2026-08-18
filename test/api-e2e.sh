@@ -2177,15 +2177,15 @@ import json
 d = json.load(open('/tmp/body.json'))
 prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $DB1_ID]
 assert len(prov) == 1, prov
-assert prov[0]['loginEmail'] == 'dust-bane-pest@elevate.studio', prov[0]['loginEmail']
+assert prov[0]['loginEmail'] == 'dust-bane-pest@revzenta.com', prov[0]['loginEmail']
 assert prov[0]['tempPassword'], prov[0]
 assert prov[0]['name'] == 'Dust & Bane Pest', prov[0]
-print("  ✓ derived login email from company slug: dust-bane-pest@elevate.studio")
+print("  ✓ derived login email from company slug: dust-bane-pest@revzenta.com")
 PY
 DB1_PW=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['tempPassword'] for o in d['orgs'] if o.get('provisionedFromClient') == $DB1_ID][0])")
 JARDB1=$(mktemp)
 S=$(code -c "$JARDB1" -b "$JARDB1" -X POST -H 'Content-Type: application/json' \
-  -d "{\"email\":\"dust-bane-pest@elevate.studio\",\"password\":\"$DB1_PW\"}" "$BASE/api/auth/login")
+  -d "{\"email\":\"dust-bane-pest@revzenta.com\",\"password\":\"$DB1_PW\"}" "$BASE/api/auth/login")
 check "derived-email login works → 200" 200 "$S"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Dust Bane Pest","contactName":"Nia Otis","industry":"Pest Control","clientType":"commercial","dealValue":6000,"stage":"Leads","notes":"same slug"}' \
@@ -2202,9 +2202,9 @@ import json
 d = json.load(open('/tmp/body.json'))
 prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $DB2_ID]
 assert len(prov) == 1, prov
-assert prov[0]['loginEmail'] == 'dust-bane-pest1@elevate.studio', prov[0]['loginEmail']
+assert prov[0]['loginEmail'] == 'dust-bane-pest1@revzenta.com', prov[0]['loginEmail']
 assert prov[0]['tempPassword'], prov[0]
-print("  ✓ colliding slug got the numeric suffix: dust-bane-pest1@elevate.studio")
+print("  ✓ colliding slug got the numeric suffix: dust-bane-pest1@revzenta.com")
 PY
 
 echo "-- 26e. Owner notification list + dismiss =="
