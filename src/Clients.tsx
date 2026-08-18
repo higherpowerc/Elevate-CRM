@@ -1,5 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { api, type ClientInput } from "./api";
+/* ApiError must be imported as a VALUE (not `type ApiError`) — it is used in
+   `instanceof ApiError` below (the payment-link 503 branch). A type-only
+   import is stripped by the bun build transpiler (no type-checker runs at
+   build time), leaving a dangling `ApiError` reference in the bundle that
+   throws ReferenceError at runtime — the payment-link 503 notice never
+   rendered (live-test finding 2026-08-17, fixed in PR #68). */
+import { api, ApiError, type ClientInput } from "./api";
 import { money, fmtDate, type AgreementEnvelope, type Client, type CustomFieldDef, type Stage, type AgreementStatus } from "./types";
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
@@ -464,6 +470,39 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Agreement send failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  /* Owner direction 2026-08-18 — the "Payment link" action MOVED from the
+     Clients tab (ClientsDirectory.tsx) to the OWNER's Onboarding tab: the
+     onboarding flow ends with sending the client their $200/month
+     subscription payment link. Placeholder until STRIPE_SECRET_KEY is set —
+     the endpoint returns 503 { error: "Stripe not configured" } when the
+     key is missing and this notice explains the keys are not connected yet;
+     when the key IS set the same call creates a real Payment Link for
+     $200.00/month and emails it to the client — the notice then shows the
+     link. Owner-workspace-only, scope "middle". */
+  const [payNotice, setPayNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+  async function handlePaymentLink(c: Client) {
+    setBusy(true);
+    setError(null);
+    setPayNotice(null);
+    try {
+      const r = await api.clientPaymentLink(c.id);
+      setPayNotice({
+        kind: "success",
+        text: `Payment link sent to ${r.emailTo}: ${r.url}`,
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 503) {
+        setPayNotice({
+          kind: "warn",
+          text: "Stripe is not connected yet. Once Stripe keys are added, this button will generate and send a payment link to the client.",
+        });
+      } else {
+        setError(e instanceof Error ? e.message : "Payment link failed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -1021,6 +1060,27 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             Audit
                           </button>
                         )}
+                        {/* Owner direction 2026-08-18 — the "Payment link"
+                            action MOVED from the Clients tab to the OWNER's
+                            Onboarding tab (scope middle, owner org only —
+                            NOT the Leads view, NOT tenant views, NOT the
+                            Lost/DNC table). With no STRIPE_SECRET_KEY the
+                            server answers 503 and the notice explains the
+                            keys are not connected yet; once the key is set
+                            the same button generates + emails a real Payment
+                            Link for the $200/month subscription. */}
+                        {ownerOnboardingTab && canEdit && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="Send a payment link for the $200/month subscription"
+                            aria-label={`Send payment link to ${c.companyName}`}
+                            onClick={() => handlePaymentLink(c)}
+                            disabled={busy}
+                          >
+                            Payment link
+                          </button>
+                        )}
                         {/* Owner cockpit A — owner Leads tab only: quick Lost /
                             DNC flags (same update path as the stage picker);
                             the pipeline-row Archive action is removed per the
@@ -1121,6 +1181,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               send it to the client manually.
             </p>
           )}
+        </div>
+      )}
+      {payNotice && (
+        <div
+          className={payNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+          role={payNotice.kind === "success" ? "status" : "alert"}
+        >
+          {payNotice.text}
         </div>
       )}
       {(audit || auditError) && (

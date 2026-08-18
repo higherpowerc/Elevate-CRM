@@ -4151,7 +4151,7 @@ else
 fi
 NEWEST_JS39=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS39" ]; then
-  if grep -Eq '![A-Za-z0-9$]+&&![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("span",\{className:"cell-muted cell-next"' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9_$]+&&![A-Za-z0-9_$]+&&[A-Za-z0-9$_]+\.jsxDEV\("span",\{className:"cell-muted cell-next"' <(tr -d '\n' < "$NEWEST_JS39"); then
     PASS=$((PASS+1)); echo "  ✓ bundle: cell-next span is gated on BOTH owner-tab flags (Leads + Onboarding)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: double-gated cell-next span missing from $NEWEST_JS39"
@@ -4489,7 +4489,7 @@ if [ -n "$NEWEST_JS41" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: Agreement/Services swap missing from $NEWEST_JS41"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+&&[A-Za-z0-9$_]+\.jsxDEV\("select",\{className:"stage-select",value:[A-Za-z0-9$_]+\.stage' "$NEWEST_JS41"; then
+  if grep -Eq '![A-Za-z0-9_$]+&&[A-Za-z0-9$_]+&&[A-Za-z0-9$_]+\.jsxDEV\("select",\{className:"stage-select",value:[A-Za-z0-9$_]+\.stage' <(tr -d '\n' < "$NEWEST_JS41"); then
     PASS=$((PASS+1)); echo "  ✓ bundle: owner Onboarding stage select is gated in the built rows (badge-only for the owner)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated stage select missing from $NEWEST_JS41"
@@ -5815,9 +5815,11 @@ echo "== 48. Live-test findings 2026-08-17: sign-page scroll gate, bracket place
 #  3. the agreement template must ALSO accept bracket-style placeholders
 #     ([YOUR LLC NAME], [CLIENT LEGAL NAME], [EFFECTIVE DATE], [PRICE],
 #     [DEAL_VALUE]) alongside the {{}} styles;
-#  4. the Clients tab gains a "Payment link" placeholder button + a
-#     /api/clients/:id/payment-link endpoint that answers 503
-#     { error: "Stripe not configured" } until STRIPE_SECRET_KEY is set.
+#  4. a "Payment link" placeholder button + a /api/clients/:id/payment-link
+#     endpoint that answers 503 { error: "Stripe not configured" } until
+#     STRIPE_SECRET_KEY is set. Owner direction 2026-08-18 moved the button
+#     from the Clients tab (ClientsDirectory.tsx) to the OWNER's Onboarding
+#     tab (Clients.tsx, scope "middle") — verified by source markers below.
 # Finding 2 (Onboarding "+ New lead" removed) is verified by source markers.
 echo "-- 48a. Payment-link endpoint: 503 until Stripe is configured (owner-only) == "
 S=$(code -c "$JAR" -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -5844,7 +5846,7 @@ check "48a: tenant login -> 200" 200 "$S"
 S=$(code -b "$JPT" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
 check "48a: tenant payment-link -> 403 (owner-only route)" 403 "$S"
 rm -f "$JPT"
-echo "-- 48b. Bundle: 'Payment link' button shipped on the Clients tab == "
+echo "-- 48b. Bundle: 'Payment link' button shipped on the Onboarding tab == "
 NEWEST_JS48=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS48" ] && grep -Fq "Payment link" "$NEWEST_JS48" && grep -Fq "Stripe is not connected yet" "$NEWEST_JS48"; then
   PASS=$((PASS+1)); echo "  ✓ bundle: 'Payment link' action + not-connected notice shipped"
@@ -5876,6 +5878,16 @@ if grep -Fq 'stripeClient' server/api.ts && grep -Fq 'Stripe not configured' ser
   PASS=$((PASS+1)); echo "  ✓ source: payment-link route (owner-only, guarded Stripe client, Resend email)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: payment-link route markers missing from server/api.ts"
+fi
+if grep -Fq 'api.clientPaymentLink(c.id)' src/Clients.tsx && grep -Fq 'Send payment link to' src/Clients.tsx && grep -Fq 'ownerOnboardingTab && canEdit' src/Clients.tsx && grep -Fq 'scope === "middle"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: 'Payment link' action lives in Clients.tsx (owner Onboarding view, scope middle, owner-only, canEdit-gated)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: payment-link action missing/ungated in src/Clients.tsx"
+fi
+if ! grep -Fq 'Send payment link to' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Clients tab (ClientsDirectory.tsx) no longer renders the 'Payment link' button"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 'Payment link' button still present in src/ClientsDirectory.tsx"
 fi
 echo "-- 48d. Sign page: scroll box + read gate + bracket placeholders (long template) == "
 # Self-contained server like section 45: a throwaway CRM server on :3008 with
@@ -6028,18 +6040,20 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ PDF probe failed: $(cat "$MOCK48/probe.out" 2>/dev/null)"
 fi
 echo "-- 48g. Payment-link notice fix: ApiError imported as a VALUE (live-test finding: click showed no notice) == "
-# Root cause (2026-08-17, reproduced locally in a browser): the Clients tab
-# "Payment link" click fired the fetch, the server answered 503, but NO
-# alert appeared. src/ClientsDirectory.tsx imported ApiError with a TYPE-only
+# Root cause (2026-08-17, reproduced locally in a browser): the "Payment
+# link" click fired the fetch, the server answered 503, but NO alert
+# appeared. src/ClientsDirectory.tsx imported ApiError with a TYPE-only
 # import (type ApiError) while using it as a value in \`instanceof ApiError\`.
 # The bun build transpiler strips type-only imports without type-checking, so
 # the bundle carried a dangling \`ApiError\` identifier; at runtime the 503
 # catch threw ReferenceError before the notice (or the error branch) could
-# run. Fix: value import — the same pattern Login.tsx already uses.
-if grep -Fq 'import { api, ApiError, type ClientInput }' src/ClientsDirectory.tsx && ! grep -Fq 'import { api, type ApiError' src/ClientsDirectory.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: ApiError imported as a VALUE in ClientsDirectory.tsx (instanceof resolves to the real class)"
+# run. Fix: value import — the same pattern Login.tsx already uses. The
+# handler + import moved to src/Clients.tsx with the 2026-08-18 Onboarding
+# move; ClientsDirectory.tsx no longer uses ApiError.
+if grep -Fq 'import { api, ApiError, type ClientInput }' src/Clients.tsx && ! grep -Fq 'import { api, type ApiError' src/Clients.tsx && ! grep -Fq 'import { api, ApiError' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: ApiError imported as a VALUE in Clients.tsx (where the payment-link handler now lives); ClientsDirectory.tsx no longer references it"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: ApiError still imported type-only in src/ClientsDirectory.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: ApiError value-import missing from src/Clients.tsx (or still referenced in src/ClientsDirectory.tsx)"
 fi
 NEWEST_JS48G=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS48G" ] && ! grep -Fq 'instanceof ApiError' "$NEWEST_JS48G"; then
@@ -6052,7 +6066,7 @@ stop_crm "$MOCK48/srv.pid" 2>/dev/null
 kill "$MOCK48_PID" 2>/dev/null
 rm -f "$JA48"
 rm -rf "$MOCK48"
-echo "  ✓ 48: sign-page scroll gate + read-to-bottom checkbox, bracket-style template placeholders, payment-link placeholder shipped"
+echo "  ✓ 48: sign-page scroll gate + read-to-bottom checkbox, bracket-style template placeholders, payment-link placeholder shipped (owner Onboarding tab)"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
