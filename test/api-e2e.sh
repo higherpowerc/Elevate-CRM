@@ -6243,13 +6243,10 @@ cat > "$MOCK49/fix.ts" <<'EOF'
 import { Database } from "bun:sqlite";
 const db = new Database(process.env.FIX_DB ?? "data/crm.db");
 const [id, amountCents, cust] = process.argv.slice(2);
-const args: unknown[] =
-  cust && cust !== ""
-    ? [amountCents, cust, id]
-    : [amountCents, id];
+// The SQL always binds all three placeholders — pass "" for "no customer".
 db.run(
   "UPDATE clients SET agreement_status='signed', payment_status='sent', payment_amount_cents=?, payment_link_url='https://pay.example/pl49/' || id, stripe_customer_id=?, updated_at=datetime('now') WHERE id=?",
-  args,
+  [amountCents, cust === "" ? null : cust, id],
 );
 console.log("fixture ok");
 EOF
@@ -6342,7 +6339,7 @@ sign49 "$MOCK49/evb.json" "$MOCK49/evb.sig"
 SIGB=$(cat "$MOCK49/evb.sig")
 S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIGB" --data-binary @"$MOCK49/evb.json" "$B49/api/stripe/webhook")
 check "49f: invoice.paid without metadata (stored customer id) -> 200" 200 "$S"
-grep -q '"handled":"paid"' /tmp/body.json && grep -q '"client_id":'$WB_ID',' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: invoice.paid resolved client B via stripe_customer_id"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: body: $(cat /tmp/body.json)"; }
+grep -q '"handled":"paid"' /tmp/body.json && grep -q '"clientId":'$WB_ID',' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: invoice.paid resolved client B via stripe_customer_id"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: body: $(cat /tmp/body.json)"; }
 S=$(code -b "$JA49" "$B49/api/clients/$WB_ID")
 grep -q '"paymentStatus":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: client B flipped to paid"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: client B: $(cat /tmp/body.json)"; }
 sleep 1
