@@ -14,7 +14,7 @@ import { db, ensureDefaultOrg } from "./db";
 const result = await ensureAdmin();
 console.log(result.message);
 
-// All demo data lands in the default org ("Elevate Studio") — the org the
+// All demo data lands in the default org ("Revzenta") — the org the
 // seeded admin belongs to, so a fresh deployment shows the demo under the
 // admin's own account.
 const demoOrgId = ensureDefaultOrg();
@@ -387,7 +387,7 @@ if (wantDemo) {
 // Demo CLIENT ORG (Phase 2 — per-tenant login demo). A separate org with its
 // own member login, so the owner can immediately test the product's multi-
 // tenancy: log out → log in as acme@demo.example / AcmeDemo123! → see ONLY
-// Acme Landscaping's data (nothing from Elevate Studio's own org).
+// Acme Landscaping's data (nothing from Revzenta's own org).
 // Phase 3a: the demo org also gets landscaping-appropriate pipeline stages so
 // the owner can see per-vertical stage names right away.
 // Idempotent: skipped if the org already exists.

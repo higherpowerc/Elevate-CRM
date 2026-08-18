@@ -287,8 +287,14 @@ export interface User {
    *  Additive key on /api/auth/me + login; drives the Settings "Team members"
    *  section and admin-bypass rendering. */
   isOrgAdmin?: boolean;
-  /** Tenant display name (e.g. "Elevate Studio") — shown next to the email in the nav. */
+  /** Tenant display name (e.g. "Revzenta") — shown next to the email in the nav. */
   orgName?: string;
+  /** Branding rename (2026-08-18) — true when this session is the platform
+   *  OWNER (owner org AND role='admin', the server's isOwnerSession). Drives
+   *  the owner cockpit (Admin/Onboarding/Documents tabs, MRR, provisioning)
+   *  so the client never compares the org NAME string. Additive key on
+   *  /api/auth/me + login. */
+  isOwner?: boolean;
   /** The tenant's ordered pipeline stages (Phase 3a). */
   stages?: string[];
   /** The tenant's brand accent (hex). */

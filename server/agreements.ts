@@ -26,7 +26,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
-import { dataDir, db, getOrg, getOwnerOrgId, parseStages } from "./db";
+import { dataDir, db, getOrg, getOwnerOrgId, parseStages, LEGACY_ORG_NAME } from "./db";
 import type { ClientRow } from "./db";
 
 /** Sign links live 30 days from send. */
@@ -489,6 +489,36 @@ export function backfillSignedClients(db: Database): number {
   return advanced;
 }
 
+/** Boot-time branding backfill (2026-08-18): the product renamed from
+ *  "Elevate Studio" to "Revzenta" (owner-locked name + domain 2026-08-18).
+ *  A pre-rename database still has the owner org stored under the legacy name,
+ *  and its orgs.agreement_template (which takes precedence over
+ *  DEFAULT_AGREEMENT_TEMPLATE) may contain "Elevate Studio" / "Highline CRM" /
+ *  "Highline" in the provider wording. On boot: rename the owner org (by the
+ *  legacy name — getOwnerOrgId() already resolves the new name) to "Revzenta"
+ *  and scrub the old brand out of that org's stored template, so new agreement
+ *  PDFs/sign pages render the new brand. Idempotent: once renamed, no org
+ *  matches the legacy name and the function is a no-op. Must run BEFORE the
+ *  admin seeder (ensureDefaultOrg) so the live owner org is adopted, never
+ *  duplicated. Returns {renamed, templates} for the boot log. */
+export function backfillBrandRename(db: Database): { renamed: boolean; templates: number } {
+  const org = db
+    .query("SELECT id, name, agreement_template FROM orgs WHERE name = ? ORDER BY id LIMIT 1")
+    .get(LEGACY_ORG_NAME) as { id: number; name: string; agreement_template: string | null } | null;
+  if (!org) return { renamed: false, templates: 0 };
+  const before = org.agreement_template ?? "";
+  const after = before
+    .replaceAll(LEGACY_ORG_NAME, "Revzenta")
+    .replaceAll("Highline CRM", "Revzenta")
+    .replaceAll("Highline", "Revzenta");
+  db.query("UPDATE orgs SET name = ?, agreement_template = ? WHERE id = ?").run(
+    "Revzenta",
+    after,
+    org.id,
+  );
+  return { renamed: true, templates: after !== before ? 1 : 0 };
+}
+
 /** Human label for the sign-page final states / badges. */
 export const AGREEMENT_LABELS: Record<AgreementStatus, string> = {
   not_sent: "Not sent",
@@ -563,19 +593,19 @@ export function renderSignPage(token: string, ip: string): Response {
   const env = getEnvelopeByTokenHash(hashAgreementToken(token));
   if (!env) {
     return page("Link not found", `
-      <div class="brand"><b>Elevate Studio</b> · agreement</div>
+      <div class="brand"><b>Revzenta</b> · agreement</div>
       <div class="final"><h2>This link is invalid</h2>
       <p>We couldn't find an agreement for this link. Double-check the link in your email, or contact the sender for a new one.</p></div>`);
   }
   if (env.expires_at <= Date.now()) {
     return page("Link expired", `
-      <div class="brand"><b>Elevate Studio</b> · agreement</div>
+      <div class="brand"><b>Revzenta</b> · agreement</div>
       <div class="final"><h2>This link has expired</h2>
       <p>Agreement links are valid for 30 days. Contact the sender and ask them to re-send the agreement.</p></div>`);
   }
   if (env.status === "signed") {
     return page("Agreement signed", `
-      <div class="brand"><b>Elevate Studio</b> · agreement</div>
+      <div class="brand"><b>Revzenta</b> · agreement</div>
       <div class="final"><span class="stamp green">Signed</span>
       <h2>This agreement has been signed</h2>
       <p>Signed by <b>${esc(env.signer_name)}</b> on ${esc(env.signed_at ?? "")}. No further action is needed — the sender has been notified of the status.</p>
@@ -583,7 +613,7 @@ export function renderSignPage(token: string, ip: string): Response {
   }
   if (env.status === "declined") {
     return page("Agreement declined", `
-      <div class="brand"><b>Elevate Studio</b> · agreement</div>
+      <div class="brand"><b>Revzenta</b> · agreement</div>
       <div class="final"><span class="stamp red">Declined</span>
       <h2>This agreement was declined</h2>
       <p>This link has already been used and the agreement was declined. Contact the sender if you'd like to review a new version.</p></div>`);
@@ -598,7 +628,7 @@ export function renderSignPage(token: string, ip: string): Response {
   }
   const actionUrl = `/api/sign/${esc(token)}`;
   return page("Sign your agreement", `
-    <div class="brand"><b>Elevate Studio</b> · agreement</div>
+    <div class="brand"><b>Revzenta</b> · agreement</div>
     <h1>Sign your agreement</h1>
     <p class="sub">Review the agreement below, then sign or decline. Signing is legally binding.</p>
     <div class="doc doc-scroll" id="doc">${esc(env.agreement_text)}</div>

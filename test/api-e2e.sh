@@ -1,5 +1,5 @@
 #!/bin/bash
-# End-to-end API test for Elevate CRM (run against a local server on :3001).
+# End-to-end API test for Revzenta CRM (run against a local server on :3001).
 set -u
 BASE="${BASE:-http://localhost:3001}"
 # Admin credentials come from .env (local QA, gitignored) or the environment —
@@ -52,10 +52,12 @@ grep -q elevate_session "$JAR" && echo "  ✓ session cookie stored" || echo "  
 grep -Fq "$ADMIN_EMAIL" /tmp/body.json && echo "  ✓ login returns owner email" || echo "  ✗ login email wrong"
 grep -q '"orgId":' /tmp/body.json && echo "  ✓ login returns orgId" || echo "  ✗ login missing orgId: $(cat /tmp/body.json)"
 grep -q '"role":"admin"' /tmp/body.json && echo "  ✓ login returns role admin" || echo "  ✗ login role wrong: $(cat /tmp/body.json)"
+grep -q '"isOwner":true' /tmp/body.json && echo "  ✓ login returns isOwner true for owner" || echo "  ✗ login isOwner missing: $(cat /tmp/body.json)"
 check "me with cookie → 200" 200 $(code -b "$JAR" "$BASE/api/auth/me")
 grep -Fq "$ADMIN_EMAIL" /tmp/body.json && echo "  ✓ me returns owner email" || echo "  ✗ me email wrong"
 grep -q '"orgId":' /tmp/body.json && echo "  ✓ me returns orgId" || echo "  ✗ me missing orgId"
 grep -q '"role":"admin"' /tmp/body.json && echo "  ✓ me returns role admin" || echo "  ✗ me role wrong"
+grep -q '"isOwner":true' /tmp/body.json && echo "  ✓ me returns isOwner true for owner" || echo "  ✗ me isOwner missing: $(cat /tmp/body.json)"
 
 echo "== 3. Dashboard (empty) =="
 S=$(code -b "$JAR" "$BASE/api/dashboard")
@@ -575,7 +577,7 @@ grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && echo "  ✓ member login returns 
 grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member login returns role member" || echo "  ✗ member role wrong: $(cat /tmp/body.json)"
 S=$(code -b "$JAR2" "$BASE/api/auth/me")
 check "member me → 200" 200 "$S"
-grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && grep -q '"role":"member"' /tmp/body.json && echo "  ✓ member me carries orgId + role member" || echo "  ✗ member me wrong: $(cat /tmp/body.json)"
+grep -q "\"orgId\":$ORG2_ID" /tmp/body.json && grep -q '"role":"member"' /tmp/body.json && grep -q '"isOwner":false' /tmp/body.json && echo "  ✓ member me carries orgId + role member + isOwner false" || echo "  ✗ member me wrong: $(cat /tmp/body.json)"
 echo "-- 16c. Members are forbidden from admin endpoints =="
 check "member GET /api/admin/orgs → 403" 403 $(code -b "$JAR2" "$BASE/api/admin/orgs")
 check "member POST /api/admin/orgs → 403" 403 $(code -b "$JAR2" -X POST -H 'Content-Type: application/json' \
@@ -607,16 +609,16 @@ else FAIL=$((FAIL+1)); echo "  ✗ member dashboard task overview not empty"; ca
 echo "-- 16d. Admin org list has the new tenant with correct counts =="
 S=$(code -b "$JAR" "$BASE/api/admin/orgs")
 check "admin lists orgs → 200" 200 "$S"
-DEFAULT_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(next(o['id'] for o in d['orgs'] if o['name'] == 'Elevate Studio'))")
+DEFAULT_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(next(o['id'] for o in d['orgs'] if o['name'] == 'Revzenta'))")
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
 orgs = {o['name']: o for o in d['orgs']}
-assert 'Elevate Studio' in orgs and 'Acme Widgets LLC' in orgs, [o['name'] for o in d['orgs']]
-assert orgs['Elevate Studio']['userCount'] == 1, orgs['Elevate Studio']
+assert 'Revzenta' in orgs and 'Acme Widgets LLC' in orgs, [o['name'] for o in d['orgs']]
+assert orgs['Revzenta']['userCount'] == 1, orgs['Revzenta']
 assert orgs['Acme Widgets LLC']['userCount'] == 1, orgs['Acme Widgets LLC']
 assert orgs['Acme Widgets LLC']['clientCount'] == 0, orgs['Acme Widgets LLC']
-assert orgs['Elevate Studio']['createdAt'], orgs['Elevate Studio']
+assert orgs['Revzenta']['createdAt'], orgs['Revzenta']
 print("  ✓ list includes owner org + new tenant (userCount 1, clientCount 0)")
 PY
 
@@ -763,7 +765,8 @@ python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
 u = d['user']
-assert u['orgName'] == 'Elevate Studio', u.get('orgName')
+assert u['orgName'] == 'Revzenta', u.get('orgName')
+assert u['isOwner'] is True, u.get('isOwner')  # branding rename: server sends the owner flag
 assert u['stages'] == ['Leads','Onboarding','Sold'], u['stages']
 assert u['accentColor'] == '#d6ff3f', u.get('accentColor')
 print("  ✓ me returns orgName + default stages + accentColor")
@@ -778,7 +781,7 @@ check "settings PUT without cookie → 401" 401 $(code -b "$JAR3" -X PUT -H 'Con
 echo "-- 17c. GET settings =="
 S=$(code -b "$JAR" "$BASE/api/settings")
 check "owner GET settings → 200" 200 "$S"
-grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ settings carries org name" || echo "  ✗ settings orgName: $(cat /tmp/body.json)"
+grep -q '"orgName":"Revzenta"' /tmp/body.json && echo "  ✓ settings carries org name" || echo "  ✗ settings orgName: $(cat /tmp/body.json)"
 grep -q '"stages":\["Leads","Onboarding","Sold"\]' /tmp/body.json && echo "  ✓ settings returns the owner 3-stage pipeline (Leads → Onboarding → Sold)" || echo "  ✗ settings stages: $(cat /tmp/body.json)"
 grep -q '"accentColor":"#d6ff3f"' /tmp/body.json && echo "  ✓ settings returns default accent" || echo "  ✗ settings accent: $(cat /tmp/body.json)"
 
@@ -842,11 +845,11 @@ check "remove Won after clearing clients → 200" 200 "$S"
 
 echo "-- 17g. Org comes from the session, never the body =="
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"orgName":"Elevate Studio HQ","orgId":999999}' "$BASE/api/settings")
+  -d '{"orgName":"Revzenta HQ","orgId":999999}' "$BASE/api/settings")
 check "PUT with bogus body orgId → 200 (ignored)" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/settings")
-grep -q '"orgName":"Elevate Studio HQ"' /tmp/body.json && echo "  ✓ body orgId ignored — own org updated" || echo "  ✗ settings: $(cat /tmp/body.json)"
-code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"orgName":"Elevate Studio"}' "$BASE/api/settings" > /dev/null
+grep -q '"orgName":"Revzenta HQ"' /tmp/body.json && echo "  ✓ body orgId ignored — own org updated" || echo "  ✗ settings: $(cat /tmp/body.json)"
+code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"orgName":"Revzenta"}' "$BASE/api/settings" > /dev/null
 
 echo "-- 17h. Stage lists are org-scoped =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -908,7 +911,7 @@ check "tenant B PUT with owner orgId in body → 200" 200 "$S"
 S=$(code -b "$JARB" "$BASE/api/auth/me")
 grep -q '"orgName":"Tenant B Rebranded"' /tmp/body.json && echo "  ✓ tenant B write landed on tenant B (session org wins)" || echo "  ✗ tenant B me: $(cat /tmp/body.json)"
 S=$(code -b "$JAR" "$BASE/api/auth/me")
-grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ owner org untouched by tenant B's body-orgId write" || echo "  ✗ owner me: $(cat /tmp/body.json)"
+grep -q '"orgName":"Revzenta"' /tmp/body.json && echo "  ✓ owner org untouched by tenant B's body-orgId write" || echo "  ✗ owner me: $(cat /tmp/body.json)"
 check "admin deletes tenant B → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$TENANTB_ID")
 rm -f "$JARB" "$JAR3"
 
@@ -2174,15 +2177,15 @@ import json
 d = json.load(open('/tmp/body.json'))
 prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $DB1_ID]
 assert len(prov) == 1, prov
-assert prov[0]['loginEmail'] == 'dust-bane-pest@elevate.studio', prov[0]['loginEmail']
+assert prov[0]['loginEmail'] == 'dust-bane-pest@revzenta.com', prov[0]['loginEmail']
 assert prov[0]['tempPassword'], prov[0]
 assert prov[0]['name'] == 'Dust & Bane Pest', prov[0]
-print("  ✓ derived login email from company slug: dust-bane-pest@elevate.studio")
+print("  ✓ derived login email from company slug: dust-bane-pest@revzenta.com")
 PY
 DB1_PW=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['tempPassword'] for o in d['orgs'] if o.get('provisionedFromClient') == $DB1_ID][0])")
 JARDB1=$(mktemp)
 S=$(code -c "$JARDB1" -b "$JARDB1" -X POST -H 'Content-Type: application/json' \
-  -d "{\"email\":\"dust-bane-pest@elevate.studio\",\"password\":\"$DB1_PW\"}" "$BASE/api/auth/login")
+  -d "{\"email\":\"dust-bane-pest@revzenta.com\",\"password\":\"$DB1_PW\"}" "$BASE/api/auth/login")
 check "derived-email login works → 200" 200 "$S"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"Dust Bane Pest","contactName":"Nia Otis","industry":"Pest Control","clientType":"commercial","dealValue":6000,"stage":"Leads","notes":"same slug"}' \
@@ -2199,9 +2202,9 @@ import json
 d = json.load(open('/tmp/body.json'))
 prov = [o for o in d['orgs'] if o.get('provisionedFromClient') == $DB2_ID]
 assert len(prov) == 1, prov
-assert prov[0]['loginEmail'] == 'dust-bane-pest1@elevate.studio', prov[0]['loginEmail']
+assert prov[0]['loginEmail'] == 'dust-bane-pest1@revzenta.com', prov[0]['loginEmail']
 assert prov[0]['tempPassword'], prov[0]
-print("  ✓ colliding slug got the numeric suffix: dust-bane-pest1@elevate.studio")
+print("  ✓ colliding slug got the numeric suffix: dust-bane-pest1@revzenta.com")
 PY
 
 echo "-- 26e. Owner notification list + dismiss =="
@@ -2334,7 +2337,7 @@ if [ ! -s "$MOCK_EMAILS" ]; then
 else
   FAIL=$((FAIL+1)); echo "  ✗ no-key: unexpected email sent: $(cat "$MOCK_EMAILS")"
 fi
-if grep -Fq "[email] RESEND_API_KEY not configured — skipping Welcome to Elevate Studio — your workspace is ready to nokey@example.com" "$MOCK/srv-a.log"; then
+if grep -Fq "[email] RESEND_API_KEY not configured — skipping Welcome to Revzenta — your workspace is ready to nokey@example.com" "$MOCK/srv-a.log"; then
   PASS=$((PASS+1)); echo "  ✓ no-key: skip line logged, app healthy"
 else
   FAIL=$((FAIL+1)); echo "  ✗ no-key: skip line missing: $(grep '\[email\]' "$MOCK/srv-a.log")"
@@ -2362,7 +2365,7 @@ lines = [json.loads(l) for l in open(sys.argv[1])]
 assert len(lines) == 1, [(l.get("subject"), l.get("to")) for l in lines]
 e = lines[0]
 assert e["to"] == ["buyer@example.com"], e["to"]
-assert e["subject"] == "Welcome to Elevate Studio — your workspace is ready", e["subject"]
+assert e["subject"] == "Welcome to Revzenta — your workspace is ready", e["subject"]
 t = e["text"]
 assert "Email Test Co" in t, t
 assert "Sign in here: https://crm.example.test" in t, t
@@ -4553,10 +4556,10 @@ S=$(code -b "$JAR42B" -X POST -H 'Content-Type: application/json' \
 check "42b: tenant B creates ticket → 201" 201 "$S"
 TICKET_B=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['ticket']['id'])")
 S=$(code -b "$JAR42" -X POST -H 'Content-Type: application/json' \
-  -d '{"subject":"Owner test ticket","message":"Filed by Elevate Studio itself.","priority":"LOW"}' "$BASE/api/tickets")
+  -d '{"subject":"Owner test ticket","message":"Filed by Revzenta itself.","priority":"LOW"}' "$BASE/api/tickets")
 check "42b: owner creates ticket → 201" 201 "$S"
 TICKET_O=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['ticket']['id'])")
-grep -q '"orgName":"Elevate Studio"' /tmp/body.json && echo "  ✓ owner create response carries its org name" || echo "  ✗ owner create orgName: $(cat /tmp/body.json)"
+grep -q '"orgName":"Revzenta"' /tmp/body.json && echo "  ✓ owner create response carries its org name" || echo "  ✗ owner create orgName: $(cat /tmp/body.json)"
 
 echo "-- 42c. Create validation =="
 check "42c: no subject → 400" 400 $(code -b "$JAR42A" -X POST -H 'Content-Type: application/json' \
@@ -4577,7 +4580,7 @@ d = json.load(open('/tmp/body.json'))
 t = d['tickets']
 assert len(t) == 3, t
 names = {x.get('orgName') for x in t}
-assert 'Ticket Co A' in names and 'Ticket Co B' in names and 'Elevate Studio' in names, names
+assert 'Ticket Co A' in names and 'Ticket Co B' in names and 'Revzenta' in names, names
 assert all('orgName' in x for x in t), 'every owner row must carry orgName'
 print("  ✓ owner sees all 3 orgs' tickets with org names joined")
 PY
@@ -4999,8 +5002,8 @@ if grep -Fq 'canSeeTab' src/App.tsx && grep -Fq 'canEditTab' src/App.tsx && grep
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: App nav gating markers missing"
 fi
-if grep -Fq 'const isOwnerOrg = user?.role === "admin" && orgName === "Elevate Studio"' src/App.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: owner workspace keyed to owner ORG by name (tenant admins stay tenants)"
+if grep -Fq 'const isOwnerOrg = user?.isOwner === true' src/App.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner workspace keyed to server-reported user.isOwner (no org-name compare)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: owner-org detection missing"
 fi
@@ -5151,7 +5154,7 @@ ls "$MOCK45/db/agreements/"*.pdf >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  
 echo "-- 45c. Public page: first open → Delivered + IP captured == "
 S=$(code -b "$JAR" "$S45/sign/$TOKEN45")
 check "45c: public sign page → 200" 200 "$S"
-grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Elevate Studio / Harbor Legal LLP" /tmp/body.json && grep -q "/ \$200.00 / \$200.00" /tmp/body.json && ! grep -q '{{' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the template with every placeholder filled ({{company}} = the OWNER org name (Elevate Studio), NOT the client's; {{client_name}} = business name + {{date}} + {{price}} + {{deal_value}} = \$200.00; no literal {{ left)"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
+grep -q "Sign your agreement" /tmp/body.json && grep -q "Harbor Legal LLP" /tmp/body.json && grep -q "AGREEMENT Revzenta / Harbor Legal LLP" /tmp/body.json && grep -q "/ \$200.00 / \$200.00" /tmp/body.json && ! grep -q '{{' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ page renders the template with every placeholder filled ({{company}} = the OWNER org name (Revzenta), NOT the client's; {{client_name}} = business name + {{date}} + {{price}} + {{deal_value}} = \$200.00; no literal {{ left)"; } || { FAIL=$((FAIL+1)); echo "  ✗ page content: $(head -c 300 /tmp/body.json)"; }
 S=$(code -b "$JA45" "$S45/api/agreements")
 check "45c: owner audit list → 200" 200 "$S"
 grep -q '"status":"delivered"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ first open advanced status to Delivered"; } || { FAIL=$((FAIL+1)); echo "  ✗ audit list: $(cat /tmp/body.json)"; }
@@ -5977,7 +5980,7 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ Decline button wrongly disabled"
 fi
 # Bracket placeholders replaced (no literal bracket text left in the page).
-if grep -Fq 'Elevate Studio and Scroll Test LLC' "$P48" && ! grep -Fq '[YOUR LLC NAME]' "$P48" && ! grep -Fq '[CLIENT LEGAL NAME]' "$P48" && ! grep -Fq '[EFFECTIVE DATE]' "$P48" && ! grep -Fq '[PRICE]' "$P48" && ! grep -Fq '[DEAL_VALUE]' "$P48"; then
+if grep -Fq 'Revzenta and Scroll Test LLC' "$P48" && ! grep -Fq '[YOUR LLC NAME]' "$P48" && ! grep -Fq '[CLIENT LEGAL NAME]' "$P48" && ! grep -Fq '[EFFECTIVE DATE]' "$P48" && ! grep -Fq '[PRICE]' "$P48" && ! grep -Fq '[DEAL_VALUE]' "$P48"; then
   PASS=$((PASS+1)); echo "  ✓ bracket placeholders replaced in the sign page (no literal [..] left)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ bracket placeholders not fully replaced"
@@ -6034,8 +6037,8 @@ console.log(r ? r.pdf_id : "");
 TS
 PDF48_ID=$(DB_FILE="$MOCK48/db/crm.db" CLIENT_NAME="Scroll Test LLC" bun "$MOCK48/pdfpath.ts" 2>/dev/null)
 PDF48="$MOCK48/db/agreements/$PDF48_ID.pdf"
-if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Elevate Studio" "Scroll Test LLC" '![$' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
-  PASS=$((PASS+1)); echo "  ✓ PDF: bracket placeholders replaced (OWNER name Elevate Studio + client name + \$200.00 present; no literal [..] remains)"
+if [ -n "$PDF48_ID" ] && [ -f "$PDF48" ] && DB_FILE="$MOCK48/db/crm.db" bun "$MOCK48/pdfprobe.ts" "$PDF48" "Revzenta" "Scroll Test LLC" '![$' '!YOUR LLC NAME' '!CLIENT LEGAL NAME' '!EFFECTIVE DATE' '$200.00' > "$MOCK48/probe.out" 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ PDF: bracket placeholders replaced (OWNER name Revzenta + client name + \$200.00 present; no literal [..] remains)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ PDF probe failed: $(cat "$MOCK48/probe.out" 2>/dev/null)"
 fi

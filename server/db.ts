@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Default pipeline stages — every org starts here (Elevate Studio keeps them;
+ * Default pipeline stages — every org starts here (Revzenta keeps them;
  * Phase 3a lets each tenant rename/reorder its own via Settings, stored as a
  * JSON array in orgs.stages). A client's `stage` is a plain string, so the
  * stored value follows whatever the tenant's current stage list says.
@@ -239,7 +239,15 @@ export function parsePermissions(raw: string | null | undefined): TabPermissions
   }
 }
 
-export const DEFAULT_ORG_NAME = "Elevate Studio";
+export const DEFAULT_ORG_NAME = "Revzenta";
+
+/** Branding rename (2026-08-18): the product renamed from "Elevate Studio" to
+ *  "Revzenta" (owner-locked name + domain 2026-08-18). This constant is
+ *  HISTORICAL ONLY — it lets the boot-time backfill (backfillBrandRename in
+ *  agreements.ts) find and rename the legacy owner org, and lets
+ *  ensureDefaultOrg() self-heal if the backfill is ever skipped. Nothing new
+ *  is ever created with this name. */
+export const LEGACY_ORG_NAME = "Elevate Studio";
 
 /** The custom-field value types a tenant can define (Phase 3b; 3f-1 adds
  *  "select" for vertical templates — a dropdown with options). */
@@ -495,7 +503,7 @@ db.exec(`
  * Multi-tenancy migration (Phase 1). Idempotent — safe to run on every boot.
  *
  * For a database created before orgs/org_id existed:
- *   1. creates the default org ("Elevate Studio") if none exists;
+ *   1. creates the default org ("Revzenta") if none exists;
  *   2. adds users.org_id + users.role and assigns every existing user to the
  *      default org as an `admin` (they were all single-tenant admins before);
  *   3. adds org_id to clients/tasks/invoices and backfills every existing row
@@ -980,7 +988,7 @@ function positionalStage(oldIndex: number, oldCount: number, newStages: readonly
  * Migrate the owner org's pipeline to Leads → Onboarding → Sold and remap its
  * clients positionally. No-op for every other org (tenants, and any owner org
  * whose stages were already customized away from the legacy list). The owner
- * org is identified by NAME ("Elevate Studio", the default org — getOwnerOrgId),
+ * org is identified by NAME ("Revzenta", the default org — getOwnerOrgId),
  * NOT by users.role: since the team-users feature (owner request 2026-08-14)
  * gives client-account org admins role='admin' too, a role-based lookup would
  * wrongly treat tenant orgs as owner orgs. Called at boot (db.ts import) AND
@@ -1042,7 +1050,7 @@ export function migrateOwnerPipeline(): void {
 }
 
 /**
- * The default org ("Elevate Studio") — created if missing, always returns a
+ * The default org ("Revzenta") — created if missing, always returns a
  * real id. Used by the auth admin-seeder and the demo seed.
  */
 export function ensureDefaultOrg(): number {
@@ -1050,11 +1058,21 @@ export function ensureDefaultOrg(): number {
     .query("SELECT id FROM orgs WHERE name = ? ORDER BY id LIMIT 1")
     .get(DEFAULT_ORG_NAME) as { id: number } | null;
   if (orgRow) return orgRow.id;
+  // Branding rename (2026-08-18): a pre-rename DB has the owner org under the
+  // LEGACY name — adopt (rename) it instead of creating a second org, so the
+  // owner's data and org id are preserved even if the boot backfill didn't run.
+  const legacy = db
+    .query("SELECT id FROM orgs WHERE name = ? ORDER BY id LIMIT 1")
+    .get(LEGACY_ORG_NAME) as { id: number } | null;
+  if (legacy) {
+    db.query("UPDATE orgs SET name = ? WHERE id = ?").run(DEFAULT_ORG_NAME, legacy.id);
+    return legacy.id;
+  }
   return Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(DEFAULT_ORG_NAME).lastInsertRowid);
 }
 
 /**
- * The platform owner's workspace org — the org named "Elevate Studio" (the
+ * The platform owner's workspace org — the org named "Revzenta" (the
  * default org, created first — always id 1 in practice). Name-based lookup so
  * tenant renames of their own org can never matter, and so tenant org admins
  * (role='admin' users in client accounts, team-users feature) are never

@@ -68,10 +68,10 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
       <div className="login-glow" aria-hidden="true" />
       <div className="login-card">
         <div className="login-brand">
-          <span className="brand-mark lg">E</span>
+          <span className="brand-mark lg">R</span>
           <div>
             <div className="login-name">
-              Elevate <em>Studio</em>
+              Revzenta
             </div>
             <div className="login-sub">Client pipeline CRM</div>
           </div>
