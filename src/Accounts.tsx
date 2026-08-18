@@ -369,7 +369,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                   + meta lines, numeric/badge columns compact (9/12), Created
                   15%, and Actions (38%) is wide enough for View account /
                   Reset password / Delete without clipping (flex-wrap
-                  guards). */
+                  guards). */}
               <colgroup>
                 <col style={{ width: "26%" }} />
                 <col style={{ width: "9%" }} />
