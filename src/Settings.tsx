@@ -1042,7 +1042,7 @@ export default function Settings({
               </span>
             </div>
             <div className="field">
-              <span className="field-label">Your monthly subscription to Elevate Studio</span>
+              <span className="field-label">Your monthly subscription to Revzenta</span>
               <div className="revenue-amount-line">
                 <strong className="revenue-amount">{money(monthlySubscriptionAmount)}</strong>
                 <span className="field-hint">per month — set by your account manager.</span>

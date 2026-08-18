@@ -179,7 +179,7 @@ function requireAuth(req: Request): AuthContext | Response {
   return { userId: user.id, orgId: user.orgId, role: user.role };
 }
 
-/** requireAuth + the user must be the platform OWNER — the Elevate Studio
+/** requireAuth + the user must be the platform OWNER — the Revzenta
  *  workspace org AND role='admin'. Tenant org admins (role='admin' users in
  *  client accounts, team-users feature) are NOT the owner: every /api/admin
  *  route and the tickets PATCH stay owner-only, exactly as before. */
@@ -1455,7 +1455,7 @@ function insertOrgWithMember(input: {
 
 /* ── 3g-3: sold-lead auto-provisioning ─────────────────────── */
 
-/** The owner orgs = exactly the platform owner's workspace (Elevate Studio,
+/** The owner orgs = exactly the platform owner's workspace (Revzenta,
  *  identified by the default org's name). NOT role-based: since the team-users
  *  feature (owner request 2026-08-14) gives client-account org admins
  *  role='admin' too, a role-based lookup would wrongly treat tenant orgs as
@@ -1520,7 +1520,9 @@ function generateTempPassword(): string {
 }
 
 /** Login email for the new workspace: the client's email when it looks like
- *  one, else a slug derived from the company name at @elevate.studio. */
+ *  one, else a slug derived from the company name at @revzenta.com. (Pre-rename
+ *  workspaces derived at @elevate.studio — those addresses are unchanged and
+ *  remain valid login credentials; only NEW derivations use the new domain.) */
 function loginEmailForClient(client: ClientRow): string {
   const email = client.email.trim().toLowerCase();
   if (EMAIL_RE.test(email)) return email;
@@ -1529,7 +1531,7 @@ function loginEmailForClient(client: ClientRow): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
-  return `${slug || "client"}@elevate.studio`;
+  return `${slug || "client"}@revzenta.com`;
 }
 
 /** Append a numeric suffix until the address is unused (sync SELECT loop —
@@ -1546,7 +1548,7 @@ function pickUniqueUserEmail(base: string): string {
 /**
  * Provision a brand-new CLEAN tenant workspace for a sold client (3g-3):
  * org seeded from the vertical matching the client's industry, a member
- * login (client email or derived slug@elevate.studio, numeric suffix when
+ * login (client email or derived slug@revzenta.com, numeric suffix when
  * taken), a crypto temp password, and the org's owner-visible provision
  * record + notification event. The client record itself stays in the OWNER's
  * pipeline — nothing carries over. Everything is one transaction: on any
@@ -2292,7 +2294,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       | { id: number; name: string }
       | null;
     if (!org) return err("Org not found.", 404);
-    // The default org is the owner's own org ("Elevate Studio") — never deletable.
+    // The default org is the owner's own org ("Revzenta") — never deletable.
     if (org.id === ensureDefaultOrg()) return err("Cannot delete the owner org.", 400);
     db.transaction(() => {
       db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
@@ -3037,7 +3039,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
      'canceled', users can no longer log in (login + every authed route are
      blocked server-side) and NO data is hard-deleted — it is retained for
      the 30-day retention window (retention_until = cancel time + 30 days).
-     The owner org (Elevate Studio) can never cancel itself: the platform
+     The owner org (Revzenta) can never cancel itself: the platform
      admin workspace is the product's operator console. The response clears
      the session cookie so the UI signs the canceling admin out. */
   if (pathname === "/api/settings/cancel" && method === "POST") {
@@ -3176,7 +3178,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         currency: "usd",
         unit_amount: 20000,
         recurring: { interval: "month" },
-        product_data: { name: "Elevate Studio CRM — monthly subscription" },
+        product_data: { name: "Revzenta CRM — monthly subscription" },
       });
       const link = await stripe.paymentLinks.create({
         line_items: [{ price: price.id, quantity: 1 }],

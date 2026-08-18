@@ -110,7 +110,7 @@ export default function App() {
   // document title) carries the tenant's own org name + accent color.
   const orgName = user?.orgName?.trim() || "";
   useEffect(() => {
-    document.title = orgName ? `${orgName} — CRM` : "Elevate Studio — CRM";
+    document.title = orgName ? `${orgName} — CRM` : "Revzenta — CRM";
   }, [orgName]);
 
   const accentStyle = useMemo<CSSProperties | undefined>(
@@ -124,12 +124,13 @@ export default function App() {
      owner workspace is the org whose members hold the admin role — exactly
      the org where the Admin tab appears. It calls its pipeline records
      "leads"; tenant orgs (role=member) keep "clients" for their customers.
-     Team-users (PR #56): owner behavior is keyed to the OWNER ORG by name
-     (matching the server's isOwnerOrg(orgId)) — NOT to role alone, so a
-     tenant team member with stored role='admin' stays in their client
-     account's workspace and never inherits the owner cockpit. Also gates the
-     owner-only Onboarding tab (owner direction 2026-08-15). */
-  const isOwnerOrg = user?.role === "admin" && orgName === "Elevate Studio";
+     Branding rename (2026-08-18): the server reports owner status as
+     user.isOwner (its isOwnerSession — owner org AND role='admin'), so this
+     no longer depends on the org NAME string. Tenant team members with
+     stored role='admin' stay in their client account's workspace and never
+     inherit the owner cockpit (server sends isOwner:false for them). Also
+     gates the owner-only Onboarding tab (owner direction 2026-08-15). */
+  const isOwnerOrg = user?.isOwner === true;
 
   /* Team users per client account (owner request 2026-08-14) — tab gating.
      Restricted members carry per-tab grants on user.permissions; org admins
@@ -259,13 +260,13 @@ export default function App() {
 
   if (!booted) {
     return (
-      <div className="splash" role="status" aria-label="Loading Elevate Studio">
+      <div className="splash" role="status" aria-label="Loading Revzenta">
         <div className="splash-inner">
           <div className="splash-ring">
-            <span className="splash-mark">E</span>
+            <span className="splash-mark">R</span>
           </div>
           <div className="splash-name">
-            Elevate <em>Studio</em>
+            Revzenta
           </div>
           <div className="splash-sub">CRM</div>
         </div>
@@ -299,8 +300,8 @@ export default function App() {
     );
   }
 
-  const isOwner = orgName === "Elevate Studio";
-  const brandMark = isOwner ? "E" : initials(orgName) || "E";
+  const isOwner = user?.isOwner === true;
+  const brandMark = isOwner ? "R" : initials(orgName) || "R";
 
   return (
     <div className={isOwnerOrg ? "app owner-workspace" : "app"} style={accentStyle}>
@@ -330,7 +331,7 @@ export default function App() {
             <span className="brand-text">
               {isOwner ? (
                 <>
-                  Elevate <em>Studio</em>
+                  Revzenta
                   <span className="brand-sub">CRM</span>
                 </>
               ) : (
@@ -537,7 +538,7 @@ export default function App() {
         )}
       </main>
       <footer className="foot">
-        {(orgName || "Elevate Studio") + " CRM"} · product build · v0.1
+        {(orgName || "Revzenta") + " CRM"} · product build · v0.1
       </footer>
       </PiiContext.Provider>
     </div>

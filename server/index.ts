@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
-import { renderSignPage, readAgreementPdf, backfillSignedClients } from "./agreements";
+import { renderSignPage, readAgreementPdf, backfillSignedClients, backfillBrandRename } from "./agreements";
 import { db } from "./db";
 
 /**
- * Elevate CRM — single Bun server: serves the built React frontend from
+ * Revzenta CRM — single Bun server: serves the built React frontend from
  * ./dist and the JSON API under /api. One process, one port, real SQLite
  * file. Designed to be deployed as a single unit to any Bun-capable host.
  */
@@ -74,6 +74,22 @@ function serveStatic(pathname: string): Response {
   });
 }
 
+// Boot-time branding backfill (2026-08-18): "Elevate Studio" → "Revzenta".
+// Runs BEFORE the admin seeder so the pre-rename owner org (still stored under
+// the legacy name) is renamed + its stored agreement template scrubbed before
+// ensureDefaultOrg() looks the default org up by its new name — the live org
+// is adopted, never duplicated. Idempotent; failure must never block startup.
+try {
+  const b = backfillBrandRename(db);
+  if (b.renamed) {
+    console.log(
+      `[crm] Branding backfill: owner org renamed to Revzenta (agreement template ${b.templates > 0 ? "re-brushed" : "already clean"}).`,
+    );
+  }
+} catch (err) {
+  console.error("[crm] Branding backfill failed (continuing boot):", err);
+}
+
 // Seed the admin account at startup if ADMIN_EMAIL / ADMIN_PASSWORD are set.
 const seed = await ensureAdmin();
 console.log(seed.message);
@@ -131,7 +147,7 @@ const server = serve({
   },
 });
 
-console.log(`[crm] Elevate CRM listening on http://localhost:${PORT}`);
+console.log(`[crm] Revzenta CRM listening on http://localhost:${PORT}`);
 console.log(`[crm] Database: ${process.env.DATA_DIR ?? join(import.meta.dir, "..", "data")}/crm.db`);
 
 // Keep the process alive if all handlers detach (paranoia guard).

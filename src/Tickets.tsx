@@ -123,7 +123,7 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
               </>
             ) : (
               <>
-                Reach Elevate Studio — submit a ticket any time; status updates
+                Reach Revzenta — submit a ticket any time; status updates
                 from our team appear here.
               </>
             )}
@@ -361,7 +361,7 @@ function TicketFormModal({ ownerOrg, onClose, onSubmitted }: ModalProps) {
               onChange={(e) => setMessage(e.target.value)}
               placeholder={
                 ownerOrg
-                  ? "What's the issue? (This ticket is filed on Elevate Studio's own account.)"
+                  ? "What's the issue? (This ticket is filed on Revzenta's own account.)"
                   : "What happened, and what did you expect instead? The more detail, the faster we can help."
               }
               maxLength={10000}

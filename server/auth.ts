@@ -2,6 +2,7 @@ import {
   db,
   ensureDefaultOrg,
   getOrg,
+  isOwnerOrg,
   parseStages,
   parsePermissions,
   DEFAULT_STAGES,
@@ -145,7 +146,10 @@ function isOrgAdminUser(userId: number, orgId: number, role: Role): boolean {
 }
 
 /** Map a users row to the API shape; orgName/stages/accentColor let the shell
- *  show the signed-in tenant's own branding once authenticated. */
+ *  show the signed-in tenant's own branding once authenticated. isOwner is the
+ *  platform-owner flag (owner org AND role='admin' — the server's
+ *  isOwnerSession); the client keys its owner cockpit to it so the owner UI
+ *  never depends on the org NAME string (branding rename 2026-08-18). */
 export function toUser(row: UserRow): User {
   const org = getOrg(row.org_id);
   return {
@@ -155,6 +159,7 @@ export function toUser(row: UserRow): User {
     role: row.role,
     permissions: parsePermissions(row.permissions),
     isOrgAdmin: isOrgAdminUser(row.id, row.org_id, row.role),
+    isOwner: row.role === "admin" && isOwnerOrg(row.org_id),
     orgName: org?.name ?? "",
     stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
     accentColor: org?.accent_color ?? DEFAULT_ACCENT,
@@ -191,7 +196,7 @@ export function hashPassword(password: string): Promise<string> {
  * No hardcoded defaults — if the env vars are unset, no admin is created and
  * the login API returns a clear "setup required" response.
  * Password is bcrypt-hashed with Bun.password (cost 10).
- * The admin lives in the default org ("Elevate Studio") with role `admin`.
+ * The admin lives in the default org ("Revzenta") with role `admin`.
  */
 export async function ensureAdmin(): Promise<{ created: boolean; message: string }> {
   const email = (process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();

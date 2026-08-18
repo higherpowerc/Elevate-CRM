@@ -22,7 +22,7 @@
 const RESEND_API = process.env.RESEND_URL ?? "https://api.resend.com/emails";
 /** The sender shown on every 3g-4 email. The PM flips `EMAIL_FROM` via env
  *  once the domain verifies — no code change needed later. */
-export const EMAIL_FROM = process.env.EMAIL_FROM ?? "Elevate Studio <onboarding@resend.dev>";
+export const EMAIL_FROM = process.env.EMAIL_FROM ?? "Revzenta <onboarding@revzenta.com>";
 /** The exact error returned when RESEND_API_KEY is unset — call sites map it
  *  to the "skipped" emailStatus (deliberate no-op, not a failure). */
 export const RESEND_KEY_MISSING_ERROR = "RESEND_API_KEY not configured";
@@ -128,7 +128,7 @@ export function sendIntakeEmail(opts: {
   const text = [
     "Hi there,",
     "",
-    `Great news — your ${opts.orgName} workspace in Elevate Studio is ready.`,
+    `Great news — your ${opts.orgName} workspace in Revzenta is ready.`,
     "",
     `Sign in here: ${opts.appUrl}`,
     "",
@@ -138,13 +138,13 @@ export function sendIntakeEmail(opts: {
     "Once you're in, you can finish setting up your workspace: add your clients,",
     "set up your pipeline, and start tracking tasks and invoices.",
     "",
-    "Your Elevate Studio team is here if you need anything.",
+    "Your Revzenta team is here if you need anything.",
     "",
-    "— Elevate Studio",
+    "— Revzenta",
   ].join("\n");
   return sendEmail({
     to: opts.to,
-    subject: "Welcome to Elevate Studio — your workspace is ready",
+    subject: "Welcome to Revzenta — your workspace is ready",
     text,
   });
 }
@@ -167,7 +167,7 @@ export function sendWelcomeEmail(opts: {
     "",
     `Sign in anytime at: ${opts.appUrl}`,
     "",
-    "— Elevate Studio",
+    "— Revzenta",
   ].join("\n");
   return sendEmail({
     to: opts.to,
@@ -190,7 +190,7 @@ export function sendPasswordResetEmail(opts: {
   const text = [
     "Hi there,",
     "",
-    "We got a request to reset your Elevate Studio password. Open the link below to choose a new one:",
+    "We got a request to reset your Revzenta password. Open the link below to choose a new one:",
     "",
     resetUrl,
     "",
@@ -198,7 +198,7 @@ export function sendPasswordResetEmail(opts: {
     "",
     "If you didn't ask to reset your password, you can safely ignore this email — your password won't change.",
     "",
-    "— Elevate Studio",
+    "— Revzenta",
   ].join("\n");
   return sendEmail({
     to: opts.to,
@@ -221,7 +221,7 @@ export function sendAgreementEmail(opts: {
   const text = [
     `Hi ${opts.clientName},`,
     "",
-    "Good news — your agreement with Elevate Studio is ready to review and sign.",
+    "Good news — your agreement with Revzenta is ready to review and sign.",
     "",
     "Open the link below to read the agreement and sign it electronically:",
     "",
@@ -231,7 +231,7 @@ export function sendAgreementEmail(opts: {
     "",
     "If you have any questions, just reply to this email.",
     "",
-    "— Elevate Studio",
+    "— Revzenta",
   ].join("\n");
   return sendEmail({
     to: opts.to,
@@ -252,7 +252,7 @@ export function sendPaymentLinkEmail(opts: {
   const text = [
     `Hi ${opts.clientName},`,
     "",
-    "Your Elevate Studio CRM subscription is ready to activate.",
+    "Your Revzenta CRM subscription is ready to activate.",
     "",
     "Use the secure payment link below to complete your first monthly payment:",
     "",
@@ -262,11 +262,11 @@ export function sendPaymentLinkEmail(opts: {
     "",
     "If you have any questions, just reply to this email.",
     "",
-    "— Elevate Studio",
+    "— Revzenta",
   ].join("\n");
   return sendEmail({
     to: opts.to,
-    subject: "Your payment link for Elevate Studio CRM",
+    subject: "Your payment link for Revzenta CRM",
     text,
   });
 }
