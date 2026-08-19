@@ -1,7 +1,26 @@
 #!/bin/bash
-# End-to-end API test for Revzenta CRM (run against a local server on :3001).
+# End-to-end API test for Revzenta CRM. Points at $BASE (default :3001).
+#
+# CANONICAL RUN (what produced the green result — this sandbox exports PORT=80
+# and REAL Stripe/Resend secrets, so the main server must be booted with the
+# Stripe keys deliberately stripped; otherwise §48a's "no key -> 503" test makes
+# a REAL Stripe call and fails):
+#   cd <repo>
+#   bun run db:reset && bun run build
+#   env -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET PORT=3007 \
+#     RESEND_API_KEY=test-key-main RESEND_URL=http://127.0.0.1:3195 \
+#     TEST_EMAIL_TO=owner-test@gmail.com \
+#     nohup bun ./server/index.ts > /tmp/main-server.log 2>&1 &
+#   BASE=http://localhost:3007 bash test/api-e2e.sh
+# (mock Resend on :3195 is optional — it only captures any $BASE emails; every
+#  email-asserting section runs its own throwaway server + mock on 3196-3212.)
 set -u
 BASE="${BASE:-http://localhost:3001}"
+# Hermeticity: this suite never calls Stripe with a real key — §48a needs the
+# main server AND the throwaways Stripe-key-free (the 503 path), §49's server
+# gets its own webhook secret explicitly. Strip any ambient secrets so they
+# cannot leak into servers started without -u STRIPE_SECRET_KEY.
+unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET 2>/dev/null
 # Admin credentials come from .env (local QA, gitignored) or the environment —
 # never hardcoded in the repo.
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
@@ -5991,7 +6010,7 @@ if grep -Fq 'stripeClient' server/api.ts && grep -Fq 'Stripe not configured' ser
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: payment-link route markers missing from server/api.ts"
 fi
-if grep -Fq 'api.clientPaymentLink(c.id)' src/Clients.tsx && grep -Fq 'Send payment link to' src/Clients.tsx && grep -Fq 'ownerOnboardingTab && canEdit' src/Clients.tsx && grep -Fq 'scope === "middle"' src/Clients.tsx; then
+if grep -Fq 'api.clientPaymentLink(c.id' src/Clients.tsx && grep -Fq 'Send payment link to' src/Clients.tsx && grep -Fq 'ownerOnboardingTab && canEdit' src/Clients.tsx && grep -Fq 'scope === "middle"' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: 'Payment link' action lives in Clients.tsx (owner Onboarding view, scope middle, owner-only, canEdit-gated)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: payment-link action missing/ungated in src/Clients.tsx"
@@ -6243,10 +6262,12 @@ cat > "$MOCK49/fix.ts" <<'EOF'
 import { Database } from "bun:sqlite";
 const db = new Database(process.env.FIX_DB ?? "data/crm.db");
 const [id, amountCents, cust] = process.argv.slice(2);
-// The SQL always binds all three placeholders — pass "" for "no customer".
+// The SQL always binds all three placeholders. stripe_customer_id is
+// TEXT NOT NULL DEFAULT '' — bind "" (not null) for "no customer", otherwise
+// SQLite throws a NOT NULL constraint error and the fixtures silently fail.
 db.run(
   "UPDATE clients SET agreement_status='signed', payment_status='sent', payment_amount_cents=?, payment_link_url='https://pay.example/pl49/' || id, stripe_customer_id=?, updated_at=datetime('now') WHERE id=?",
-  [amountCents, cust === "" ? null : cust, id],
+  [amountCents, cust === "" ? "" : cust, id],
 );
 console.log("fixture ok");
 EOF
@@ -6339,7 +6360,7 @@ sign49 "$MOCK49/evb.json" "$MOCK49/evb.sig"
 SIGB=$(cat "$MOCK49/evb.sig")
 S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIGB" --data-binary @"$MOCK49/evb.json" "$B49/api/stripe/webhook")
 check "49f: invoice.paid without metadata (stored customer id) -> 200" 200 "$S"
-grep -q '"handled":"paid"' /tmp/body.json && grep -q '"clientId":'$WB_ID',' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: invoice.paid resolved client B via stripe_customer_id"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: body: $(cat /tmp/body.json)"; }
+grep -q '"handled":"paid"' /tmp/body.json && grep -q "\"clientId\":$WB_ID" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: invoice.paid resolved client B via stripe_customer_id"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: body: $(cat /tmp/body.json)"; }
 S=$(code -b "$JA49" "$B49/api/clients/$WB_ID")
 grep -q '"paymentStatus":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: client B flipped to paid"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: client B: $(cat /tmp/body.json)"; }
 sleep 1
