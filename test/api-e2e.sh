@@ -6435,6 +6435,17 @@ if grep -Fq 'stripe.customers.create' server/api.ts && grep -Fq 'stripe.prices.c
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: billing route markers missing in server/api.ts"
 fi
+# Live-test finding 2026-08-19 (real test-mode key, Managed Payments account):
+# Stripe rejects payment-link creation with "the product tax code is missing" unless
+# the price's product carries an eligible product tax code. Revzenta CRM is a digital
+# (SaaS) service, so the product is tagged with Stripe's "Electronically Supplied
+# Services" code (txcd_10000000). Hermetic suites never call real Stripe, so this is
+# asserted at the source level so the with-key path stays shippable.
+if grep -Fq 'product_data: { name: productName, tax_code: "txcd_10000000" }' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: Managed-Payments product tax_code (txcd_10000000, digital services) set on the price"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: price product tax_code missing in server/api.ts (Managed Payments will 502)"
+fi
 if grep -Fq 'Stripe not configured' server/api.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: no-key 503 path retained (no Stripe calls without the key)"
 else

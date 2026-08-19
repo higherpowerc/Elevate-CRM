@@ -3402,7 +3402,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         currency: "usd",
         unit_amount: cents,
         ...(interval === "month" ? { recurring: { interval: "month" } } : {}),
-        product_data: { name: productName },
+        product_data: { name: productName, tax_code: "txcd_10000000" },
         metadata: { clientId: String(client.id), orgId: String(client.org_id) },
       });
       const link = await stripe.paymentLinks.create({
