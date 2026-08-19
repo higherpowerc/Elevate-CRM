@@ -300,21 +300,27 @@ export const api = {
       token: string;
     }>("/api/agreements/send", { method: "POST", body: JSON.stringify({ clientId }) }),
   agreements: () => request<{ agreements: AgreementEnvelope[] }>("/api/agreements"),
-  /* Phase 5 prep — Stripe payment link (live-test finding 2026-08-17):
-     owner-only placeholder. With no STRIPE_SECRET_KEY the server returns 503
-     { error: "Stripe not configured" } (the UI explains the keys are not
-     connected); once the key is set the same call creates a real Payment
-     Link for $200.00/month and emails it to the client. */
-  clientPaymentLink: (id: number) =>
+  /* Phase 5 — Stripe billing (owner direction 2026-08-18). Owner-only. The
+     owner enters the amount at bill time (no hard-coded rates) and picks the
+     interval; the server creates the Stripe customer + price + payment link,
+     emails the client, and returns the checkout URL. With no
+     STRIPE_SECRET_KEY the server returns 503 (the UI explains the keys are
+     not connected). */
+  clientPaymentLink: (id: number, opts: { amount: number; interval?: "month" | "one_time" }) =>
     request<{
       ok: true;
       clientId: number;
       url: string;
+      amountCents: number;
+      interval: "month" | "one_time";
       emailTo: string;
       emailStatus: "sent" | "failed" | "skipped";
       emailError?: string;
       paymentStatus: "sent";
-    }>(`/api/clients/${id}/payment-link`, { method: "POST" }),
+    }>(`/api/clients/${id}/payment-link`, {
+      method: "POST",
+      body: JSON.stringify({ amount: opts.amount, interval: opts.interval ?? "month" }),
+    }),
   /* Owner direction 2026-08-18 — interim manual "mark payment received"
      (owner-only, like clientPaymentLink). Flips the Payment column yellow →
      green until a Stripe webhook auto-flips it in Phase 5. */

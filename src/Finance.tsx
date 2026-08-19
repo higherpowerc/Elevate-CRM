@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { api, type InvoiceInput } from "./api";
+import { api, ApiError, type InvoiceInput } from "./api";
 import { usePii, blurPii } from "./pii";
 import {
   INVOICE_STATUSES,
@@ -30,7 +30,7 @@ function isOverdue(inv: Invoice): boolean {
   return inv.status === "sent" && !!inv.dueDate && inv.dueDate < localToday();
 }
 
-export default function Finance({ canEdit = true }: { canEdit?: boolean }) {
+export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?: boolean; ownerOrg?: boolean }) {
   /* Team-users UI (owner request 2026-08-14) — false for a restricted member
      with view-only "finance" access: the add/status/edit/delete affordances
      are hidden (the server still 403s any write). Owner and org admins
@@ -187,6 +187,85 @@ export default function Finance({ canEdit = true }: { canEdit?: boolean }) {
     }
   }
 
+  /* Phase 5 — Stripe billing for client accounts (owner direction
+     2026-08-18). Owner workspace only (ownerOrg prop). "Bill this account"
+     creates a Stripe Payment Link at the owner-entered amount (no hard-coded
+     rates) and emails it; a Stripe webhook auto-flips the Payment column to
+     paid + emails the invoice PDF; "Mark paid" stays as the manual fallback. */
+  const [billClientId, setBillClientId] = useState("");
+  const [billAmount, setBillAmount] = useState("");
+  const [billInterval, setBillInterval] = useState<"month" | "one_time">("month");
+  const [billResult, setBillResult] = useState<{
+    url: string;
+    amountCents: number;
+    emailTo: string;
+    emailStatus: string;
+    emailError?: string;
+  } | null>(null);
+  const [billNotice, setBillNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+
+  async function handleBill(e: FormEvent) {
+    e.preventDefault();
+    const a = Number(billAmount);
+    if (!billClientId || !billAmount.trim() || !Number.isFinite(a) || a <= 0) {
+      setError("Choose a client and enter a payment amount in dollars.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setBillNotice(null);
+    setBillResult(null);
+    try {
+      const r = await api.clientPaymentLink(Number(billClientId), { amount: a, interval: billInterval });
+      setBillResult({
+        url: r.url,
+        amountCents: r.amountCents,
+        emailTo: r.emailTo,
+        emailStatus: r.emailStatus,
+        emailError: r.emailError,
+      });
+      setBillNotice({
+        kind: "success",
+        text: `Payment link sent to ${r.emailTo} — when the client pays, the bill flips to Paid automatically.`,
+      });
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setError("This client's agreement must be signed before billing them.");
+      } else if (err instanceof ApiError && err.status === 503) {
+        setBillNotice({
+          kind: "warn",
+          text: "Stripe is not connected yet. Once Stripe keys are added this form will create + email the payment link.",
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "Could not create the payment link.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleMarkPaid(c: Client) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.clientPaymentPaid(c.id);
+      setBillNotice({ kind: "success", text: `Payment recorded for ${c.companyName} — column shows Paid.` });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not mark the payment as received.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Owner-only list of billed clients (paymentStatus !== none) — the live
+   *  Stripe status readout on the Finance tab. */
+  const bills = useMemo(
+    () => (ownerOrg ? clients.filter((c) => c.paymentStatus && c.paymentStatus !== "none") : []),
+    [ownerOrg, clients],
+  );
+
   if (!invoices) {
     return error ? (
       <div className="alert alert-error">{error}</div>
@@ -291,6 +370,132 @@ export default function Finance({ canEdit = true }: { canEdit?: boolean }) {
           Add
         </button>
       </form>
+      )}
+
+      {ownerOrg && canEdit && (
+        <div className="card inv-add stripe-bill">
+          <div className="page-head" style={{ marginBottom: ".5rem" }}>
+            <div>
+              <h2 className="h3">
+                <em className="serif">Bill</em> a client account
+              </h2>
+              <p className="page-sub">
+                Create a Stripe payment link at the amount you set — the client pays on Stripe's
+                checkout, the bill flips to Paid automatically, and the invoice is emailed.
+              </p>
+            </div>
+          </div>
+          <form className="inv-add-row" onSubmit={handleBill}>
+            <SearchableSelect
+              piiBlur={pii}
+              className="inv-add-client"
+              value={billClientId}
+              onChange={setBillClientId}
+              options={clients.map((c) => ({
+                value: String(c.id),
+                label: c.companyName + (c.archived ? " (archived)" : ""),
+              }))}
+              placeholder="Search clients…"
+              ariaLabel="Billing client"
+              emptyLabel="No client"
+            />
+            <div className="inv-add-amount">
+              <span className="inv-dollar" aria-hidden="true">
+                $
+              </span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                inputMode="decimal"
+                value={billAmount}
+                onChange={(e) => setBillAmount(e.target.value)}
+                placeholder="0.00"
+                aria-label="Billing amount"
+              />
+            </div>
+            <select
+              value={billInterval}
+              onChange={(e) => setBillInterval(e.target.value as "month" | "one_time")}
+              aria-label="Billing interval"
+            >
+              <option value="month">Monthly subscription</option>
+              <option value="one_time">One-time invoice</option>
+            </select>
+            <button className="btn btn-primary" disabled={busy}>
+              Bill this account
+            </button>
+          </form>
+          {billResult && (
+            <p className="inv-notes" style={{ marginTop: ".5rem" }}>
+              Payment link sent to {billResult.emailTo} ({money(billResult.amountCents / 100)}
+              {billInterval === "month" ? "/mo" : " one-time"}) ·{" "}
+              <a href={billResult.url} target="_blank" rel="noreferrer">
+                open checkout ↗
+              </a>
+              {billResult.emailError && <span className="tone-red"> · email failed: {billResult.emailError}</span>}
+            </p>
+          )}
+          {billNotice && (
+            <div
+              className={billNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+              role={billNotice.kind === "success" ? "status" : "alert"}
+              style={{ marginTop: ".5rem" }}
+            >
+              {billNotice.text}
+            </div>
+          )}
+          {bills.length > 0 && (
+            <ul className="inv-list" style={{ marginTop: ".75rem" }}>
+              {bills.map((c) => (
+                <li key={c.id} className="inv">
+                  <div className="inv-body">
+                    <div className="inv-client">
+                      <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
+                      <span className="inv-notes">
+                        {c.paymentAmountCents ? money(c.paymentAmountCents / 100) : "—"}
+                        {c.paymentStatus === "paid" && c.paidAt
+                          ? ` · paid ${new Date(c.paidAt).toLocaleString()}`
+                          : ""}
+                      </span>
+                    </div>
+                    <div className="inv-meta">
+                      <span
+                        className={
+                          c.paymentStatus === "paid" ? "badge tone-green" : "badge tone-amber"
+                        }
+                      >
+                        {c.paymentStatus === "paid"
+                          ? "Paid"
+                          : c.paymentStatus === "sent"
+                            ? "Sent"
+                            : c.paymentStatus}
+                      </span>
+                      {c.paymentLinkUrl && (
+                        <a
+                          className="inv-due"
+                          href={c.paymentLinkUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Stripe checkout link"
+                        >
+                          checkout ↗
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  <div className="row-actions">
+                    {c.paymentStatus === "sent" && (
+                      <button className="icon-btn" onClick={() => handleMarkPaid(c)} disabled={busy}>
+                        Mark paid
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <div className="toolbar">

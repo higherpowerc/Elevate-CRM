@@ -902,6 +902,37 @@ db.exec(`
   addCol("payment_link_url", "payment_link_url TEXT NOT NULL DEFAULT ''");
   addCol("paid_at", "paid_at TEXT NOT NULL DEFAULT ''");
 }
+/**
+ * Phase 5 — Stripe billing columns (owner direction 2026-08-18). Idempotent —
+ * safe on every boot. Extends the payment-status trio above with the Stripe
+ * identifiers + the owner-entered amount so the Finance tab can bill at
+ * charge time (NO hard-coded rates) and the webhook can auto-flip + email the
+ * invoice:
+ *   payment_amount_cents INTEGER NOT NULL DEFAULT 0 — the amount the OWNER
+ *                    entered when the link was sent (USD cents). Not a rate —
+ *                    the owner types it at bill time; 0 until the first send.
+ *   stripe_customer_id TEXT NOT NULL DEFAULT '' — the Stripe Customer created
+ *                    for this client org on first billing ('' until then).
+ *   stripe_price_id  TEXT NOT NULL DEFAULT '' — the Stripe Price created for
+ *                    the sent link ('' until then).
+ *   stripe_link_id   TEXT NOT NULL DEFAULT '' — the Stripe Payment Link id
+ *                    ('' until then; the URL lives in payment_link_url).
+ * All plain columns with DEFAULTs (same pattern as every Phase 3/5
+ * migration). Exposed to the OWNER org only (same isolation rule as
+ * agreement_status/payment_status).
+ */
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${ddl}`);
+    }
+  };
+  addCol("payment_amount_cents", "payment_amount_cents INTEGER NOT NULL DEFAULT 0");
+  addCol("stripe_customer_id", "stripe_customer_id TEXT NOT NULL DEFAULT ''");
+  addCol("stripe_price_id", "stripe_price_id TEXT NOT NULL DEFAULT ''");
+  addCol("stripe_link_id", "stripe_link_id TEXT NOT NULL DEFAULT ''");
+}
 
 /**
  * Native e-signature (owner direction 2026-08-15) — the owner's editable
@@ -1257,6 +1288,18 @@ export interface ClientRow {
   /** When the payment was recorded as received — ISO timestamp ('' until
    *  paid). Owner-only, like payment_status. */
   paid_at: string;
+  /** Phase 5 — the owner-entered amount (USD cents) the last payment link was
+   *  sent for. 0 until the first send (the owner types the amount at bill
+   *  time — no hard-coded rates). */
+  payment_amount_cents: number;
+  /** Phase 5 — Stripe Customer id created for this client org on first
+   *  billing ('' until then). */
+  stripe_customer_id: string;
+  /** Phase 5 — Stripe Price id created for the sent link ('' until then). */
+  stripe_price_id: string;
+  /** Phase 5 — Stripe Payment Link id ('' until then; its URL lives in
+   *  payment_link_url). */
+  stripe_link_id: string;
 }
 
 export interface TaskRow {

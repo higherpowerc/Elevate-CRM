@@ -531,7 +531,7 @@ export default function App() {
         ) : effectiveView === "tasks" ? (
           <Tasks canEdit={canEditTab("tasks")} />
         ) : effectiveView === "finance" ? (
-          <Finance canEdit={canEditTab("finance")} />
+          <Finance canEdit={canEditTab("finance")} ownerOrg={isOwnerOrg} />
         ) : effectiveView === "admin" ? (
           /* Administration now hosts the Agreements (template editor) section
              only — client-account management moved to the Clients tab

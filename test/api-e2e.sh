@@ -1,7 +1,26 @@
 #!/bin/bash
-# End-to-end API test for Revzenta CRM (run against a local server on :3001).
+# End-to-end API test for Revzenta CRM. Points at $BASE (default :3001).
+#
+# CANONICAL RUN (what produced the green result — this sandbox exports PORT=80
+# and REAL Stripe/Resend secrets, so the main server must be booted with the
+# Stripe keys deliberately stripped; otherwise §48a's "no key -> 503" test makes
+# a REAL Stripe call and fails):
+#   cd <repo>
+#   bun run db:reset && bun run build
+#   env -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET PORT=3007 \
+#     RESEND_API_KEY=test-key-main RESEND_URL=http://127.0.0.1:3195 \
+#     TEST_EMAIL_TO=owner-test@gmail.com \
+#     nohup bun ./server/index.ts > /tmp/main-server.log 2>&1 &
+#   BASE=http://localhost:3007 bash test/api-e2e.sh
+# (mock Resend on :3195 is optional — it only captures any $BASE emails; every
+#  email-asserting section runs its own throwaway server + mock on 3196-3212.)
 set -u
 BASE="${BASE:-http://localhost:3001}"
+# Hermeticity: this suite never calls Stripe with a real key — §48a needs the
+# main server AND the throwaways Stripe-key-free (the 503 path), §49's server
+# gets its own webhook secret explicitly. Strip any ambient secrets so they
+# cannot leak into servers started without -u STRIPE_SECRET_KEY.
+unset STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET 2>/dev/null
 # Admin credentials come from .env (local QA, gitignored) or the environment —
 # never hardcoded in the repo.
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
@@ -5870,8 +5889,12 @@ check "48a: payment-link on an UNSIGNED agreement -> 409 (signed-agreement gate 
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d '{"companyName":"PayLink Test Co","clientType":"commercial","dealValue":200,"stage":"Leads","agreementStatus":"signed"}' "$BASE/api/clients/$PAY48_ID")
 check "48a: owner PUT agreementStatus=signed -> 200" 200 "$S"
-S=$(code -b "$JAR" -X POST "$BASE/api/clients/$PAY48_ID/payment-link")
-check "48a: payment-link signed + no STRIPE_SECRET_KEY -> 503 (unchanged placeholder)" 503 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{}' "$BASE/api/clients/$PAY48_ID/payment-link")
+check "48a: payment-link signed but NO amount -> 400 (owner enters the amount at bill time — no hard-coded rates)" 400 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{"amount":0}' "$BASE/api/clients/$PAY48_ID/payment-link")
+check "48a: payment-link with amount 0 -> 400" 400 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' -d '{"amount":200}' "$BASE/api/clients/$PAY48_ID/payment-link")
+check "48a: payment-link with amount + no STRIPE_SECRET_KEY -> 503 (Stripe not configured)" 503 "$S"
 if grep -q '{"error":"Stripe not configured"}' /tmp/body.json; then
   PASS=$((PASS+1)); echo "  ✓ body is exactly { error: \"Stripe not configured\" }"
 else
@@ -5987,7 +6010,7 @@ if grep -Fq 'stripeClient' server/api.ts && grep -Fq 'Stripe not configured' ser
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: payment-link route markers missing from server/api.ts"
 fi
-if grep -Fq 'api.clientPaymentLink(c.id)' src/Clients.tsx && grep -Fq 'Send payment link to' src/Clients.tsx && grep -Fq 'ownerOnboardingTab && canEdit' src/Clients.tsx && grep -Fq 'scope === "middle"' src/Clients.tsx; then
+if grep -Fq 'api.clientPaymentLink(c.id' src/Clients.tsx && grep -Fq 'Send payment link to' src/Clients.tsx && grep -Fq 'ownerOnboardingTab && canEdit' src/Clients.tsx && grep -Fq 'scope === "middle"' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: 'Payment link' action lives in Clients.tsx (owner Onboarding view, scope middle, owner-only, canEdit-gated)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: payment-link action missing/ungated in src/Clients.tsx"
@@ -6175,6 +6198,280 @@ kill "$MOCK48_PID" 2>/dev/null
 rm -f "$JA48"
 rm -rf "$MOCK48"
 echo "  ✓ 48: sign-page scroll gate + read-to-bottom checkbox, bracket-style template placeholders, payment-link placeholder shipped (owner Onboarding tab)"
+echo "== 49. Phase 5 — Stripe billing: owner-entered amount + webhook auto-flip + invoice email (2026-08-18) =="
+# The billing endpoint POST /api/clients/:id/payment-link needs STRIPE_SECRET_KEY
+# to create REAL links, which the suite NEVER has (-u STRIPE_SECRET_KEY, so no
+# real Stripe calls — hard requirement). The webhook path needs NO Stripe key:
+# it only reads the event body + signature. So this section (a) proves the
+# owner-entered amount validation on the throwaway server, then (b) drives
+# FAKE Stripe events through POST /api/stripe/webhook with a valid HMAC
+# signature computed from the suite's own STRIPE_WEBHOOK_SECRET, asserting:
+#   - garbage/unsigned payloads are REJECTED when the secret is present (400)
+#   - with the secret ABSENT the endpoint still accepts + logs gracefully
+#   - checkout.session.completed / invoice.paid flip payment_status -> paid,
+#     record paidAt, and EMAIL the invoice PDF (mock Resend attachment check)
+#   - duplicate events are idempotent (no second email)
+#   - a foreign org's event NEVER touches the client (no cross-account leak)
+MOCK49=$(mktemp -d)
+cat > "$MOCK49/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock49-emails.jsonl";
+const server = Bun.serve({
+  port: 3212,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+TS
+MOCK_OUT="$MOCK49/emails.jsonl" nohup bun "$MOCK49/resend.ts" > "$MOCK49/resend.log" 2>&1 &
+MOCK49_PID=$!
+sleep 1
+if curl -s -o /dev/null http://127.0.0.1:3212/health; then
+  PASS=$((PASS+1)); echo "  ✓ 49: mock Resend up on :3212"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 49: mock Resend failed to start"
+fi
+# Server WITH a webhook signing secret (signature verification ON). Ports 3011
+# + 3212 are free of every other suite section (3002-3008, 3196-3199).
+start_crm 3011 "$MOCK49/db" "$MOCK49/srv.log" "$MOCK49/srv.pid" -u STRIPE_SECRET_KEY RESEND_API_KEY=test-key-49 RESEND_URL=http://127.0.0.1:3212 TEST_EMAIL_TO=owner-test@gmail.com STRIPE_WEBHOOK_SECRET=whsec_test_49
+B49=http://localhost:3011
+JA49=$(mktemp)
+S=$(code -c "$JA49" -b "$JA49" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B49/api/auth/login")
+check "49a: webhook-server owner login -> 200" 200 "$S"
+ORG49=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['orgId'])")
+S=$(code -b "$JA49" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Webhook A Co","contactName":"Ann A","email":"wa@example.com","clientType":"commercial","dealValue":2400,"stage":"Leads"}' "$B49/api/clients")
+check "49a: create client A -> 201" 201 "$S"
+WA_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA49" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Webhook B Co","contactName":"Bob B","email":"wb@example.com","clientType":"commercial","dealValue":1800,"stage":"Leads"}' "$B49/api/clients")
+check "49a: create client B -> 201" 201 "$S"
+WB_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+# DB fixtures: agree + mark sent + owner amount (what the billing endpoint
+# would have stored had Stripe been configured). B also gets a stored Stripe
+# customer id so the invoice.paid fallback path can match it.
+cat > "$MOCK49/fix.ts" <<'EOF'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.FIX_DB ?? "data/crm.db");
+const [id, amountCents, cust] = process.argv.slice(2);
+// The SQL always binds all three placeholders. stripe_customer_id is
+// TEXT NOT NULL DEFAULT '' — bind "" (not null) for "no customer", otherwise
+// SQLite throws a NOT NULL constraint error and the fixtures silently fail.
+db.run(
+  "UPDATE clients SET agreement_status='signed', payment_status='sent', payment_amount_cents=?, payment_link_url='https://pay.example/pl49/' || id, stripe_customer_id=?, updated_at=datetime('now') WHERE id=?",
+  [amountCents, cust === "" ? "" : cust, id],
+);
+console.log("fixture ok");
+EOF
+if FIX_DB="$MOCK49/db/crm.db" bun "$MOCK49/fix.ts" "$WA_ID" 20000 "" && FIX_DB="$MOCK49/db/crm.db" bun "$MOCK49/fix.ts" "$WB_ID" 15000 cus_test_49b; then
+  PASS=$((PASS+1)); echo "  ✓ 49a: DB fixtures applied (A: \$200.00, B: \$150.00 + customer id)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 49a: DB fixtures failed"
+fi
+# ------- owner-entered amount validation (billing gate, no Stripe key) -------
+S=$(code -b "$JA49" -X POST -H 'Content-Type: application/json' -d '{}' "$B49/api/clients/$WA_ID/payment-link")
+check "49b: signed client, NO amount -> 400" 400 "$S"
+S=$(code -b "$JA49" -X POST -H 'Content-Type: application/json' -d '{"amount":"abc"}' "$B49/api/clients/$WA_ID/payment-link")
+check "49b: non-numeric amount -> 400" 400 "$S"
+S=$(code -b "$JA49" -X POST -H 'Content-Type: application/json' -d '{"amount":200}' "$B49/api/clients/$WA_ID/payment-link")
+check "49b: valid amount, no STRIPE_SECRET_KEY -> 503 (Stripe not configured)" 503 "$S"
+grep -q '{"error":"Stripe not configured"}' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49b: 503 body exact"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49b: 503 body: $(cat /tmp/body.json)"; }
+# ---------------- webhook signature rejection (secret present) ---------------
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' --data-binary '{"id":"evt_1","type":"checkout.session.completed","data":{"object":{}}}' "$B49/api/stripe/webhook")
+check "49c: webhook with NO signature header -> 400" 400 "$S"
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H 'Stripe-Signature: t=1,v1=garbage' --data-binary '{"id":"evt_1","type":"checkout.session.completed","data":{"object":{}}}' "$B49/api/stripe/webhook")
+check "49c: webhook with GARBAGE signature -> 400" 400 "$S"
+grep -q 'Invalid signature' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49c: 400 body says invalid signature"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49c: 400 body: $(cat /tmp/body.json)"; }
+# --------------- valid signed events drive the auto-flip (A) -----------------
+# sign49 <payload file> <sig file> — HMAC-SHA256 over "t=<ts>.v1=<payload>"
+sign49() {
+  python3 - "$1" "$2" <<'PY'
+import sys, time, hmac, hashlib
+payload = open(sys.argv[1], "rb").read()
+ts = str(int(time.time()))
+sig = hmac.new(b"whsec_test_49", (ts + "." + payload.decode()).encode(), hashlib.sha256).hexdigest()
+open(sys.argv[2], "w").write("t=%s,v1=%s" % (ts, sig))
+PY
+}
+python3 - "$MOCK49/ev.json" "$WA_ID" "$ORG49" <<'PY'
+import json, sys
+ev = {
+  "id": "evt_checkout_A",
+  "object": "event",
+  "type": "checkout.session.completed",
+  "data": {"object": {
+    "id": "cs_test_49a", "object": "checkout.session", "payment_status": "paid",
+    "amount_total": 20000, "currency": "usd", "customer": "cus_test_49a",
+    "customer_email": "wa@example.com",
+    "metadata": {"clientId": sys.argv[2], "orgId": sys.argv[3]},
+    "payment_link": "pl_test_49a",
+  }},
+}
+open(sys.argv[1], "w").write(json.dumps(ev))
+PY
+sign49 "$MOCK49/ev.json" "$MOCK49/ev.sig"
+SIG49=$(cat "$MOCK49/ev.sig")
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIG49" --data-binary @"$MOCK49/ev.json" "$B49/api/stripe/webhook")
+check "49d: valid checkout.session.completed -> 200 (handled:paid)" 200 "$S"
+grep -q '"handled":"paid"' /tmp/body.json && grep -q "\"clientId\":$WA_ID" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49d: webhook ack { handled: paid, clientId: A }"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49d: ack body: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA49" "$B49/api/clients/$WA_ID")
+check "49d: owner GET client A -> 200" 200 "$S"
+grep -q '"paymentStatus":"paid"' /tmp/body.json && grep -q '"paidAt":"' /tmp/body.json && grep -q '"paymentAmountCents":20000' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49d: client A flipped to paid + paidAt + \$200.00 amount stored"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49d: client A payload: $(cat /tmp/body.json)"; }
+sleep 1
+python3 - "$MOCK49/emails.jsonl" "$WA_ID" <<'PY'
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+inv = [l for l in lines if l.get("subject", "").startswith("Invoice INV-" + sys.argv[2] + "-")]
+att = inv[0].get("attachments", []) if inv else []
+assert inv and att and att[0]["filename"].startswith("invoice-INV-") and att[0]["content_type"] == "application/pdf" and len(att[0]["content"]) > 500, (len(inv), att)
+print("  ✓ 49d: invoice email with PDF attachment (%s, %d b64 chars)" % (att[0]["filename"], len(att[0]["content"])))
+PY
+if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 49d: invoice email/attachment assertion failed"; fi
+# --------------------------------- idempotency -------------------------------
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIG49" --data-binary @"$MOCK49/ev.json" "$B49/api/stripe/webhook")
+check "49e: duplicate event -> 200 (acknowledged)" 200 "$S"
+grep -q '"handled":"already_paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49e: duplicate is idempotent (already_paid)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49e: duplicate body: $(cat /tmp/body.json)"; }
+sleep 1
+EMAIL49_N=$(wc -l < "$MOCK49/emails.jsonl")
+[ "$EMAIL49_N" = "1" ] && { PASS=$((PASS+1)); echo "  ✓ 49e: no duplicate invoice email (still 1)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49e: email count $EMAIL49_N, expected 1"; }
+# ---------------- invoice.paid fallback (stored customer match) --------------
+python3 - "$MOCK49/evb.json" "$WB_ID" "$ORG49" <<'PY'
+import json, sys
+ev = {
+  "id": "evt_invoice_paid_b",
+  "object": "event",
+  "type": "invoice.paid",
+  "data": {"object": {
+    "id": "in_49b", "object": "invoice", "subscription": "sub_49b",
+    "customer": "cus_test_49b", "customer_email": "wb@example.com",
+  }},
+}
+open(sys.argv[1], "w").write(json.dumps(ev))
+PY
+sign49 "$MOCK49/evb.json" "$MOCK49/evb.sig"
+SIGB=$(cat "$MOCK49/evb.sig")
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIGB" --data-binary @"$MOCK49/evb.json" "$B49/api/stripe/webhook")
+check "49f: invoice.paid without metadata (stored customer id) -> 200" 200 "$S"
+grep -q '"handled":"paid"' /tmp/body.json && grep -q "\"clientId\":$WB_ID" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: invoice.paid resolved client B via stripe_customer_id"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: body: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA49" "$B49/api/clients/$WB_ID")
+grep -q '"paymentStatus":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49f: client B flipped to paid"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: client B: $(cat /tmp/body.json)"; }
+sleep 1
+EMAIL49_N=$(wc -l < "$MOCK49/emails.jsonl")
+[ "$EMAIL49_N" = "2" ] && { PASS=$((PASS+1)); echo "  ✓ 49f: invoice email sent for B (2 total)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49f: email count $EMAIL49_N, expected 2"; }
+# ---------------------- cross-account isolation (no leak) --------------------
+python3 - "$MOCK49/evx.json" "$WA_ID" "$ORG49" <<'PY'
+import json, sys
+ev = {
+  "id": "evt_foreign_org",
+  "object": "event",
+  "type": "checkout.session.completed",
+  "data": {"object": {
+    "id": "cs_x", "object": "checkout.session",
+    "metadata": {"clientId": sys.argv[2], "orgId": "999999"},
+    "customer_email": "intruder@example.com",
+  }},
+}
+open(sys.argv[1], "w").write(json.dumps(ev))
+PY
+sign49 "$MOCK49/evx.json" "$MOCK49/evx.sig"
+SIGX=$(cat "$MOCK49/evx.sig")
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIGX" --data-binary @"$MOCK49/evx.json" "$B49/api/stripe/webhook")
+check "49g: event for a foreign org -> 200 no_match (no cross-account touch)" 200 "$S"
+grep -q '"handled":"no_match"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49g: foreign-org event ignored (no_match)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49g: body: $(cat /tmp/body.json)"; }
+# ----------------------- unknown event type -> acknowledge --------------------
+python3 - "$MOCK49/evu.json" <<'PY'
+import json, sys
+ev = {"id": "evt_unknown", "object": "event", "type": "charge.refunded", "data": {"object": {}}}
+open(sys.argv[1], "w").write(json.dumps(ev))
+PY
+sign49 "$MOCK49/evu.json" "$MOCK49/evu.sig"
+SIGU=$(cat "$MOCK49/evu.sig")
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H "Stripe-Signature: $SIGU" --data-binary @"$MOCK49/evu.json" "$B49/api/stripe/webhook")
+check "49h: unknown event type -> 200 (acknowledged, no retries)" 200 "$S"
+grep -q '"handled":"unhandled_type"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49h: unknown type acknowledged"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49h: body: $(cat /tmp/body.json)"; }
+# ---------------- absent secret -> accept + log gracefully --------------------
+echo "  -- 49i. No STRIPE_WEBHOOK_SECRET — accept + log (provision-time path) --"
+start_crm 3014 "$MOCK49/db-ns" "$MOCK49/srv-ns.log" "$MOCK49/srv-ns.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET RESEND_API_KEY=test-key-49 RESEND_URL=http://127.0.0.1:3212 TEST_EMAIL_TO=owner-test@gmail.com
+B49N=http://localhost:3014
+JANS=$(mktemp)
+S=$(code -c "$JANS" -b "$JANS" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B49N/api/auth/login")
+check "49i: no-secret server login -> 200" 200 "$S"
+S=$(code -b "$JANS" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"NoSecret Co","email":"nsec@example.com","clientType":"commercial","dealValue":2500,"stage":"Leads"}' "$B49N/api/clients")
+check "49i: create client N -> 201" 201 "$S"
+WN_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+FIX_DB="$MOCK49/db-ns/crm.db" bun "$MOCK49/fix.ts" "$WN_ID" 25000 "" > /dev/null 2>&1
+python3 - "$MOCK49/evns.json" "$WN_ID" "$ORG49" <<'PY'
+import json, sys
+ev = {"id": "evt_nosecret", "object": "event", "type": "checkout.session.completed",
+      "data": {"object": {"id": "cs_ns", "metadata": {"clientId": sys.argv[2], "orgId": sys.argv[3]}, "customer_email": "nsec@example.com"}}}
+open(sys.argv[1], "w").write(json.dumps(ev))
+PY
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -H 'Stripe-Signature: garbage' --data-binary @"$MOCK49/evns.json" "$B49N/api/stripe/webhook")
+check "49i: garbage signature ACCEPTED when secret unset -> 200 (graceful)" 200 "$S"
+grep -q '"handled":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49i: no-secret webhook processed the event"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49i: body: $(cat /tmp/body.json)"; }
+S=$(code -b "$JANS" "$B49N/api/clients/$WN_ID")
+grep -q '"paymentStatus":"paid"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 49i: client N flipped to paid"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49i: client N: $(cat /tmp/body.json)"; }
+grep -q "accepting webhook without signature verification" "$MOCK49/srv-ns.log" && { PASS=$((PASS+1)); echo "  ✓ 49i: server logged the no-secret warning"; } || { FAIL=$((FAIL+1)); echo "  ✗ 49i: warning missing from $MOCK49/srv-ns.log"; }
+stop_crm "$MOCK49/srv-ns.pid" 2>/dev/null
+rm -f "$JANS"
+# ------------------------------ source markers ---------------------------------
+if grep -Fq '/api/stripe/webhook' server/api.ts && grep -Fq 'constructEventAsync' server/api.ts && grep -Fq 'checkout.session.completed' server/api.ts && grep -Fq 'payment_intent.succeeded' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: POST /api/stripe/webhook (signature-verified, 3 payment event types)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: webhook route markers missing in server/api.ts"
+fi
+if grep -Fq 'stripe.customers.create' server/api.ts && grep -Fq 'stripe.prices.create' server/api.ts && grep -Fq 'paymentLinks.create' server/api.ts && grep -Fq 'payment_amount_cents' server/api.ts && grep -Fq 'stripe_customer_id' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: billing route (customer + price + payment link, amount stored)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: billing route markers missing in server/api.ts"
+fi
+# Live-test finding 2026-08-19 (real test-mode key, Managed Payments account):
+# Stripe rejects payment-link creation with "the product tax code is missing" unless
+# the price's product carries an eligible product tax code. Revzenta CRM is a digital
+# (SaaS) service, so the product is tagged with Stripe's "Electronically Supplied
+# Services" code (txcd_10000000). Hermetic suites never call real Stripe, so this is
+# asserted at the source level so the with-key path stays shippable.
+if grep -Fq 'product_data: { name: productName, tax_code: "txcd_10000000" }' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: Managed-Payments product tax_code (txcd_10000000, digital services) set on the price"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: price product tax_code missing in server/api.ts (Managed Payments will 502)"
+fi
+if grep -Fq 'Stripe not configured' server/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: no-key 503 path retained (no Stripe calls without the key)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 503 guard missing"
+fi
+if [ -f server/invoices.ts ] && grep -Fq 'generateInvoicePdf' server/invoices.ts && grep -Fq 'sendInvoiceEmail' server/email.ts && grep -Fq 'attachments' server/email.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: invoice PDF (server/invoices.ts) + email attachments (server/email.ts)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: invoice/pdf markers missing"
+fi
+if grep -Fq 'Bill this account' src/Finance.tsx && grep -Fq 'ownerOrg' src/Finance.tsx && grep -Fq 'Mark paid' src/Finance.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Finance tab billing panel (amount + interval + mark-paid fallback)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Finance.tsx billing panel markers missing"
+fi
+if grep -Fq 'window.prompt' src/Clients.tsx && grep -Fq 'api.clientPaymentLink(c.id, { amount' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Onboarding Payment-link action now prompts the owner for the amount"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Clients.tsx amount prompt missing"
+fi
+# -------------------------------- cleanup ------------------------------------
+stop_crm "$MOCK49/srv.pid" 2>/dev/null
+kill "$MOCK49_PID" 2>/dev/null
+rm -f "$JA49" "$MOCK49/ev.json" "$MOCK49/ev.sig" "$MOCK49/evb.json" "$MOCK49/evb.sig" "$MOCK49/evx.json" "$MOCK49/evx.sig" "$MOCK49/evu.json" "$MOCK49/evu.sig" "$MOCK49/evns.json"
+rm -rf "$MOCK49"
+echo "  ✓ 49: Phase 5 Stripe billing webhook battery complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

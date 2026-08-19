@@ -28,6 +28,7 @@ import {
   INTAKE_OPT_GROUPS,
   DEFAULT_ORG_NAME,
   ensureDefaultOrg,
+  getOwnerOrgId,
   type ClientRow,
   type CustomField,
   type CustomFieldDef,
@@ -64,7 +65,9 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import Stripe from "stripe";
+import { generateInvoicePdf } from "./invoices";
 import { stripeClient } from "./stripe";
 import {
   AGREEMENT_TOKEN_TTL_MS,
@@ -83,6 +86,106 @@ export const SESSION_COOKIE = "elevate_session";
 export function emailStatusOf(r: SendEmailResult): "sent" | "failed" | "skipped" {
   if (r.ok) return "sent";
   return r.error === RESEND_KEY_MISSING_ERROR ? "skipped" : "failed";
+}
+
+/**
+ * Phase 5 — find the OWNER client record a Stripe payment event refers to.
+ * STRICT SCOPE (hard requirement — no cross-account leakage): the payment
+ * link's metadata pins clientId + orgId at send time, and every lookup here
+ * re-checks org_id; the customer_email / stored-customer fallbacks additionally
+ * constrain to the owner org (getOwnerOrgId), so a foreign or tenant record
+ * can never be matched or written. Returns null when nothing matches.
+ */
+function resolveOwnerClientForStripeEvent(obj: Record<string, unknown>): ClientRow | null {
+  const meta = (obj.metadata ?? {}) as Record<string, unknown>;
+  const cid = Number(meta.clientId ?? meta.client_id ?? NaN);
+  const oid = Number(meta.orgId ?? meta.org_id ?? NaN);
+  if (Number.isInteger(cid) && cid > 0 && Number.isInteger(oid) && oid > 0) {
+    const byMeta = db
+      .query("SELECT * FROM clients WHERE id = ? AND org_id = ?")
+      .get(cid, oid) as ClientRow | null;
+    if (byMeta) return byMeta;
+  }
+  const ownerOrg = getOwnerOrgId();
+  const email = typeof obj.customer_email === "string" ? obj.customer_email.trim() : "";
+  if (email !== "") {
+    const byEmail = db
+      .query("SELECT * FROM clients WHERE email = ? AND org_id = ? ORDER BY id DESC LIMIT 1")
+      .get(email, ownerOrg) as ClientRow | null;
+    if (byEmail) return byEmail;
+  }
+  const cust = typeof obj.customer === "string" ? obj.customer.trim() : "";
+  if (cust !== "") {
+    const byCust = db
+      .query("SELECT * FROM clients WHERE stripe_customer_id = ? AND org_id = ? ORDER BY id DESC LIMIT 1")
+      .get(cust, ownerOrg) as ClientRow | null;
+    if (byCust) return byCust;
+  }
+  return null;
+}
+
+/**
+ * Phase 5 — a Stripe payment event for a client: flip the Payment column to
+ * paid, record paidAt, and email the invoice PDF to the client (fire-and-
+ * forget like every transactional email). Idempotent: an already-paid record
+ * skips the invoice email but still acknowledges. Returns the ack payload.
+ */
+async function recordStripePayment(
+  eventType: string,
+  obj: Record<string, unknown>,
+): Promise<{ type: "paid" | "already_paid" | "no_match" | "no_email"; clientId?: number }> {
+  const client = resolveOwnerClientForStripeEvent(obj);
+  if (!client) {
+    console.log(`[stripe] webhook ${eventType}: no matching client record — acknowledged (no-op)`);
+    return { type: "no_match" };
+  }
+  const now = new Date().toISOString();
+  const wasPaid = client.payment_status === "paid";
+  // Scope check is IN the UPDATE: (id, org_id) must both match the record.
+  db.query(
+    "UPDATE clients SET payment_status = 'paid', paid_at = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+  ).run(now, client.id, client.org_id);
+  // Remember the Stripe customer id once we have one — later subscription
+  // invoices resolve the client through it (the fallback above).
+  const cust = typeof obj.customer === "string" ? obj.customer.trim() : "";
+  if (cust !== "" && client.stripe_customer_id === "") {
+    db.query("UPDATE clients SET stripe_customer_id = ? WHERE id = ? AND org_id = ?").run(cust, client.id, client.org_id);
+  }
+  if (wasPaid) {
+    console.log(`[stripe] webhook ${eventType}: client ${client.id} already paid — invoice email skipped (idempotent)`);
+    return { type: "already_paid", clientId: client.id };
+  }
+  if (client.email.trim() === "") {
+    console.log(`[stripe] webhook ${eventType}: client ${client.id} has no email — invoice not emailed`);
+    return { type: "no_email", clientId: client.id };
+  }
+  try {
+    const invoiceNumber = `INV-${client.id}-${now.slice(0, 10).replace(/-/g, "")}`;
+    const pdf = await generateInvoicePdf({
+      invoiceNumber,
+      clientName: client.company_name,
+      contactName: client.contact_name,
+      email: client.email,
+      amountCents: client.payment_amount_cents > 0 ? client.payment_amount_cents : 0,
+      description: "Revzenta CRM subscription",
+      paidAt: now,
+    });
+    const email = await sendInvoiceEmail({
+      to: client.email,
+      clientName: client.contact_name || client.company_name,
+      amountCents: client.payment_amount_cents > 0 ? client.payment_amount_cents : 0,
+      paidAt: now,
+      invoiceNumber,
+      pdfBase64: Buffer.from(pdf).toString("base64"),
+    });
+    console.log(
+      `[stripe] webhook ${eventType}: client ${client.id} marked paid — invoice email ${email.ok ? "sent" : "failed: " + email.error}`,
+    );
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    console.error(`[stripe] webhook ${eventType}: invoice email failed for client ${client.id}: ${m}`);
+  }
+  return { type: "paid", clientId: client.id };
 }
 
 type JsonValue = unknown;
@@ -428,6 +531,7 @@ function toClient(row: ClientRow, ownerOrg = false) {
           paymentStatus: isPaymentStatus(row.payment_status) ? row.payment_status : "none",
           paymentLinkUrl: row.payment_link_url,
           paidAt: row.paid_at,
+          paymentAmountCents: row.payment_amount_cents ?? 0,
         }
       : {}),
     createdAt: row.created_at,
@@ -2104,6 +2208,66 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ ok: true, status: result.status });
   }
 
+  /* Phase 5 — Stripe webhook (owner direction 2026-08-18). PUBLIC by design:
+     Stripe posts here with the Stripe-Signature header, never a session
+     cookie — so this route must run BEFORE the auth gate below. On a
+     successful payment event (checkout.session.completed / invoice.paid /
+     payment_intent.succeeded) it auto-flips the client's payment column to
+     paid (recording paidAt) and emails the invoice PDF to the client.
+     Signature verification runs when STRIPE_WEBHOOK_SECRET is set (the
+     production path); without it the endpoint still accepts + logs (the
+     signing secret gets added once the endpoint is live on Render). Scope is
+     strict to the exact client record that was billed — the event's metadata
+     pins clientId + orgId at send time and every lookup/UPDATE re-checks
+     org_id (resolveOwnerClientForStripeEvent). */
+  if (pathname === "/api/stripe/webhook" && method === "POST") {
+    const raw = await req.text().catch(() => "");
+    if (raw.trim() === "") return err("Empty payload.", 400);
+    let event: { id?: unknown; type?: unknown; data?: { object?: Record<string, unknown> } };
+    try {
+      event = JSON.parse(raw) as typeof event;
+    } catch {
+      return err("Invalid JSON payload.", 400);
+    }
+    const secret = process.env.STRIPE_WEBHOOK_SECRET ?? "";
+    if (secret) {
+      const sig = req.headers.get("stripe-signature") ?? "";
+      if (!sig) return err("Missing Stripe-Signature header.", 400);
+      try {
+        // constructEventAsync: stripe-node uses SubtleCrypto for the HMAC,
+        // which cannot run synchronously on Bun (live-test finding 2026-08-18)
+        // — the async variant works on Bun AND in Node.
+        await Stripe.webhooks.constructEventAsync(raw, sig, secret);
+      } catch (e) {
+        const m = e instanceof Error ? e.message : String(e);
+        console.warn("[stripe] webhook signature verification failed: " + m);
+        return err("Invalid signature.", 400);
+      }
+    } else {
+      console.log(
+        "[stripe] STRIPE_WEBHOOK_SECRET not configured — accepting webhook without signature verification (add the signing secret once live).",
+      );
+    }
+    if (typeof event.type !== "string") return err("Missing event type.", 400);
+    const obj = event.data?.object ?? {};
+    if (
+      event.type === "checkout.session.completed" ||
+      event.type === "invoice.paid" ||
+      event.type === "payment_intent.succeeded"
+    ) {
+      const result = await recordStripePayment(event.type, obj);
+      return json({
+        ok: true,
+        received: true,
+        event: typeof event.id === "string" ? event.id : "",
+        handled: result.type,
+        clientId: result.clientId ?? null,
+      });
+    }
+    // Any other event type is acknowledged (2xx) so Stripe stops retrying.
+    return json({ ok: true, received: true, event: typeof event.id === "string" ? event.id : "", handled: "unhandled_type" });
+  }
+
   /* Everything below requires auth */
   const auth = requireAuth(req);
   if (auth instanceof Response) return auth;
@@ -3168,16 +3332,19 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ client: toClient(row, isOwnerSession(auth)) }, 201);
   }
 
-  /* Phase 5 prep — Stripe payment link (live-test finding 2026-08-17):
-     OWNER-ONLY (requireAdmin, like the agreement routes — the owner bills
-     the client's $200/month subscription; tenant orgs never send payment
-     links). Creates a Stripe Payment Link for $200.00/month and emails it to
-     the client. Placeholder behavior: with no STRIPE_SECRET_KEY the endpoint
-     returns 503 { error: "Stripe not configured" } and the UI explains the
-     keys are not connected. Once the owner adds STRIPE_SECRET_KEY the same
-     code path creates a real Payment Link (stripeClient is a lazy singleton —
-     no Stripe code runs, or even imports eagerly, without the key) and emails
-     it via the existing Resend infra. */
+  /* Phase 5 — Stripe billing for a client account (owner direction
+     2026-08-18). OWNER-ONLY (requireAdmin, like the agreement routes — the
+     owner bills client accounts; tenant orgs never send payment links).
+     The owner types the AMOUNT at bill time (no hard-coded rates — the
+     endpoint 400s without it) and picks the interval: "month" (recurring
+     subscription, the default) or "one_time" (single invoice). Creates (or
+     reuses) a Stripe Customer for the client org, a Price at the entered
+     amount, and a Payment Link whose metadata pins the exact client record
+     for the webhook; then emails the link and stores every Stripe identifier
+     on the record. With no STRIPE_SECRET_KEY the endpoint returns 503
+     { error: "Stripe not configured" } and the UI explains the keys are not
+     connected (stripeClient is a lazy singleton — no Stripe code runs, or
+     even imports eagerly, without the key). */
   const payMatch = pathname.match(/^\/api\/clients\/(\d+)\/payment-link$/);
   if (payMatch && method === "POST") {
     const admin = requireAdmin(req);
@@ -3195,6 +3362,18 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         409,
       );
     }
+    // Phase 5 — the owner enters the amount when billing (NO hard-coded
+    // rates). amount is USD ("200" or "199.99"); interval is "month"
+    // (recurring subscription, default) or "one_time" (single invoice).
+    // Validated BEFORE the not-configured gate so the e2e suite can assert
+    // the 400s without a Stripe key.
+    const body = await readBody(req);
+    const amount = body && typeof body.amount === "number" && Number.isFinite(body.amount) ? body.amount : NaN;
+    const cents = Math.round(amount * 100);
+    const interval = body && body.interval === "one_time" ? "one_time" : "month";
+    if (!Number.isInteger(cents) || cents <= 0 || cents > 100_000_000) {
+      return err("Enter a payment amount in dollars (the amount you're billing this client).", 400);
+    }
     const stripe = stripeClient();
     if (!stripe) {
       return json({ error: "Stripe not configured" }, 503);
@@ -3203,34 +3382,58 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       return err(client.company_name + " has no email address — add one before sending a payment link.", 400);
     }
     try {
-      // $200.00/month — the CRM subscription price (owner direction
-      // 2026-08-15). A recurring price on a Payment Link starts a monthly
-      // subscription at checkout.
+      // Phase 5 — Stripe objects for this bill: a Customer created once per
+      // client org (reused on later bills), a Price at the owner-entered
+      // amount (recurring monthly by default — the subscription business — or
+      // one-time for a single invoice), and a Payment Link carrying metadata
+      // that pins the exact client record the webhook must confirm.
+      let stripeCustomer = client.stripe_customer_id;
+      if (stripeCustomer === "") {
+        const customer = await stripe.customers.create({
+          name: client.company_name,
+          email: client.email.trim() === "" ? undefined : client.email.trim(),
+          metadata: { clientId: String(client.id), orgId: String(client.org_id) },
+        });
+        stripeCustomer = customer.id;
+      }
+      const productName =
+        interval === "one_time" ? "Revzenta CRM — invoice" : "Revzenta CRM — monthly subscription";
       const price = await stripe.prices.create({
         currency: "usd",
-        unit_amount: 20000,
-        recurring: { interval: "month" },
-        product_data: { name: "Revzenta CRM — monthly subscription" },
+        unit_amount: cents,
+        ...(interval === "month" ? { recurring: { interval: "month" } } : {}),
+        product_data: { name: productName, tax_code: "txcd_10000000" },
+        metadata: { clientId: String(client.id), orgId: String(client.org_id) },
       });
       const link = await stripe.paymentLinks.create({
         line_items: [{ price: price.id, quantity: 1 }],
+        metadata: { clientId: String(client.id), orgId: String(client.org_id) },
       });
       // Email the link to the client ONLY after Stripe succeeded.
       const email = await sendPaymentLinkEmail({
         to: client.email,
         clientName: client.contact_name || client.company_name,
         linkUrl: link.url,
+        amountCents: cents,
+        interval,
       });
-      // Owner direction 2026-08-18 — the status flip happens ONLY after Stripe
-      // AND the email both succeeded: payment_status none → sent (the Payment
-      // column turns yellow), and the emailed link is stored for the tooltip.
+      // Owner direction 2026-08-18 — the status flip happens ONLY after
+      // Stripe AND the email both succeeded: payment_status none → sent (the
+      // Payment column turns yellow), and the Stripe identifiers + the
+      // owner-entered amount are stored for the webhook handoff.
       db.query(
-        "UPDATE clients SET payment_status = 'sent', payment_link_url = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
-      ).run(link.url, client.id, orgId);
+        `UPDATE clients
+            SET payment_status = 'sent', payment_link_url = ?, payment_amount_cents = ?,
+                stripe_customer_id = ?, stripe_price_id = ?, stripe_link_id = ?,
+                updated_at = datetime('now')
+          WHERE id = ? AND org_id = ?`,
+      ).run(link.url, cents, stripeCustomer, price.id, link.id, client.id, orgId);
       return json({
         ok: true,
         clientId: client.id,
         url: link.url,
+        amountCents: cents,
+        interval,
         emailTo: client.email,
         emailStatus: emailStatusOf(email),
         emailError: email.ok ? undefined : email.error,
