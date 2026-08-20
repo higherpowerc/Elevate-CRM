@@ -499,3 +499,72 @@ export const fmtDate = (iso: string): string => {
     return iso;
   }
 };
+
+/* Developer Command Center — Phase A (owner-only). The owner's own dev-request
+ * capture + audit + merge-gate approval portal. All data global to the owner;
+ * nothing tenant-specific is recorded. These types mirror the server's db.ts
+ * row shapes (camelCased). */
+export type DevRunStatus =
+  | "captured"
+  | "awaiting_approval"
+  | "approved"
+  | "rejected"
+  | "merged";
+
+export interface DevRun {
+  id: number;
+  title: string;
+  request: string;
+  status: DevRunStatus;
+  prUrl: string | null;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** list shape only — populated by GET /api/dev/runs */
+  stepCount?: number;
+  pendingApproval?: boolean;
+}
+
+export interface DevStep {
+  id: number;
+  runId: number;
+  seq: number;
+  kind: string;
+  detail: string;
+  actor: string;
+  createdAt: string;
+}
+
+export interface DevApproval {
+  id: number;
+  runId: number;
+  gate: string;
+  status: "pending" | "approved" | "rejected";
+  requestedBy: string;
+  decidedBy: string | null;
+  note: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+export interface DevRunDetail {
+  run: DevRun;
+  steps: DevStep[];
+  approvals: DevApproval[];
+}
+
+export const DEV_STATUS_LABEL: Record<DevRunStatus, string> = {
+  captured: "Captured",
+  awaiting_approval: "Awaiting approval",
+  approved: "Approved",
+  rejected: "Rejected",
+  merged: "Merged",
+};
+
+export const DEV_STATUS_TONE: Record<DevRunStatus, string> = {
+  captured: "gray",
+  awaiting_approval: "blue",
+  approved: "green",
+  rejected: "red",
+  merged: "green",
+};

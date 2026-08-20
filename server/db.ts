@@ -469,6 +469,51 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_agreement_envelopes_client ON agreement_envelopes(client_id);
   CREATE INDEX IF NOT EXISTS idx_agreement_envelopes_token ON agreement_envelopes(token_hash);
+
+  -- Developer Command Center — Phase A (PM-orchestrated, owner-approved 2026-08-19).
+  -- The platform OWNER's own dev-request capture + audit + merge-gate approval
+  -- portal. Global to the owner, NOT tenant data: these tables carry no org_id
+  -- and record nothing tenant-specific. The actual merge/QA/deploy loop stays on
+  -- the existing PR workflow (done externally by the team); this Command Center
+  -- only records the plain-English request, a chronological step log, and the
+  -- explicit owner approval gate that must be satisfied before a merge /
+  -- production change from that run. Later phases (B/C/D: LLM integration,
+  -- API keys, autonomous agents) are deliberately NOT scaffolded here.
+  CREATE TABLE IF NOT EXISTS dev_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL,
+    request    TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'captured',
+    pr_url     TEXT,
+    summary    TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_dev_runs_created ON dev_runs(created_at);
+
+  CREATE TABLE IF NOT EXISTS dev_steps (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     INTEGER NOT NULL REFERENCES dev_runs(id) ON DELETE CASCADE,
+    seq        INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    detail     TEXT NOT NULL DEFAULT '',
+    actor      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_dev_steps_run ON dev_steps(run_id, seq);
+
+  CREATE TABLE IF NOT EXISTS dev_approvals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id       INTEGER NOT NULL REFERENCES dev_runs(id) ON DELETE CASCADE,
+    gate         TEXT NOT NULL DEFAULT 'merge',
+    status       TEXT NOT NULL DEFAULT 'pending',
+    requested_by TEXT NOT NULL DEFAULT '',
+    decided_by   TEXT,
+    note         TEXT,
+    decided_at   TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_dev_approvals_run ON dev_approvals(run_id, gate);
 `);
 
 /**
@@ -1355,4 +1400,162 @@ export interface TicketRow {
   priority: TicketPriority;
   created_at: string;
   updated_at: string;
+}
+
+/* =============================================================================
+ * Developer Command Center — Phase A (owner-only).
+ *
+ * Lifecycle of a run's status: 'captured' (created) → the team works the
+ * request through the EXISTING PR/QA/deploy workflow externally; the owner /
+ * Command Center records progression via appendDevStep + setDevRunStatus
+ * ('awaiting_approval', 'approved', 'rejected', 'merged'). The merge gate is a
+ * dev_approval row (gate='merge') — owner approve/reject decides it; no step
+ * can pass a merge/production gate without an owner decision. All data is
+ * global to the owner (no org_id — deliberately NOT tenant scoped).
+ * ========================================================================== */
+export const DEV_STATUSES = [
+  "captured",
+  "awaiting_approval",
+  "approved",
+  "rejected",
+  "merged",
+] as const;
+export type DevStatus = (typeof DEV_STATUSES)[number];
+
+export const DEV_STEP_KINDS = [
+  "captured",
+  "awaiting_approval",
+  "approved",
+  "rejected",
+  "merged",
+  "note",
+] as const;
+
+export interface DevRunRow {
+  id: number;
+  title: string;
+  request: string;
+  status: string;
+  pr_url: string | null;
+  summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface DevStepRow {
+  id: number;
+  run_id: number;
+  seq: number;
+  kind: string;
+  detail: string;
+  actor: string;
+  created_at: string;
+}
+export interface DevApprovalRow {
+  id: number;
+  run_id: number;
+  gate: string;
+  status: string;
+  requested_by: string;
+  decided_by: string | null;
+  note: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+/** Create a run in the 'captured' state and log its first step. Returns the new
+ *  run id. */
+export function createDevRun(title: string, request: string): number {
+  const info = db.query("INSERT INTO dev_runs (title, request) VALUES (?, ?)").run(title, request);
+  const id = Number(info.lastInsertRowid);
+  appendDevStep(id, "captured", "Request captured — awaiting the owner's go-ahead.", "system");
+  return id;
+}
+
+/** Append a chronological step to a run (auto-incrementing seq) and bump the
+ *  run's updated_at. */
+export function appendDevStep(runId: number, kind: string, detail: string, actor: string): void {
+  const { s } = db
+    .query("SELECT COALESCE(MAX(seq), 0) + 1 AS s FROM dev_steps WHERE run_id = ?")
+    .get(runId) as { s: number };
+  db.query("INSERT INTO dev_steps (run_id, seq, kind, detail, actor) VALUES (?, ?, ?, ?, ?)").run(
+    runId,
+    s,
+    kind,
+    detail,
+    actor,
+  );
+  db.query("UPDATE dev_runs SET updated_at = datetime('now') WHERE id = ?").run(runId);
+}
+
+export function getDevRun(id: number): DevRunRow | null {
+  return db.query("SELECT * FROM dev_runs WHERE id = ?").get(id) as DevRunRow | null;
+}
+
+export function setDevRunStatus(id: number, status: string): void {
+  db.query("UPDATE dev_runs SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id);
+}
+
+/** Runs newest-first, each with its step count + active (pending) merge-gate
+ *  state for the list UI. */
+export function listDevRuns(): Array<DevRunRow & { stepCount: number; pendingApproval: boolean }> {
+  const rows = db
+    .query("SELECT * FROM dev_runs ORDER BY created_at DESC, id DESC")
+    .all() as DevRunRow[];
+  return rows.map((r) => {
+    const { c } = db.query("SELECT COUNT(*) AS c FROM dev_steps WHERE run_id = ?").get(r.id) as { c: number };
+    const pending = db
+      .query("SELECT 1 FROM dev_approvals WHERE run_id = ? AND status = 'pending' LIMIT 1")
+      .get(r.id) as { 1: number } | null;
+    return { ...r, stepCount: c, pendingApproval: pending !== null };
+  });
+}
+
+export function getDevSteps(runId: number): DevStepRow[] {
+  return db
+    .query("SELECT * FROM dev_steps WHERE run_id = ? ORDER BY seq ASC")
+    .all(runId) as DevStepRow[];
+}
+
+export function getDevApprovals(runId: number): DevApprovalRow[] {
+  return db
+    .query("SELECT * FROM dev_approvals WHERE run_id = ? ORDER BY created_at ASC, id ASC")
+    .all(runId) as DevApprovalRow[];
+}
+
+/** The currently-pending approval for a run+gate (null if none / already
+ *  decided). */
+export function getPendingApproval(runId: number, gate: string): DevApprovalRow | null {
+  return db
+    .query("SELECT * FROM dev_approvals WHERE run_id = ? AND gate = ? AND status = 'pending' LIMIT 1")
+    .get(runId, gate) as DevApprovalRow | null;
+}
+
+/** Ensure a pending approval row exists for a run+gate (created on first use,
+ *  so the owner's decision is always recorded against a concrete record). */
+export function ensurePendingApproval(runId: number, gate: string, requestedBy: string): DevApprovalRow {
+  const existing = getPendingApproval(runId, gate);
+  if (existing) return existing;
+  const info = db
+    .query("INSERT INTO dev_approvals (run_id, gate, status, requested_by) VALUES (?, ?, 'pending', ?)")
+    .run(runId, gate, requestedBy);
+  return db
+    .query("SELECT * FROM dev_approvals WHERE id = ?")
+    .get(Number(info.lastInsertRowid)) as DevApprovalRow;
+}
+
+/** Decide a pending approval. Returns the updated row. */
+export function decideApproval(
+  runId: number,
+  gate: string,
+  status: "approved" | "rejected",
+  decidedBy: string,
+  note: string,
+): DevApprovalRow {
+  const approval = ensurePendingApproval(runId, gate, decidedBy);
+  db.query(
+    `UPDATE dev_approvals
+        SET status = ?, decided_by = ?, note = ?, decided_at = datetime('now')
+      WHERE id = ?`,
+  ).run(status, decidedBy, note || null, approval.id);
+  return db.query("SELECT * FROM dev_approvals WHERE id = ?").get(approval.id) as DevApprovalRow;
 }

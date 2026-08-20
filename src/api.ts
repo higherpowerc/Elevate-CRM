@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
+import type { AgreementEnvelope, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User, DevRun, DevApproval, DevRunDetail, DevRunStatus } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -324,6 +324,28 @@ export const api = {
   /* Owner direction 2026-08-18 — interim manual "mark payment received"
      (owner-only, like clientPaymentLink). Flips the Payment column yellow →
      green until a Stripe webhook auto-flips it in Phase 5. */
-  clientPaymentPaid: (id: number) =>
-    request<{ ok: true; paymentStatus: "paid" }>(`/api/clients/${id}/payment-paid`, { method: "POST" }),
+  /* Developer Command Center — Phase A (owner-only). Request capture + audit
+     + owner approval gate. Owner workspace only; tenants get 403. */
+  devRuns: () => request<{ runs: DevRun[] }>("/api/dev/runs"),
+  createDevRun: (title: string, request: string) =>
+    request<{ run: DevRun }>("/api/dev/runs", {
+      method: "POST",
+      body: JSON.stringify({ title, request }),
+    }),
+  devRunDetail: (id: number) => request<DevRunDetail>(`/api/dev/runs/${id}`),
+  devRunApprove: (id: number, note?: string) =>
+    request<{ run: DevRun; approval: DevApproval }>(`/api/dev/runs/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ gate: "merge", note: note ?? "" }),
+    }),
+  devRunReject: (id: number, note?: string) =>
+    request<{ run: DevRun; approval: DevApproval }>(`/api/dev/runs/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ gate: "merge", note: note ?? "" }),
+    }),
+  devRunStatus: (id: number, status: DevRunStatus, detail?: string) =>
+    request<{ run: DevRun }>(`/api/dev/runs/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status, detail: detail ?? "" }),
+    }),
 };
