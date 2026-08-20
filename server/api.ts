@@ -538,6 +538,8 @@ function toClient(row: ClientRow, ownerOrg = false) {
           // maybe) + scheduled demo datetime + orphaned-stage flag. OWNER-only.
           demoOutcome: typeof row.demo_outcome === "string" ? row.demo_outcome : "",
           demoScheduledAt: typeof row.demo_scheduled_at === "string" ? row.demo_scheduled_at : "",
+          demoMeetingLink: typeof row.demo_meeting_link === "string" ? row.demo_meeting_link : "",
+          followUpNote: typeof row.follow_up_note === "string" ? row.follow_up_note : "",
           orphanedStage: isStageOrphaned(row.org_id, row.stage),
         }
       : {}),
@@ -3507,12 +3509,15 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
   }
   /* Owner 2026-08-20 sales rework — "Schedule demo call" on a lead. OWNER-ONLY
      (requireAdmin, like the agreement/payment routes). Body:
-     { scheduledAt: "YYYY-MM-DDTHH:MM", duration?: number }. Creates an
-     appointments row (status 'scheduled') linked to the client, mirrors the
-     time onto the client's demo_scheduled_at, and emails the lead a
-     confirmation (sendDemoCallEmail — fire-and-forget: sendEmail never throws,
-     so a delivery failure is surfaced as emailStatus:'failed' in the response,
-     never a 5xx). The appointment then appears on the owner's calendar. */
+     { scheduledAt: "YYYY-MM-DDTHH:MM", meetingLink?: string, duration?:
+     number }. Creates an appointments row (status 'scheduled') linked to the
+     client, mirrors the time onto the client's demo_scheduled_at, stores the
+     optional pasted meeting link (Zoom/Google Meet — the "link version"; we do
+     NOT integrate Zoom/Google APIs), and emails the lead a confirmation that
+     includes the link + date/time + a calendar line plainly (sendDemoCallEmail
+     — fire-and-forget: sendEmail never throws, so a delivery failure is
+     surfaced as emailStatus:'failed' in the response, never a 5xx). The
+     appointment then appears on the owner's calendar. */
   const demoCallMatch = pathname.match(/^\/api\/clients\/(\d+)\/demo-call$/);
   if (demoCallMatch && method === "POST") {
     const admin = requireAdmin(req);
@@ -3526,6 +3531,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduledAt)) {
       return err("scheduledAt must be a YYYY-MM-DDTHH:MM local datetime.", 400);
     }
+    const meetingLink = typeof body.meetingLink === "string" ? body.meetingLink.trim() : "";
     const duration =
       Number.isFinite(Number(body.duration)) && Number(body.duration) > 0 ? Math.round(Number(body.duration)) : 30;
     const title = `Demo call — ${client.company_name}`;
@@ -3534,15 +3540,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes)
          VALUES (?, ?, ?, ?, ?, 'scheduled', ?)`,
       )
-      .run(orgId, client.id, title, scheduledAt, duration, "");
+      .run(orgId, client.id, title, scheduledAt, duration, meetingLink ? `Meeting link: ${meetingLink}` : "");
     db.query(
-      "UPDATE clients SET demo_scheduled_at = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
-    ).run(scheduledAt, id, orgId);
+      "UPDATE clients SET demo_scheduled_at = ?, demo_meeting_link = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+    ).run(scheduledAt, meetingLink, id, orgId);
     const row = db.query("SELECT * FROM appointments WHERE id = ?").get(info.lastInsertRowid) as AppointmentRow;
     const email = await sendDemoCallEmail({
       to: client.email.trim() || "",
       clientName: client.company_name || client.contact_name || "there",
       scheduledAt,
+      meetingLink,
     });
     const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
     return json(
@@ -3704,6 +3711,13 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         }
         sets.push("demo_outcome = ?");
         params.push(o);
+      }
+      // Owner 2026-08-20 sales rework — the maybe-outcome follow-up note:
+      // persisted ONLY for the owner org and only when present in the body.
+      // Partial updates never clobber an absent value.
+      if (isOwnerSession(auth) && body.followUpNote !== undefined && body.followUpNote !== null) {
+        sets.push("follow_up_note = ?");
+        params.push(String(body.followUpNote));
       }
       sets.push("updated_at = datetime('now')");
       params.push(id, orgId);

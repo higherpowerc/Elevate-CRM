@@ -178,6 +178,13 @@ export interface Client {
   /** The "YYYY-MM-DDTHH:MM" a demo call was scheduled for ('' = none); mirrors
    *  the appointments table. OWNER-workspace-only. */
   demoScheduledAt?: string;
+  /** The Zoom/Google Meet URL the owner pasted when scheduling a demo ('' =
+   *  none) — included plainly in the invite email. OWNER-workspace-only. */
+  demoMeetingLink?: string;
+  /** The owner's follow-up note captured with a 'maybe' demo outcome ('' =
+   *  none) — surfaced in the edit modal on the owner Leads tab.
+   *  OWNER-workspace-only. */
+  followUpNote?: string;
   /** Owner 2026-08-20 — true when this record's `stage` is NOT in its org's
    *  current stage list, so the UI can surface it in an "out of pipeline"
    *  bucket rather than silently dropping it from every tab. OWNER-workspace-

@@ -4075,10 +4075,16 @@ if [ -n "$NEWEST_JS37" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 5-col colgroup missing from src/Accounts.tsx"
   fi
-  if ! grep -Fq 'width:"33%"' "$NEWEST_JS37" && ! grep -Fq 'width:"23%"' "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: old equal-split Admin colgroup widths are gone"
+  # PR #78 (Sales-Flow UI) re-shaped the OWNER's client tables: the owner Leads
+  # tab is now 4 columns (30/27/20/23) and Onboarding is 6 columns — so "23%" is
+  # a legit width in the new owner Leads colgroup. Scope the OLD equal-split
+  # Admin-width check to the ACCOUNTS table (src/Accounts.tsx, where the old
+  # Admin cols lived) instead of the global bundle, so the stale-admin-layout
+  # guard still fires without false-positiving on the new client tables.
+  if ! grep -Fq 'width: "33%"' src/Accounts.tsx && ! grep -Fq 'width: "23%"' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: old equal-split Admin colgroup widths are gone from the Accounts table (5-col)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: old Admin colgroup widths still present in $NEWEST_JS37"
+    FAIL=$((FAIL+1)); echo "  ✗ source: old equal-split Admin colgroup widths still present in src/Accounts.tsx"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist js not found for 37 admin-layout check"
@@ -6642,6 +6648,123 @@ check "50d: owner manually creates the client account -> 201" 201 "$S"
 S=$(code -b "$JA50" "$B50/api/admin/orgs")
 check "50d: owner account list -> 200" 200 "$S"
 grep -q "$NEW_NAME50" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50d: new client account appears in the owner account list"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50d: account missing from list: $(cat /tmp/body.json)"; }
+echo "-- 50e. Sales-Flow UI (PR #78): meeting-link invite, follow-up note, sold->onboarding relocation, 4-col Leads / 6-col Onboarding + Actions dropdown =="
+# (PR #78) The Sales-Flow UI moved the demo outcome INTO the edit modal, added a
+# meeting link to Schedule Demo, and reshaped the owner Leads tab to 4 columns
+# (Name | Contact | Schedule Demo | Actions) with Edit/DNC/Lost moved into an
+# Actions dropdown; the Onboarding tab is 6 columns. Fresh leads for 50e so 50d's
+# DL_ID (now stage Sold) is not disturbed.
+# The owner's bucket split is positional: the Leads tab = stages[0], Onboarding =
+# stages[1..last-1]. Resolve the first + first-middle names from settings (the
+# pipeline is rename-safe, so never hardcode the stage names).
+code -b "$JA50" "$B50/api/settings" > /dev/null
+FIRST50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
+MID50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][1])")
+echo "     (owner buckets: Leads=\"$FIRST50\", onboarding first-middle=\"$MID50\")"
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Meeting Link Co\",\"contactName\":\"Miles M\",\"email\":\"miles@meet.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$FIRST50\"}" "$B50/api/clients")
+check "50e: owner creates a fresh lead in the first stage -> 201" 201 "$S"
+ML_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+# (a) Schedule a demo WITH a meeting link -> invitation email contains the link,
+#     an appointment is created, and demo_scheduled_at is mirrored onto the lead.
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d '{"scheduledAt":"2026-08-26T16:00","duration":30,"meetingLink":"https://zoom.us/j/123456789"}' "$B50/api/clients/$ML_ID/demo-call")
+check "50e: owner schedules demo with a meeting link -> 201" 201 "$S"
+grep -q '"ok":true' /tmp/body.json && grep -q '"status":"scheduled"' /tmp/body.json && grep -q '"emailStatus":"sent"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: demo-call response ok + appointment scheduled + email sent"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: demo-call response: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" "$B50/api/clients/$ML_ID")
+check "50e: owner GET lead -> 200" 200 "$S"
+grep -q '"demoScheduledAt":"2026-08-26T16:00"' /tmp/body.json && grep -q '"demoMeetingLink":"https://zoom.us/j/123456789"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: meeting link + demo time mirrored onto the lead (demo_scheduled_at)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: lead payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" "$B50/api/appointments")
+check "50e: owner calendar lists the appointment -> 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+apps = d.get('appointments', [])
+m = [a for a in apps if a.get('scheduledAt') == '2026-08-26T16:00' and a.get('status') == 'scheduled' and a.get('duration') == 30 and a.get('clientName') == 'Meeting Link Co' and 'https://zoom.us/j/123456789' in (a.get('notes') or '')]
+assert m, apps
+print("  ✓ 50e: calendar appointment created for the meeting-link demo (clientName + time + notes carry the link)")
+PY
+if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50e: meeting-link appointment missing from calendar"; fi
+sleep 1
+python3 - "$MOCK50/emails.jsonl" <<'PY'
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+demos = [l for l in lines if l.get("subject") == "Your Revzenta demo call is scheduled" and "https://zoom.us/j/123456789" in l.get("text", "")]
+assert demos, lines
+print("  ✓ 50e: invitation email contains the meeting link (Join the meeting here)")
+PY
+if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50e: invite email missing the meeting link"; fi
+# (b) Demo outcome 'maybe' persists the follow-up note and the lead STAYS on Leads.
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Meeting Link Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"maybe\",\"followUpNote\":\"Call back next week about pricing\"}" "$B50/api/clients/$ML_ID")
+check "50e: owner sets demoOutcome=maybe + follow-up note -> 200" 200 "$S"
+grep -q '"demoOutcome":"maybe"' /tmp/body.json && grep -q '"followUpNote":"Call back next week about pricing"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: maybe outcome + follow-up note persisted on the lead"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" "$B50/api/clients/$ML_ID")
+check "50e: owner GET maybe lead -> 200" 200 "$S"
+grep -q "\"stage\":\"$FIRST50\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: maybe lead stays in the first-stage Leads bucket (did not relocate)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: maybe lead stage: $(cat /tmp/body.json)"; }
+code -b "$JA50" "$B50/api/clients?archived=1" > /dev/null
+if ML_ID="$ML_ID" FIRST50="$FIRST50" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['ML_ID'])][0]
+first = os.environ['FIRST50']
+assert me['stage'] == first, me['stage']
+leads_bucket = [c for c in clients if c['stage'] == first]
+assert me in leads_bucket, "maybe lead not in the first-stage Leads bucket"
+print("  ✓ 50e: maybe lead still appears in the owner Leads bucket (first stage)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50e: maybe lead left the Leads bucket"; cat "$PASS_TMP"; fi
+# (c) Demo outcome 'sold' relocates the lead out of Leads INTO Onboarding. The
+#     edit modal's save performs exactly one updateClient with the full record
+#     (demoOutcome=sold) + stage=onboardingStage (orgStages[1]) — mirror that
+#     same call here.
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Meeting Link Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$MID50\"}" "$B50/api/clients/$ML_ID")
+check "50e: owner marks lead sold and relocates it into Onboarding -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$MID50\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: sold outcome + Onboarding stage persisted"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: payload: $(cat /tmp/body.json)"; }
+code -b "$JA50" "$B50/api/clients?archived=1" > /dev/null
+if ML_ID="$ML_ID" FIRST50="$FIRST50" MID50="$MID50" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['ML_ID'])][0]
+first, mid = os.environ['FIRST50'], os.environ['MID50']
+assert me['stage'] == mid, me['stage']
+leads_bucket = [c for c in clients if c['stage'] == first]
+assert me not in leads_bucket, "sold lead still in the Leads bucket"
+onboard_bucket = [c for c in clients if c['stage'] == mid]
+assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
+print("  ✓ 50e: sold lead left the Leads bucket and now sits in the Onboarding bucket")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 50e: sold-lead relocation (Leads -> Onboarding) verified"; else FAIL=$((FAIL+1)); echo "  ✗ 50e: sold relocation failed"; cat "$PASS_TMP"; fi
+# (d) Source markers — the owner Leads tab is the 4-col layout (Name | Contact |
+#     Schedule Demo | Actions) with Edit/DNC/Lost inside the Actions dropdown
+#     (no inline Demo dropdown / no inline Lost/DNC buttons); Onboarding is the
+#     6-col layout; the demo outcome + follow-up note live in the edit modal.
+if grep -Fq '<th>Business name or Individual name</th>' src/Clients.tsx && grep -Fq '<th>Contact information</th>' src/Clients.tsx && grep -Fq '<th>Schedule Demo</th>' src/Clients.tsx && grep -Fq '<th className="actions-th">Actions</th>' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Leads tab is 4 cols (Name | Contact | Schedule Demo | Actions)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 4-col owner Leads headers missing from src/Clients.tsx"
+fi
+if grep -Fq 'function OwnerActionsMenu' src/Clients.tsx && grep -Fq '>Edit<' src/Clients.tsx && grep -Fq '{client.dnc ? "Clear DNC" : "DNC"}' src/Clients.tsx && grep -Fq '>Lost<' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Actions dropdown ships Edit / DNC / Lost (OwnerActionsMenu; no inline buttons)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: OwnerActionsMenu (Edit/DNC/Lost) missing from src/Clients.tsx"
+fi
+if grep -Fq 'ownerOnboardingTab && ownerOrg ? (' src/Clients.tsx && grep -Fq '<th>Next action (send agreements)</th>' src/Clients.tsx && grep -Fq '<th>Agreement stages</th>' src/Clients.tsx && grep -Fq '<th>Send payment link</th>' src/Clients.tsx && grep -Fq '<th className="actions-th">Edit</th>' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Onboarding tab is 6 cols (Name | Contact | Next action | Agreement stages | Send payment link | Edit)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: 6-col owner Onboarding headers missing from src/Clients.tsx"
+fi
+if grep -Fq 'ownerLeadsTab && (' src/Clients.tsx && grep -Fq 'aria-label="Demo outcome"' src/ClientModal.tsx && grep -Fq '<option value="sold">Sold</option>' src/ClientModal.tsx && grep -Fq '<option value="not_sold">Not sold</option>' src/ClientModal.tsx && grep -Fq '<option value="maybe">Maybe</option>' src/ClientModal.tsx && grep -Fq 'Follow-up note' src/ClientModal.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: demo outcome (Sold/Not sold/Maybe + follow-up note) lives in the owner-Leads edit modal"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: demo-outcome edit-modal markers missing (src/Clients.tsx / src/ClientModal.tsx)"
+fi
+if grep -Fq 'Meeting link (Zoom / Google Meet)' src/Clients.tsx && grep -Fq 'aria-label="Meeting link"' src/Clients.tsx && grep -Fq 'body: JSON.stringify({ scheduledAt, meetingLink, duration })' src/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: Schedule Demo modal captures the meeting link and sends it via the API"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Schedule Demo meeting-link markers missing"
+fi
 # -------------------------------- cleanup ------------------------------------
 stop_crm "$MOCK50/srv.pid" 2>/dev/null
 kill "$MOCK50_PID" 2>/dev/null

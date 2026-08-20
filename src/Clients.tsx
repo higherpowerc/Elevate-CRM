@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 /* ApiError must be imported as a VALUE (not `type ApiError`) — it is used in
    `instanceof ApiError` below (the payment-link 503 branch). A type-only
    import is stripped by the bun build transpiler (no type-checker runs at
@@ -159,6 +159,64 @@ function AgreementTracker({ status }: { status: AgreementStatus }) {
   );
 }
 
+/** Owner 2026-08-20 sales rework — the owner Leads tab's ACTIONS dropdown
+ *  menu. Trigger "Actions ▾" opens a menu listing EXACTLY Edit / DNC / Lost
+ *  (Delete + Archive are intentionally NOT here on the owner Leads tab — they
+ *  remain available via the edit modal and other tabs). Accessible: the
+ *  trigger is aria-haspopup/aria-expanded, each item role=menuitem with a
+ *  keyboard tab-stop, Esc closes the menu, and the menu closes on outside
+ *  click. */
+function OwnerActionsMenu({ client, busy, onEdit, onFlag }: {
+  client: Client;
+  busy: boolean;
+  onEdit: () => void;
+  onFlag: (c: Client, flag: "lost" | "dnc") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const close = (run: () => void) => { setOpen(false); run(); };
+  return (
+    <div className="owner-actions-menu" ref={ref}>
+      <button
+        type="button"
+        className="owner-actions-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Actions for ${client.companyName || client.contactName || "lead"}`}
+        onClick={() => setOpen((o) => !o)}
+        disabled={busy}
+      >
+        Actions <span className="caret" aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="owner-actions-dropdown" role="menu" aria-label="Lead actions">
+          <button type="button" role="menuitem" onClick={() => close(onEdit)}>Edit</button>
+          <button type="button" role="menuitem" onClick={() => close(() => onFlag(client, "dnc"))}>
+            {client.dnc ? "Clear DNC" : "DNC"}
+          </button>
+          <button type="button" role="menuitem" onClick={() => close(() => onFlag(client, "lost"))}>
+            Lost
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, canEdit = true }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
@@ -356,6 +414,19 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     try {
       if (editing) await api.updateClient(editing.id, input);
       else await api.createClient(input);
+      // Owner 2026-08-20 sales rework — demo outcome side-effects (owner Leads
+      // tab, recorded via the edit modal). 'sold' relocates the lead into the
+      // ONBOARDING bucket (the same positional path "Start Onboarding" used);
+      // 'not_sold' keeps the lead on Leads but flags it lost (not-interested);
+      // 'maybe' keeps the lead on Leads untouched (its follow-up note is saved
+      // with the record above).
+      if (editing && ownerLeadsTab) {
+        if (input.demoOutcome === "sold" && onboardingStage && editing.stage !== onboardingStage) {
+          await api.updateClient(editing.id, { ...editing, stage: onboardingStage });
+        } else if (input.demoOutcome === "not_sold" && !editing.lost) {
+          await api.updateClient(editing.id, { ...editing, lost: true, lostReason: "Not sold after demo" });
+        }
+      }
       setModal(null);
       await load();
     } catch (e) {
@@ -590,20 +661,30 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       setBusy(false);
     }
   }
-  /** Owner 2026-08-20 sales rework — "Schedule demo call" on a lead. Owner
-   *  Leads tab only. Prompts for a local YYYY-MM-DDTHH:MM datetime, then calls
-   *  the owner-only demo-call endpoint: creates an appointments row (appears
-   *  on the owner's Calendar), mirrors the time onto the lead's
-   *  demo_scheduled_at, and emails the lead a confirmation. If the email
-   *  failed, surface it as a warn notice (never a failure). */
+  /** Owner 2026-08-20 sales rework — SCHEDULE DEMO → MEETING-LINK WORKFLOW
+   *  (the "link version": we do NOT integrate Zoom/Google APIs — the owner
+   *  pastes a Zoom/Google Meet URL and it is sent plainly in the invite
+   *  email). The owner-leads "Schedule Demo" button opens a small modal that
+   *  prompts for (a) the demo date & time (YYYY-MM-DDTHH:MM) and (b) a meeting
+   *  link. On submit it calls the owner-only demo-call endpoint: creates an
+   *  appointments row (appears on the owner's Calendar), mirrors the time onto
+   *  the lead's demo_scheduled_at, stores the meeting link, and emails the
+   *  lead an invite containing the link + date/time + a calendar line (the
+   *  meeting URL appears plainly in the email text). If the email failed it is
+   *  surfaced as a warn notice (never a failure). */
   const [demoNotice, setDemoNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
-  async function handleScheduleDemo(c: Client) {
-    const entered = window.prompt(
-      "Schedule the demo call for this lead — enter a date and time (YYYY-MM-DDTHH:MM, local), e.g. 2026-08-25T14:00.",
-      c.demoScheduledAt || "",
-    );
-    if (entered === null) return; // canceled
-    const dt = (entered || "").trim();
+  const [demoTarget, setDemoTarget] = useState<Client | null>(null);
+  const [demoDt, setDemoDt] = useState("");
+  const [demoLink, setDemoLink] = useState("");
+  function openDemoModal(c: Client) {
+    setDemoDt(c.demoScheduledAt || "");
+    setDemoLink(c.demoMeetingLink || "");
+    setDemoTarget(c);
+  }
+  async function handleScheduleDemoSubmit() {
+    if (!demoTarget) return;
+    const c = demoTarget;
+    const dt = (demoDt || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dt)) {
       setError("Enter the demo time as YYYY-MM-DDTHH:MM, e.g. 2026-08-25T14:00.");
       return;
@@ -612,21 +693,23 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     setError(null);
     setDemoNotice(null);
     try {
-      const r = await api.scheduleDemoCall(c.id, dt);
+      const link = (demoLink || "").trim();
+      const r = await api.scheduleDemoCall(c.id, dt, link);
       setDemoNotice(
         r.emailStatus === "sent"
           ? {
               kind: "success",
-              text: `Demo call scheduled for ${dt} — confirmation emailed to ${c.email || "the lead"} and added to your Calendar.`,
+              text: `Demo scheduled for ${dt}${link ? " · meeting link sent in the invite" : ""} — confirmation emailed to ${c.email || "the lead"} and added to your Calendar.`,
             }
           : {
               kind: "warn",
-              text: `Demo call scheduled for ${dt} and added to your Calendar, but the confirmation email could not be sent: ${r.emailError ?? "unknown error"}`,
+              text: `Demo scheduled for ${dt} and added to your Calendar${link ? " with your meeting link" : ""}, but the confirmation email could not be sent: ${r.emailError ?? "unknown error"}`,
             },
       );
+      setDemoTarget(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not schedule the demo call.");
+      setError(e instanceof Error ? e.message : "Could not schedule the demo.");
     } finally {
       setBusy(false);
     }
@@ -956,6 +1039,294 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
             </tbody>
           </table>
         </div>
+      ) : ownerLeadsTab && ownerOrg ? (
+        /* OWNER LEADS TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 4
+           columns: 1) Business name or Individual name (the same primaryName
+           cell: type badge, pii blur, industry, address, custom-field chips),
+           2) Contact information (contactPrimary + email + phone), 3) Schedule
+           Demo — a prominent quick-action button that opens the meeting-link
+           modal (date/time + pasted Zoom/Google Meet URL → invite email), 4)
+           Actions — a dropdown menu (EXACTLY: Edit / DNC / Lost; Delete and
+           Archive are removed here, they remain via the edit modal / other
+           tabs). The old Services / Deal / Next action / Payment columns are
+           removed from the owner Leads tab. */
+        <div className="card table-wrap">
+          <table className="table clients-table owner-leads sales-leads">
+            <colgroup>
+              <col style={{ width: "30%" }} />
+              <col style={{ width: "27%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "23%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Business name or Individual name</th>
+                <th>Contact information</th>
+                <th>Schedule Demo</th>
+                <th className="actions-th">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => {
+                const fullAddress = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
+                return (
+                  <tr key={c.id} className={c.archived ? "row-archived" : ""}>
+                    <td className="cell-strong" data-label="Business name or Individual name">
+                      <div className="cell-company">
+                        <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
+                          {primaryName(ownerOrg, c)}
+                        </span>
+                        <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
+                          {c.clientType === "commercial" ? "Commercial" : "Individual"}
+                        </span>
+                        {c.lost && <span className="chip chip-lost">Lost</span>}
+                        {c.dnc && <span className="chip chip-dnc">DNC</span>}
+                        {c.archived && <span className="chip chip-archived">archived</span>}
+                      </div>
+                      {c.industry && <div className="cell-sub">{c.industry}</div>}
+                      {fullAddress && (
+                        <div className={`cell-sub addr-line${blurPii(pii)}`} title={fullAddress}>
+                          {fullAddress}
+                        </div>
+                      )}
+                      {(() => {
+                        const defByName = new Map(customFieldDefs.map((d) => [d.name.toLowerCase(), d]));
+                        const chips = c.customFields
+                          .map((cf) => ({ def: defByName.get(cf.name.toLowerCase()), cf }))
+                          .filter((x): x is { def: CustomFieldDef; cf: { name: string; value: string } } =>
+                            !!x.def && (x.def.type === "checkbox" ? true : x.cf.value.trim() !== ""),
+                          )
+                          .slice(0, 2);
+                        if (chips.length === 0) return null;
+                        return (
+                          <div className="cf-line" aria-label="Custom fields">
+                            {chips.map(({ def, cf }) => (
+                              <span className="cf-chip" key={cf.name}>
+                                {def.name}: {cfChipLabel(def, cf.value)}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td data-label="Contact information">
+                      <div className="cell-contact">
+                        <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
+                        {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
+                        {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
+                      </div>
+                    </td>
+                    <td data-label="Schedule Demo">
+                      <button
+                        type="button"
+                        className="schedule-demo-btn"
+                        title={
+                          c.demoScheduledAt
+                            ? `Demo scheduled for ${c.demoScheduledAt} — re-schedule or view it on the Calendar`
+                            : "Schedule a demo — pick a time + a meeting link; the lead is emailed an invite"
+                        }
+                        aria-label={`Schedule demo for ${primaryName(ownerOrg, c)}`}
+                        onClick={() => openDemoModal(c)}
+                        disabled={busy}
+                      >
+                        {c.demoScheduledAt ? "Re-schedule Demo" : "Schedule Demo"}
+                      </button>
+                    </td>
+                    <td data-label="Actions">
+                      <OwnerActionsMenu
+                        client={c}
+                        busy={busy}
+                        onEdit={() => setModal({ mode: "edit", client: c })}
+                        onFlag={handleFlag}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : ownerOnboardingTab && ownerOrg ? (
+        /* OWNER ONBOARDING TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 6
+           columns: 1) Business name / Individual name, 2) Contact information,
+           3) Next action (Send/Re-send Agreements — handleSendAgreement, with
+           the audit/sign-tracking intact), 4) Agreement stages (the lifecycle
+           tracker NOT sent → Sent → Delivered → Signed), 5) Send payment link
+           (owner-entered amount; signed-agreement gate + 503 no-key handling
+           kept; the manual "Mark paid" interim flip stays), 6) Edit (opens the
+           edit modal for last-minute changes). Backend behavior unchanged; the
+           previous Deal / Stage select / Services overflow is gone. */
+        <div className="card table-wrap">
+          <table className="table clients-table owner-leads sales-onboarding">
+            <colgroup>
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "8%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Business name / Individual name</th>
+                <th>Contact information</th>
+                <th>Next action (send agreements)</th>
+                <th>Agreement stages</th>
+                <th>Send payment link</th>
+                <th className="actions-th">Edit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => {
+                const fullAddress = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
+                return (
+                  <tr key={c.id} className={c.archived ? "row-archived" : ""}>
+                    <td className="cell-strong" data-label="Business name / Individual name">
+                      <div className="cell-company">
+                        <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
+                          {primaryName(ownerOrg, c)}
+                        </span>
+                        <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
+                          {c.clientType === "commercial" ? "Commercial" : "Individual"}
+                        </span>
+                        {c.lost && <span className="chip chip-lost">Lost</span>}
+                        {c.dnc && <span className="chip chip-dnc">DNC</span>}
+                        {c.archived && <span className="chip chip-archived">archived</span>}
+                      </div>
+                      {c.industry && <div className="cell-sub">{c.industry}</div>}
+                      {fullAddress && (
+                        <div className={`cell-sub addr-line${blurPii(pii)}`} title={fullAddress}>
+                          {fullAddress}
+                        </div>
+                      )}
+                      {(() => {
+                        const defByName = new Map(customFieldDefs.map((d) => [d.name.toLowerCase(), d]));
+                        const chips = c.customFields
+                          .map((cf) => ({ def: defByName.get(cf.name.toLowerCase()), cf }))
+                          .filter((x): x is { def: CustomFieldDef; cf: { name: string; value: string } } =>
+                            !!x.def && (x.def.type === "checkbox" ? true : x.cf.value.trim() !== ""),
+                          )
+                          .slice(0, 2);
+                        if (chips.length === 0) return null;
+                        return (
+                          <div className="cf-line" aria-label="Custom fields">
+                            {chips.map(({ def, cf }) => (
+                              <span className="cf-chip" key={cf.name}>
+                                {def.name}: {cfChipLabel(def, cf.value)}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td data-label="Contact information">
+                      <div className="cell-contact">
+                        <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
+                        {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
+                        {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
+                      </div>
+                    </td>
+                    <td data-label="Next action (send agreements)">
+                      {c.agreementStatus !== "signed" ? (
+                        <button
+                          type="button"
+                          className="send-agreements-btn"
+                          title={`Send ${c.companyName} the agreement — the client gets a unique email link to review and sign`}
+                          aria-label={`Send agreement to ${c.companyName}`}
+                          onClick={() => handleSendAgreement(c)}
+                          disabled={busy}
+                        >
+                          {(c.agreementStatus ?? "not_sent") !== "not_sent" ? "Re-send" : "Send Agreements"}
+                        </button>
+                      ) : (
+                        <span className={`badge ${AGREEMENT_META.signed.tone}`}>Signed</span>
+                      )}
+                    </td>
+                    <td data-label="Agreement stages">
+                      <div className="agree-cell">
+                        <AgreementTracker status={c.agreementStatus ?? "not_sent"} />
+                        <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
+                          {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
+                        </span>
+                      </div>
+                    </td>
+                    <td data-label="Send payment link">
+                      <div className="pay-col">
+                        <button
+                          type="button"
+                          className="payment-link-btn"
+                          title={
+                            c.agreementStatus === "signed"
+                              ? "Send a payment link for the subscription"
+                              : "Agreement must be signed before sending a payment link"
+                          }
+                          aria-label={`Send payment link to ${c.companyName}`}
+                          onClick={() => handlePaymentLink(c)}
+                          disabled={busy || c.agreementStatus !== "signed"}
+                        >
+                          Send payment link
+                        </button>
+                        {c.paymentStatus && c.paymentStatus !== "none" && (
+                          <div className="pay-cell">
+                            <span
+                              className={`badge ${PAYMENT_META[c.paymentStatus].tone}`}
+                              title={
+                                c.paymentStatus === "sent"
+                                  ? `Payment link: ${c.paymentLinkUrl || "sent to client"}`
+                                  : c.paymentStatus === "paid" && c.paidAt
+                                    ? `Paid ${new Date(c.paidAt).toLocaleString()}`
+                                    : PAYMENT_META[c.paymentStatus].label
+                              }
+                            >
+                              {PAYMENT_META[c.paymentStatus].label}
+                            </span>
+                            {canEdit && c.paymentStatus === "sent" && (
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                title="Mark the client's payment as received"
+                                aria-label={`Mark payment received for ${c.companyName}`}
+                                onClick={() => handleMarkPaid(c)}
+                                disabled={busy}
+                              >
+                                Mark paid
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td data-label="Edit">
+                      <div className="row-actions edit-col">
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Edit — last-minute changes"
+                          aria-label={`Edit ${c.companyName}`}
+                          onClick={() => setModal({ mode: "edit", client: c })}
+                        >
+                          Edit
+                        </button>
+                        {(c.agreementStatus ?? "not_sent") !== "not_sent" && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="View agreement details — status, signer, timestamp, IP, PDF"
+                            aria-label={`Agreement details for ${c.companyName}`}
+                            onClick={() => openAudit(c)}
+                            disabled={busy}
+                          >
+                            Audit
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="card table-wrap">
           <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
@@ -1276,72 +1647,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             Payment link
                           </button>
                         )}
-                        {/* Owner cockpit A — owner Leads tab only: quick Lost /
-                            DNC flags (same update path as the stage picker);
-                            the pipeline-row Archive action is removed per the
-                            owner (archiving lives on the Clients directory and
-                            the Onboarding tab). Client accounts keep their
-                            Archive row action exactly as before. */}
-                        {/* Owner 2026-08-20 sales rework — the demo-outcome
-                            dropdown + "Schedule demo call" (owner Leads tab
-                            only). The flow: Leads → Schedule demo call
-                            (calendar + confirmation email) → demo outcome
-                            Sold/Not sold/Maybe → if Sold: Agreements + Payment
-                            link → then the owner manually creates the client
-                            account. 'sold' is recorded, never auto-creating an
-                            account. */}
-                        {ownerLeadsTab && (
-                          <>
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              title={
-                                c.demoScheduledAt
-                                  ? `Demo call scheduled for ${c.demoScheduledAt} — re-schedule or view it on the Calendar`
-                                  : "Schedule a demo call — appears on your Calendar and emails the lead"
-                              }
-                              aria-label={`Schedule demo call for ${c.companyName}`}
-                              onClick={() => handleScheduleDemo(c)}
-                              disabled={busy}
-                            >
-                              Schedule demo
-                            </button>
-                            <select
-                              className="demo-outcome-select"
-                              value={c.demoOutcome ?? ""}
-                              aria-label={`Demo outcome for ${c.companyName}`}
-                              onChange={(e) => handleDemoOutcome(c, e.target.value as "" | "sold" | "not_sold" | "maybe")}
-                              disabled={busy}
-                            >
-                              <option value="">Demo —</option>
-                              <option value="sold">Sold</option>
-                              <option value="not_sold">Not sold</option>
-                              <option value="maybe">Maybe</option>
-                            </select>
-                          </>
-                        )}
-                        {ownerLeadsTab && (
-                          <button
-                            className="icon-btn"
-                            title="Mark as lost — moves the lead to the Lost section"
-                            aria-label={`Mark ${c.companyName} as lost`}
-                            onClick={() => handleFlag(c, "lost")}
-                            disabled={busy}
-                          >
-                            Lost
-                          </button>
-                        )}
-                        {ownerLeadsTab && (
-                          <button
-                            className="icon-btn"
-                            title={c.dnc ? "Clear the do-not-call flag" : "Mark do-not-call"}
-                            aria-label={c.dnc ? `Clear DNC for ${c.companyName}` : `Mark ${c.companyName} as DNC`}
-                            onClick={() => handleFlag(c, "dnc")}
-                            disabled={busy}
-                          >
-                            DNC
-                          </button>
-                        )}
                         {canEdit && (
                           <button
                             className="icon-btn danger"
@@ -1368,6 +1673,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           stages={orgStages}
           customFieldDefs={customFieldDefs}
           intake={intake}
+          ownerLeadsTab={ownerLeadsTab}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}
@@ -1430,6 +1736,57 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           role={demoNotice.kind === "success" ? "status" : "alert"}
         >
           {demoNotice.text}
+        </div>
+      )}
+      {demoTarget && (
+        <div className="modal-overlay" onClick={() => { if (!busy) setDemoTarget(null); }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Schedule demo">
+            <div className="modal-head">
+              <h3>
+                Schedule <em className="serif">demo</em>
+              </h3>
+              <button className="icon-btn" onClick={() => setDemoTarget(null)} aria-label="Close" disabled={busy}>
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="cell-muted">
+                Schedule the demo for <strong>{primaryName(ownerOrg, demoTarget)}</strong>. Paste a
+                Zoom or Google Meet link below — it will be emailed to the lead in the invite along
+                with the date/time.
+              </p>
+              <div className="modal-form">
+                <div className="field">
+                  <span className="field-label">Demo date &amp; time (YYYY-MM-DDTHH:MM, local)</span>
+                  <input
+                    type="text"
+                    value={demoDt}
+                    onChange={(e) => setDemoDt(e.target.value)}
+                    placeholder="e.g. 2026-08-25T14:00"
+                    aria-label="Demo date and time"
+                  />
+                </div>
+                <div className="field">
+                  <span className="field-label">Meeting link (Zoom / Google Meet)</span>
+                  <input
+                    type="url"
+                    value={demoLink}
+                    onChange={(e) => setDemoLink(e.target.value)}
+                    placeholder="https://zoom.us/j/... or https://meet.google.com/..."
+                    aria-label="Meeting link"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={() => setDemoTarget(null)} disabled={busy}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={handleScheduleDemoSubmit} disabled={busy}>
+                {busy ? "Scheduling…" : "Schedule Demo"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {(audit || auditError) && (
