@@ -6765,6 +6765,28 @@ if grep -Fq 'function MiniCalendar' src/Clients.tsx && grep -Fq 'aria-label="Dem
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Schedule Demo calendar-picker / time-select / meeting-link markers missing"
 fi
+# (e) Owner Leads UI fixes (2026-08-20): the "Manage stages" button is NOT on the
+# owner Leads tab (scope "first") — it stays gated for Onboarding/Settings so stage
+# management remains reachable; the Actions dropdown is its own bounded scroll box
+# that opens UPWARD (bottom-anchored) with internal overflow so it never pushes the
+# table/page to scroll.
+if grep -Fq '{canEdit && !ownerLeadsTab && (' src/Clients.tsx && grep -Fq 'Manage stages' src/Clients.tsx && grep -Fq 'onClick={() => setStageModal(true)}' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Manage-stages button is owner-Leads-gated (hidden on Leads, kept elsewhere e.g. Onboarding/Settings)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Manage-stages gating missing from src/Clients.tsx"
+fi
+if python3 - <<'PY'
+css = open('src/styles.css').read()
+i = css.index('.owner-actions-dropdown {')
+j = css.index('}', i)
+blk = css[i:j]
+assert 'bottom: calc(100% + 4px)' in blk, blk
+assert 'max-height' in blk, blk
+assert 'overflow-y: auto' in blk, blk
+print("  ✓ source: Actions dropdown opens upward as its own bounded scroll box (bottom-anchored + max-height + overflow-y:auto)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: Actions dropdown scroll-box geometry missing from src/styles.css"; fi
+
 # -------------------------------- cleanup ------------------------------------
 stop_crm "$MOCK50/srv.pid" 2>/dev/null
 kill "$MOCK50_PID" 2>/dev/null

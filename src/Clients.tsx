@@ -921,7 +921,10 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           </p>
         </div>
         <div className="page-actions">
-          {canEdit && (
+          {/* Owner 2026-08-20 — \"Manage stages\" is NOT on the owner Leads tab
+              (scope \"first\"); it stays on Onboarding + Settings so stage
+              management remains reachable elsewhere. */}
+          {canEdit && !ownerLeadsTab && (
             <button className="btn btn-ghost" onClick={() => setStageModal(true)} title="Rename, reorder or remove your pipeline stages">
               Manage stages
             </button>
