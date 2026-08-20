@@ -922,9 +922,10 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         </div>
         <div className="page-actions">
           {/* Owner 2026-08-20 — \"Manage stages\" is NOT on the owner Leads tab
-              (scope \"first\"); it stays on Onboarding + Settings so stage
-              management remains reachable elsewhere. */}
-          {canEdit && !ownerLeadsTab && (
+              (scope \"first\") NOR the owner Onboarding tab (scope \"middle\").
+              It stays only in Settings (and any non-owner view) so stage
+              management remains reachable. */}
+          {canEdit && !(ownerLeadsTab || ownerOnboardingTab) && (
             <button className="btn btn-ghost" onClick={() => setStageModal(true)} title="Rename, reorder or remove your pipeline stages">
               Manage stages
             </button>
@@ -1257,24 +1258,23 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           </table>
         </div>
       ) : ownerOnboardingTab && ownerOrg ? (
-        /* OWNER ONBOARDING TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 6
+        /* OWNER ONBOARDING TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 5
            columns: 1) Business name / Individual name, 2) Contact information,
            3) Next action (Send/Re-send Agreements — handleSendAgreement, with
            the audit/sign-tracking intact), 4) Agreement stages (the lifecycle
-           tracker NOT sent → Sent → Delivered → Signed), 5) Send payment link
-           (owner-entered amount; signed-agreement gate + 503 no-key handling
-           kept; the manual "Mark paid" interim flip stays), 6) Edit (opens the
-           edit modal for last-minute changes). Backend behavior unchanged; the
-           previous Deal / Stage select / Services overflow is gone. */
+           tracker NOT sent → Sent → Delivered → Signed), 5) Edit (opens the
+           edit modal for last-minute changes). Billing moved to the Finance tab
+           ("Bill this account"), so the Send-payment-link column was removed
+           (owner 2026-08-20). Backend behavior unchanged; the previous Deal /
+           Stage select / Services overflow is gone. */
         <div className="card table-wrap">
           <table className="table clients-table owner-leads sales-onboarding">
             <colgroup>
+              <col style={{ width: "26%" }} />
               <col style={{ width: "22%" }} />
               <col style={{ width: "20%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "18%" }} />
-              <col style={{ width: "14%" }} />
-              <col style={{ width: "8%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "12%" }} />
             </colgroup>
             <thead>
               <tr>
@@ -1282,7 +1282,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                 <th>Contact information</th>
                 <th>Next action (send agreements)</th>
                 <th>Agreement stages</th>
-                <th>Send payment link</th>
                 <th className="actions-th">Edit</th>
               </tr>
             </thead>
@@ -1358,52 +1357,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
                           {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
                         </span>
-                      </div>
-                    </td>
-                    <td data-label="Send payment link">
-                      <div className="pay-col">
-                        <button
-                          type="button"
-                          className="payment-link-btn"
-                          title={
-                            c.agreementStatus === "signed"
-                              ? "Send a payment link for the subscription"
-                              : "Agreement must be signed before sending a payment link"
-                          }
-                          aria-label={`Send payment link to ${c.companyName}`}
-                          onClick={() => handlePaymentLink(c)}
-                          disabled={busy || c.agreementStatus !== "signed"}
-                        >
-                          Send payment link
-                        </button>
-                        {c.paymentStatus && c.paymentStatus !== "none" && (
-                          <div className="pay-cell">
-                            <span
-                              className={`badge ${PAYMENT_META[c.paymentStatus].tone}`}
-                              title={
-                                c.paymentStatus === "sent"
-                                  ? `Payment link: ${c.paymentLinkUrl || "sent to client"}`
-                                  : c.paymentStatus === "paid" && c.paidAt
-                                    ? `Paid ${new Date(c.paidAt).toLocaleString()}`
-                                    : PAYMENT_META[c.paymentStatus].label
-                              }
-                            >
-                              {PAYMENT_META[c.paymentStatus].label}
-                            </span>
-                            {canEdit && c.paymentStatus === "sent" && (
-                              <button
-                                type="button"
-                                className="icon-btn"
-                                title="Mark the client's payment as received"
-                                aria-label={`Mark payment received for ${c.companyName}`}
-                                onClick={() => handleMarkPaid(c)}
-                                disabled={busy}
-                              >
-                                Mark paid
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </td>
                     <td data-label="Edit">
