@@ -395,6 +395,34 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_invoices_status   ON invoices(status);
   CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
 
+  -- Appointments / demo-call scheduling (owner 2026-08-20 sales rework).
+  -- The owner's "Schedule demo call" button turns a lead into a demo-call
+  -- appointment: a time is set on the owner's calendar (this table) and a
+  -- confirmation email goes to the lead. org_id is the caller's org at
+  -- create time (row-level isolation, like tickets); client_id OPTIONALLY
+  -- links to a client/lead record in the SAME org (FK ON DELETE SET NULL —
+  -- deleting the lead keeps the appointment, unlinked). scheduled_at stores a
+  -- local "YYYY-MM-DDTHH:MM" datetime string ('' = not scheduled yet);
+  -- duration is minutes. status flows scheduled → confirmed → held |
+  -- cancelled (a scheduled demo the lead confirms advances to confirmed; the
+  -- owner records held after it happens, cancelled for a no-show).
+  CREATE TABLE IF NOT EXISTS appointments (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id       INTEGER NOT NULL REFERENCES orgs(id),
+    client_id    INTEGER,
+    title        TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL DEFAULT '',
+    duration     INTEGER NOT NULL DEFAULT 30,
+    status       TEXT NOT NULL DEFAULT 'scheduled',
+    notes        TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_appointments_org_scheduled ON appointments(org_id, scheduled_at);
+  CREATE INDEX IF NOT EXISTS idx_appointments_org_client    ON appointments(org_id, client_id);
+  CREATE INDEX IF NOT EXISTS idx_appointments_org_status    ON appointments(org_id, status);
+
   -- 3g-3: owner's dismissible "auto-provisioned from sold lead" notifications.
   CREATE TABLE IF NOT EXISTS provision_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -949,6 +977,56 @@ db.exec(`
 }
 
 /**
+ * Demo-call sales rework (owner 2026-08-20 — "Leads → Demo call → Client
+ * accounts" flow). Idempotent — safe on every boot.
+ *
+ * clients gains the demo outcome the owner records after a demo call and the
+ * scheduled demo timestamp:
+ *   demo_outcome      TEXT — '' (no demo yet) | 'sold' | 'not_sold' | 'maybe'.
+ *                       The owner records the demo result on a lead. 'sold'
+ *                       is a RECORDED state — it does NOT auto-create a client
+ *                       account (a client is sold + signed agreements + paid,
+ *                       then the owner MANUALLY creates the account). Kept
+ *                       separate from the pipeline `stage`, additive.
+ *   demo_scheduled_at TEXT — the "YYYY-MM-DDTHH:MM" a demo call was scheduled
+ *                       for; mirrors the appointment row ('' = none).
+ * Both are plain columns with DEFAULTs (the standard migration pattern).
+ */
+{
+  const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  const addCol = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE clients ADD COLUMN ${ddl}`);
+    }
+  };
+  addCol("demo_outcome", "demo_outcome TEXT NOT NULL DEFAULT ''");
+  addCol("demo_scheduled_at", "demo_scheduled_at TEXT NOT NULL DEFAULT ''");
+}
+
+/**
+ * Owner-org identity guard (owner 2026-08-20 — duplicate-owner landmine
+ * fix). The owner platform workspace is identified by NAME ("Revzenta") via
+ * getOwnerOrgId(), which returns the LOWEST-id org with that name. A stray
+ * SECOND org named "Revzenta" (e.g. a tenant that was renamed, or a leaked
+ * legacy org) is inert only by luck — if the true owner org were ever
+ * deleted/recreated, the duplicate would become "the owner" and inherit the
+ * owner cockpit (Admin tab, cross-org Documents list, etc.). This guard
+ * makes the identity unambiguous at boot: if more than one org is named
+ * exactly "Revzenta", every one after the first (lowest id) is renamed to
+ * "Revzenta (duplicate)" so name-based owner detection can never pick a
+ * duplicate and no duplicate can hide owner data. Idempotent — safe on every
+ * boot.
+ */
+() => {
+  const rows = db
+    .query("SELECT id FROM orgs WHERE name = ? ORDER BY id")
+    .all(DEFAULT_ORG_NAME) as { id: number }[];
+  for (let i = 1; i < rows.length; i++) {
+    db.query("UPDATE orgs SET name = ? WHERE id = ?").run(`${DEFAULT_ORG_NAME} (duplicate)`, rows[i].id);
+  }
+}();
+
+/**
  * Self-serve cancel/offboarding migration (Phase 5 prep, owner direction —
  * per-account subscription). Idempotent — safe on every boot.
  *
@@ -1206,6 +1284,30 @@ export function getOrg(orgId: number): OrgRow | null {
     .get(orgId) as OrgRow | null;
 }
 
+/* ── Appointments / demo-call scheduling (owner 2026-08-20 sales rework) ──
+ * The appointments row shape. `scheduled_at` is a local "YYYY-MM-DDTHH:MM"
+ * string ('' = not scheduled yet); `duration` is minutes; `status` ∈
+ * scheduled | confirmed | held | cancelled (default 'scheduled'). */
+export const APPOINTMENT_STATUSES = ["scheduled", "confirmed", "held", "cancelled"] as const;
+export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+
+export function isAppointmentStatus(v: unknown): v is AppointmentStatus {
+  return typeof v === "string" && (APPOINTMENT_STATUSES as readonly string[]).includes(v);
+}
+
+export interface AppointmentRow {
+  id: number;
+  org_id: number;
+  client_id: number | null;
+  title: string;
+  scheduled_at: string;
+  duration: number;
+  status: AppointmentStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ClientRow {
   id: number;
   org_id: number;
@@ -1300,6 +1402,15 @@ export interface ClientRow {
   /** Phase 5 — Stripe Payment Link id ('' until then; its URL lives in
    *  payment_link_url). */
   stripe_link_id: string;
+  /** Owner 2026-08-20 sales rework — the demo outcome recorded on a lead
+   *  after a demo call: '' (no demo yet) | 'sold' | 'not_sold' | 'maybe'.
+   *  'sold' is a RECORDED state — it does NOT auto-create a client account
+   *  (the owner manually creates one after sold + signed agreements + paid).
+   *  Kept separate from `stage`. Owner-workspace only in the API. */
+  demo_outcome: string;
+  /** The "YYYY-MM-DDTHH:MM" a demo call was scheduled for ('' = none);
+   *  mirrors the appointments row. Owner-workspace only. */
+  demo_scheduled_at: string;
 }
 
 export interface TaskRow {

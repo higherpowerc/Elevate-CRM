@@ -14,6 +14,8 @@ import {
   type TenantTab,
   INVOICE_STATUSES,
   isInvoiceStatus,
+  isAppointmentStatus,
+  type AppointmentRow,
   TICKET_STATUSES,
   TICKET_PRIORITIES,
   isTicketStatus,
@@ -65,7 +67,7 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
 import Stripe from "stripe";
 import { generateInvoicePdf } from "./invoices";
 import { stripeClient } from "./stripe";
@@ -532,8 +534,31 @@ function toClient(row: ClientRow, ownerOrg = false) {
           paymentLinkUrl: row.payment_link_url,
           paidAt: row.paid_at,
           paymentAmountCents: row.payment_amount_cents ?? 0,
+          // Owner 2026-08-20 sales rework — demo outcome ('', sold, not_sold,
+          // maybe) + scheduled demo datetime + orphaned-stage flag. OWNER-only.
+          demoOutcome: typeof row.demo_outcome === "string" ? row.demo_outcome : "",
+          demoScheduledAt: typeof row.demo_scheduled_at === "string" ? row.demo_scheduled_at : "",
+          orphanedStage: isStageOrphaned(row.org_id, row.stage),
         }
       : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Owner 2026-08-20 sales rework — serialize an appointment row for the API,
+ *  normalizing the optional client's name for the owner's calendar view. */
+function toAppointment(row: AppointmentRow, clientName?: string) {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    clientId: row.client_id,
+    clientName: clientName ?? "",
+    title: row.title,
+    scheduledAt: row.scheduled_at,
+    duration: row.duration,
+    status: isAppointmentStatus(row.status) ? row.status : "scheduled",
+    notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1599,6 +1624,21 @@ function isFinalStage(orgId: number, stage: string): boolean {
   const stages = parseStages(org.stages);
   if (stages.length === 0) return false;
   return stage.trim().toLowerCase() === stages[stages.length - 1].toLowerCase();
+}
+
+/** Invisibility-bug fix (owner 2026-08-20): true when the client record's
+ *  `stage` is NOT in its org's CURRENT stage list. Such a record is not part
+ *  of any pipeline bucket (Leads/Onboarding/Clients scope by stage position),
+ *  so without this flag the client UI's strict scopedStages.includes filter
+ *  would drop it from EVERY tab — silently orphaned. The owner UI surfaces
+ *  these in a dedicated "Out of pipeline" bucket so no record ever vanishes
+ *  (and a repaired/moved stage re-enters the normal pipeline). */
+function isStageOrphaned(orgId: number, stage: string): boolean {
+  const org = getOrg(orgId);
+  if (!org) return false;
+  const stages = parseStages(org.stages);
+  if (stages.length === 0) return false;
+  return !stages.some((s) => s.trim().toLowerCase() === (stage || "").trim().toLowerCase());
 }
 
 /** Match a client's free-text industry against the vertical catalog:
@@ -3585,6 +3625,18 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       if (isOwnerSession(auth) && rec.agreementStatus !== undefined) {
         sets.push("agreement_status = ?");
         params.push(rec.agreementStatus as string);
+      }
+      // Owner 2026-08-20 sales rework — demo outcome: persisted ONLY for the
+      // owner org and only when present in the body ('' | 'sold' | 'not_sold'
+      // | 'maybe'). Partial updates never clobber an absent value. 'sold' is a
+      // RECORDED state — it never auto-creates a client account.
+      if (isOwnerSession(auth) && body.demoOutcome !== undefined && body.demoOutcome !== null) {
+        const o = String(body.demoOutcome);
+        if (o !== "" && !["sold", "not_sold", "maybe"].includes(o)) {
+          return err("demoOutcome must be '', sold, not_sold or maybe.", 400);
+        }
+        sets.push("demo_outcome = ?");
+        params.push(o);
       }
       sets.push("updated_at = datetime('now')");
       params.push(id, orgId);
