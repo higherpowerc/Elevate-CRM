@@ -1017,14 +1017,14 @@ db.exec(`
  * duplicate and no duplicate can hide owner data. Idempotent — safe on every
  * boot.
  */
-() => {
+{
   const rows = db
     .query("SELECT id FROM orgs WHERE name = ? ORDER BY id")
     .all(DEFAULT_ORG_NAME) as { id: number }[];
   for (let i = 1; i < rows.length; i++) {
     db.query("UPDATE orgs SET name = ? WHERE id = ?").run(`${DEFAULT_ORG_NAME} (duplicate)`, rows[i].id);
   }
-}();
+}
 
 /**
  * Self-serve cancel/offboarding migration (Phase 5 prep, owner direction —
