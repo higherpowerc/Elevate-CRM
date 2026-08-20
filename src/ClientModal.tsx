@@ -23,6 +23,11 @@ interface Props {
   /** Adaptive intake Phase 1/2: the org's account-level vertical config —
    *  the rules engine decides which sections/fields this form shows. */
   intake: IntakeOrgSettings;
+  /** Owner 2026-08-20 sales rework — true only on the OWNER's Leads tab.
+   *  Shows the "Demo outcome" editor (Sold / Not sold / Maybe + the
+   *  maybe-outcome follow-up note) which lives in the edit modal — NOT a list
+   *  column or dropdown. */
+  ownerLeadsTab?: boolean;
   busy: boolean;
   onClose: () => void;
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
@@ -72,9 +77,14 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
   dnc: boolean;
   dncReason: string;
   dncDate: string;
+  /** Owner 2026-08-20 sales rework — demo outcome ('', sold, not_sold, maybe)
+   *  + the maybe-outcome follow-up note. Owned by the edit modal on the owner
+   *  Leads tab. */
+  demoOutcome: "" | "sold" | "not_sold" | "maybe";
+  followUpNote: string;
 };
 
-export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, busy, onClose, onSave }: Props) {
+export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, ownerLeadsTab = false, busy, onClose, onSave }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const createStage = defaultStage ?? stages[0] ?? "Leads";
@@ -130,6 +140,8 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     dnc: false,
     dncReason: "",
     dncDate: "",
+    demoOutcome: "",
+    followUpNote: "",
   });
   const [form, setForm] = useState<FormState>(() =>
     client
@@ -184,6 +196,8 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
           dnc: client.dnc ?? false,
           dncReason: client.dncReason ?? "",
           dncDate: client.dncDate ?? "",
+          demoOutcome: (client.demoOutcome ?? "") as "" | "sold" | "not_sold" | "maybe",
+          followUpNote: client.followUpNote ?? "",
         }
       : empty(),
   );
@@ -333,6 +347,11 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
         dnc: form.dnc,
         dncReason: form.dnc ? form.dncReason.trim() : "",
         dncDate: form.dnc ? form.dncDate : "",
+        // Owner 2026-08-20 sales rework — demo outcome + follow-up note ship
+        // with the save (owner Leads tab only in the UI; the server persists
+        // them solely for the owner org).
+        demoOutcome: form.demoOutcome ?? "",
+        followUpNote: (form.followUpNote ?? "").trim(),
       },
       client,
     );
@@ -837,6 +856,59 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 </div>
               </section>
             ),
+          )}
+          {/* Owner 2026-08-20 sales rework — DEMO OUTCOME (owner Leads tab
+              ONLY, in the edit modal — NOT a list column/dropdown). The owner
+              records the demo result here: Sold / Not sold / Maybe. 'sold'
+              relocates the lead to the Onboarding bucket (the same positional
+              path "Start Onboarding" used); 'maybe' keeps the lead on Leads
+              and stores a follow-up note (shown here when Maybe is set) so
+              the owner can pick it up later; 'not_sold' keeps the lead on
+              Leads and can be flagged lost below. The scheduled demo time +
+              meeting link are shown read-only for reference. */}
+          {ownerLeadsTab && (
+            <section className="intake-section" aria-label="Demo outcome">
+              <div className="intake-section-title">Demo outcome</div>
+              {(client?.demoScheduledAt || client?.demoMeetingLink) && (
+                <p className="cell-muted demo-sched-line">
+                  {client?.demoScheduledAt ? `Demo scheduled for ${client.demoScheduledAt}.` : ""}{" "}
+                  {client?.demoMeetingLink ? `Meeting link: ${client.demoMeetingLink}` : ""}
+                </p>
+              )}
+              <div className="form-grid intake-grid">
+                <div className="field intake-block demo-outcome-block">
+                  <span className="field-label">Demo result</span>
+                  <select
+                    className="demo-outcome-field"
+                    value={form.demoOutcome}
+                    aria-label="Demo outcome"
+                    onChange={(e) => set("demoOutcome", e.target.value as "" | "sold" | "not_sold" | "maybe")}
+                  >
+                    <option value="">— No demo recorded —</option>
+                    <option value="sold">Sold</option>
+                    <option value="not_sold">Not sold</option>
+                    <option value="maybe">Maybe</option>
+                  </select>
+                  {form.demoOutcome === "maybe" && (
+                    <div className="field status-reason">
+                      <span className="field-label">Follow-up note</span>
+                      <textarea
+                        value={form.followUpNote}
+                        onChange={(e) => set("followUpNote", e.target.value)}
+                        placeholder="What to follow up on with this lead"
+                        rows={3}
+                        maxLength={600}
+                        aria-label="Follow-up note"
+                      />
+                      <span className="field-hint">Saving keeps this lead on Leads and stores the note here for follow-up.</span>
+                    </div>
+                  )}
+                  {form.demoOutcome === "not_sold" && (
+                    <span className="field-hint">Keep the lead on Leads and use Lead status below to mark it lost if it is not interested.</span>
+                  )}
+                </div>
+              </div>
+            </section>
           )}
           {/* Owner request 2026-08-14 — Lead status: the lost + DNC flags.
               Rendered OUTSIDE the adaptive intake engine so these controls

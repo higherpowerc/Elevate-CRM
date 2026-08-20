@@ -288,31 +288,41 @@ export function sendPaymentLinkEmail(opts: {
 }
 
 /** Owner 2026-08-20 sales rework — demo-call confirmation email. Sent when
- *  the owner clicks "Schedule demo call" on a lead: the prospect gets the
- *  date/time of their Revzenta demo call. Fire-and-forget (sendEmail never
- *  throws) — a delivery failure is surfaced to the owner as a notice, never
- *  a crash. */
+ *  the owner clicks "Schedule Demo" on a lead: the prospect gets the date/time
+ *  of their Revzenta demo call, the pasted meeting link (Zoom/Google Meet) if
+ *  provided, and a short calendar line. We do NOT integrate Zoom/Google APIs —
+ *  purely "send the provided link in the invite email". Fire-and-forget
+ *  (sendEmail never throws) — a delivery failure is surfaced to the owner as a
+ *  notice, never a crash. */
 export function sendDemoCallEmail(opts: {
   to: string;
   clientName: string;
   scheduledAt: string;
+  meetingLink?: string;
 }): Promise<SendEmailResult> {
+  const text: string[] = [
+    `Hi ${opts.clientName},`,
+    "",
+    "Thanks for your interest in Revzenta CRM.",
+    "",
+    `Your demo call is scheduled for ${opts.scheduledAt}.`,
+  ];
+  if (opts.meetingLink) {
+    text.push("", `Join the meeting here: ${opts.meetingLink}`, "");
+  }
+  text.push(
+    "Calendar: add this to your calendar — " + opts.scheduledAt + " Revzenta demo call.",
+    "",
+    "We'll go over how Revzenta can help you capture and manage your leads.",
+    "",
+    "If you need to reschedule, just reply to this email.",
+    "",
+    "— Revzenta",
+  );
   return sendEmail({
     to: opts.to,
     subject: "Your Revzenta demo call is scheduled",
-    text: [
-      `Hi ${opts.clientName},`,
-      "",
-      "Thanks for your interest in Revzenta CRM.",
-      "",
-      `Your demo call is scheduled for ${opts.scheduledAt}.`,
-      "",
-      "We'll go over how Revzenta can help you capture and manage your leads.",
-      "",
-      "If you need to reschedule, just reply to this email.",
-      "",
-      "— Revzenta",
-    ].join("\n"),
+    text: text.join("\n"),
   });
 }
 

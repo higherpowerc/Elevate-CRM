@@ -3705,3 +3705,117 @@ legend.field-label {
 .calendar-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .calendar-title { display: flex; flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
 .calendar-sub { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Owner Sales-Flow UI (owner 2026-08-20) — the redesigned owner LEADS
+   (4 cols: name / contact / Schedule Demo / Actions) + owner ONBOARDING
+   (6 cols: name / contact / Next action / Agreement stages / Send payment
+   link / Edit) tables. Everything keeps the fixed table-fit rule (colgroup
+   sums to 100%, no horizontal page overflow). */
+.sales-leads .cell-name,
+.sales-onboarding .cell-name { white-space: normal; word-break: break-word; }
+
+/* Prominent "Schedule Demo" quick-action button (owner Leads col 3) — styled
+   like the existing Send Agreements / Start Onboarding quick actions but a
+   full, clearly clickable button. */
+.schedule-demo-btn {
+  background: rgba(214, 255, 63, 0.1);
+  border: 1px solid rgba(214, 255, 63, 0.45);
+  border-radius: 8px;
+  color: var(--lime);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 6px 12px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+.schedule-demo-btn:hover { background: rgba(214, 255, 63, 0.2); border-color: var(--lime); }
+.schedule-demo-btn:active { transform: translateY(1px); }
+.schedule-demo-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Owner Actions dropdown menu trigger (owner Leads col 4). */
+.owner-actions-menu { position: relative; display: inline-block; min-width: 0; }
+.owner-actions-trigger {
+  background: rgba(242, 241, 236, 0.06);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.owner-actions-trigger:hover { background: rgba(242, 241, 236, 0.12); border-color: var(--muted); }
+.owner-actions-trigger .caret { color: var(--lime); margin-left: 4px; }
+.owner-actions-trigger:disabled { opacity: 0.55; cursor: default; }
+.owner-actions-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 140px;
+  background: #141519;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.owner-actions-dropdown [role="menuitem"] {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+  width: 100%;
+}
+.owner-actions-dropdown [role="menuitem"]:hover,
+.owner-actions-dropdown [role="menuitem"]:focus-visible {
+  background: rgba(214, 255, 63, 0.12);
+  color: var(--lime);
+  outline: none;
+}
+
+/* Owner Onboarding payment-link column: the prominent "Send payment link"
+   button stack plus the Sent/Paid badge + interim "Mark paid" flip. */
+.pay-col { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.payment-link-btn {
+  background: rgba(124, 227, 139, 0.1);
+  border: 1px solid rgba(124, 227, 139, 0.45);
+  border-radius: 8px;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 6px 12px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.payment-link-btn:hover { background: rgba(124, 227, 139, 0.2); border-color: var(--green); }
+.payment-link-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Owner Onboarding "Edit" (col 6) — Edit + Audit, left-aligned in the cell. */
+.edit-col { justify-content: flex-start; }
+
+/* Demo-outcome editor inside the ClientModal (owner Leads tab). */
+.demo-outcome-field {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+.demo-sched-line { font-size: 12.5px; margin: 0 0 10px; line-height: 1.5; }

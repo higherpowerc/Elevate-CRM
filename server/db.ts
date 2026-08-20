@@ -990,7 +990,14 @@ db.exec(`
  *                       separate from the pipeline `stage`, additive.
  *   demo_scheduled_at TEXT — the "YYYY-MM-DDTHH:MM" a demo call was scheduled
  *                       for; mirrors the appointment row ('' = none).
- * Both are plain columns with DEFAULTs (the standard migration pattern).
+ *   demo_meeting_link TEXT — the Zoom/Google Meet URL the owner pastes when
+ *                       scheduling a demo; included plainly in the invite
+ *                       email (we do NOT integrate Zoom/Google APIs — purely
+ *                       "send the provided link in the invite email").
+ *   follow_up_note   TEXT — the owner's note captured with a 'maybe' demo
+ *                       outcome (follow-up for the lead); surfaced in the
+ *                       edit modal on the owner Leads tab.
+ * All are plain columns with DEFAULTs (the standard migration pattern).
  */
 {
   const cols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
@@ -1001,6 +1008,8 @@ db.exec(`
   };
   addCol("demo_outcome", "demo_outcome TEXT NOT NULL DEFAULT ''");
   addCol("demo_scheduled_at", "demo_scheduled_at TEXT NOT NULL DEFAULT ''");
+  addCol("demo_meeting_link", "demo_meeting_link TEXT NOT NULL DEFAULT ''");
+  addCol("follow_up_note", "follow_up_note TEXT NOT NULL DEFAULT ''");
 }
 
 /**
@@ -1411,6 +1420,13 @@ export interface ClientRow {
   /** The "YYYY-MM-DDTHH:MM" a demo call was scheduled for ('' = none);
    *  mirrors the appointments row. Owner-workspace only. */
   demo_scheduled_at: string;
+  /** The Zoom/Google Meet URL the owner pasted when scheduling a demo ('' =
+   *  none); included plainly in the invite email. Owner-workspace only. */
+  demo_meeting_link: string;
+  /** The owner's follow-up note captured with a 'maybe' demo outcome ('' =
+   *  none); surfaced in the edit modal on the owner Leads tab. Owner-workspace
+   *  only. */
+  follow_up_note: string;
 }
 
 export interface TaskRow {
