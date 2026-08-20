@@ -287,31 +287,61 @@ export function sendPaymentLinkEmail(opts: {
   });
 }
 
+/** Arizona MST helpers — demo times are stored as naive "YYYY-MM-DDTHH:MM"
+ *  Arizona wall-clock strings (UTC-7, no DST), so we format them with pure
+ *  string math — never through a Date/timezone object, so the time can't
+ *  shift into the reader's timezone. Mirrors src/demoTime.ts on the client. */
+function fmtMstTime(hhmm: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm ?? "").trim());
+  if (!m) return hhmm;
+  const hh = parseInt(m[1], 10);
+  const mm = m[2];
+  const ap = hh >= 12 ? "PM" : "AM";
+  let h12 = hh % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:${mm} ${ap} MST`;
+}
+const MST_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+/** "2026-08-26T16:00" -> "Wed, Aug 26 at 4:00 PM MST (Arizona, UTC-7, no DST)" */
+function fmtMstDateTime(dt: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{1,2}):(\d{2})$/.exec((dt ?? "").trim());
+  if (!m) return dt;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(y, mo - 1, d, 12).getDay()];
+  return `${dow}, ${MST_MONTHS[mo - 1]} ${d}, ${y} at ${fmtMstTime(`${m[4]}:${m[5]}`)} (Arizona, UTC-7, no DST)`;
+}
+
 /** Owner 2026-08-20 sales rework — demo-call confirmation email. Sent when
  *  the owner clicks "Schedule Demo" on a lead: the prospect gets the date/time
- *  of their Revzenta demo call, the pasted meeting link (Zoom/Google Meet) if
- *  provided, and a short calendar line. We do NOT integrate Zoom/Google APIs —
- *  purely "send the provided link in the invite email". Fire-and-forget
- *  (sendEmail never throws) — a delivery failure is surfaced to the owner as a
- *  notice, never a crash. */
+ *  of their Revzenta demo call (Arizona MST), the pasted meeting link
+ *  (Zoom/Google Meet) if provided, and a short calendar line. We do NOT
+ *  integrate Zoom/Google APIs — purely "send the provided link in the invite
+ *  email". Fire-and-forget (sendEmail never throws) — a delivery failure is
+ *  surfaced to the owner as a notice, never a crash. */
 export function sendDemoCallEmail(opts: {
   to: string;
   clientName: string;
   scheduledAt: string;
   meetingLink?: string;
 }): Promise<SendEmailResult> {
+  const when = fmtMstDateTime(opts.scheduledAt);
   const text: string[] = [
     `Hi ${opts.clientName},`,
     "",
     "Thanks for your interest in Revzenta CRM.",
     "",
-    `Your demo call is scheduled for ${opts.scheduledAt}.`,
+    `Your demo call is scheduled for ${when}.`,
   ];
   if (opts.meetingLink) {
     text.push("", `Join the meeting here: ${opts.meetingLink}`, "");
   }
   text.push(
-    "Calendar: add this to your calendar — " + opts.scheduledAt + " Revzenta demo call.",
+    "Calendar: add this to your calendar — " + when + " Revzenta demo call.",
     "",
     "We'll go over how Revzenta can help you capture and manage your leads.",
     "",

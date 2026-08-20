@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api } from "./api";
 import type { Appointment } from "./types";
+import { fmtDemoTime, DEMO_TZ_SHORT } from "./demoTime";
 
 /** Owner 2026-08-20 sales rework — the owner's Calendar view. Lists all
  *  demo-call appointments (every org's, with the linked client name) sorted by
@@ -14,15 +15,29 @@ const STATUS_META: Record<Appointment["status"], { label: string; tone: string }
   cancelled: { label: "Cancelled", tone: "tone-red" },
 };
 
+const DEMO_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DEMO_MONTHS_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+/** "2026-08-26T16:00" -> "Wed, Aug 26". The weekday is derived only from the
+ *  ymd wall-clock date (constructed at local noon so the day never crosses a
+ *  timezone boundary), so the displayed day can never shift. */
 function fmtDay(dt: string): string {
-  const d = new Date(dt);
-  return Number.isNaN(d.getTime())
-    ? dt.slice(0, 10)
-    : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dt ?? "");
+  if (!m) return (dt ?? "").slice(0, 10);
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  const dtObj = new Date(y, mo - 1, d, 12); // noon local: safe, day-stable
+  return `${DEMO_WEEKDAYS[dtObj.getDay()]}, ${DEMO_MONTHS_SHORT[mo - 1]} ${d}`;
 }
 function fmtTime(dt: string): string {
-  const d = new Date(dt);
-  return Number.isNaN(d.getTime()) ? dt.slice(11) : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Scheduled demo times are stored as naive "YYYY-MM-DDTHH:MM" Arizona wall
+  // clock. Format the HH:MM portion directly (never via a Date object, which
+  // would shift into the viewer's local timezone) as 12-hour AM/PM + MST.
+  const t = (dt ?? "").slice(11);
+  return /^\d{1,2}:\d{2}$/.test(t) ? `${fmtDemoTime(t)} ${DEMO_TZ_SHORT}` : dt;
 }
 
 export default function Calendar() {

@@ -10,6 +10,7 @@ import { money, fmtDate, type AgreementEnvelope, type Client, type CustomFieldDe
 import type { IntakeOrgSettings } from "./intakeRules";
 import { StageBadge, ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
+import { fmtDemoTime, fmtDemoDateTime, DEMO_TZ_NAME, DEMO_TZ_SHORT } from "./demoTime";
 import ClientModal from "./ClientModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import StageEditor from "./StageEditor";
@@ -259,7 +260,15 @@ function AgreementTracker({ status }: { status: AgreementStatus }) {
  *  remain available via the edit modal and other tabs). Accessible: the
  *  trigger is aria-haspopup/aria-expanded, each item role=menuitem with a
  *  keyboard tab-stop, Esc closes the menu, and the menu closes on outside
- *  click. */
+ *  click.
+ *  Owner 2026-08-21 — the dropdown must open DOWNWARD, DIRECTLY BELOW the
+ *  trigger, and must NEVER be clipped by the `.table-wrap` scroll container.
+ *  The `.table-wrap` sets overflow (x: auto) which clips any absolutely-
+ *  positioned child menu. Fix: on open we read the trigger's
+ *  getBoundingClientRect() and render the menu `position: fixed` (viewport-
+ *  relative, so no ancestor overflow can clip it) at the trigger's bottom edge
+ *  (top = rect.bottom + 4). max-height + overflow-y:auto stay as the safety
+ *  net for very long item lists. */
 function OwnerActionsMenu({ client, busy, onEdit, onFlag }: {
   client: Client;
   busy: boolean;
@@ -267,7 +276,18 @@ function OwnerActionsMenu({ client, busy, onEdit, onFlag }: {
   onFlag: (c: Client, flag: "lost" | "dnc") => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    setOpen(true);
+  };
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
@@ -278,27 +298,35 @@ function OwnerActionsMenu({ client, busy, onEdit, onFlag }: {
     };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onDoc, true);
     return () => {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onDoc, true);
     };
   }, [open]);
   const close = (run: () => void) => { setOpen(false); run(); };
   return (
     <div className="owner-actions-menu" ref={ref}>
       <button
+        ref={btnRef}
         type="button"
         className="owner-actions-trigger"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Actions for ${client.companyName || client.contactName || "lead"}`}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         disabled={busy}
       >
         Actions <span className="caret" aria-hidden="true">▾</span>
       </button>
-      {open && (
-        <div className="owner-actions-dropdown" role="menu" aria-label="Lead actions">
+      {open && pos && (
+        <div
+          className="owner-actions-dropdown"
+          role="menu"
+          aria-label="Lead actions"
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+        >
           <button type="button" role="menuitem" onClick={() => close(onEdit)}>Edit</button>
           <button type="button" role="menuitem" onClick={() => close(() => onFlag(client, "dnc"))}>
             {client.dnc ? "Clear DNC" : "DNC"}
@@ -806,11 +834,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         r.emailStatus === "sent"
           ? {
               kind: "success",
-              text: `Demo scheduled for ${dt}${link ? " · meeting link sent in the invite" : ""} — confirmation emailed to ${c.email || "the lead"} and added to your Calendar.`,
+              text: `Demo scheduled for ${fmtDemoDateTime(dt)}${link ? " · meeting link sent in the invite" : ""} — confirmation emailed to ${c.email || "the lead"} and added to your Calendar.`,
             }
           : {
               kind: "warn",
-              text: `Demo scheduled for ${dt} and added to your Calendar${link ? " with your meeting link" : ""}, but the confirmation email could not be sent: ${r.emailError ?? "unknown error"}`,
+              text: `Demo scheduled for ${fmtDemoDateTime(dt)} and added to your Calendar${link ? " with your meeting link" : ""}, but the confirmation email could not be sent: ${r.emailError ?? "unknown error"}`,
             },
       );
       setDemoTarget(null);
@@ -1233,7 +1261,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         className="schedule-demo-btn"
                         title={
                           c.demoScheduledAt
-                            ? `Demo scheduled for ${c.demoScheduledAt} — re-schedule or view it on the Calendar`
+                            ? `Demo scheduled for ${fmtDemoDateTime(c.demoScheduledAt)} — re-schedule or view it on the Calendar`
                             : "Schedule a demo — pick a time + a meeting link; the lead is emailed an invite"
                         }
                         aria-label={`Schedule demo for ${primaryName(ownerOrg, c)}`}
@@ -1824,14 +1852,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   <MiniCalendar value={demoDate} onSelect={setDemoDate} />
                   <span className="field-hint">
                     {demoDate ? (
-                      <>Selected: <strong>{fmtLongDate(demoDate)}</strong>{demoTime ? ` at ${demoTime}` : ""}</>
+                      <>Selected: <strong>{fmtLongDate(demoDate)}</strong>{demoTime ? ` at ${fmtDemoTime(demoTime)} (${DEMO_TZ_NAME})` : ""}</>
                     ) : (
                       "Pick a date above."
                     )}
                   </span>
                 </div>
                 <div className="field">
-                  <span className="field-label">Demo time (local, 15-min slots)</span>
+                  <span className="field-label">Demo time ({DEMO_TZ_NAME}, 15-min slots)</span>
                   <select
                     value={demoTime}
                     onChange={(e) => setDemoTime(e.target.value)}
@@ -1840,7 +1868,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     {(DEMO_TIME_SLOTS.includes(demoTime) ? DEMO_TIME_SLOTS : [demoTime, ...DEMO_TIME_SLOTS]).map(
                       (t) => (
                         <option key={t} value={t}>
-                          {t}
+                          {fmtDemoTime(t)}
                         </option>
                       ),
                     )}
