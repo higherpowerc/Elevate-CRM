@@ -6594,9 +6594,11 @@ sleep 1
 python3 - "$MOCK50/emails.jsonl" <<'PY'
 import json, sys
 lines = [json.loads(l) for l in open(sys.argv[1])]
-demos = [l for l in lines if l.get("subject") == "Your Revzenta demo call is scheduled" and "2026-08-25T14:30" in l.get("text", "")]
+demos = [l for l in lines if l.get("subject") == "Your Revzenta demo call is scheduled" and "2:30 PM MST" in l.get("text", "")]
 assert demos, lines
-print("  ✓ 50b: confirmation email sent to the lead with the demo time")
+t = demos[0].get("text", "")
+assert "14:30" not in t, t
+print("  ✓ 50b: confirmation email sent to the lead with the demo time as Arizona MST AM/PM (2:30 PM MST), not 24-hour 14:30")
 PY
 if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50b: confirmation email assertion failed"; fi
 echo "-- 50c. Out of pipeline / orphaned-stage safety surface --"
@@ -6692,6 +6694,14 @@ lines = [json.loads(l) for l in open(sys.argv[1])]
 demos = [l for l in lines if l.get("subject") == "Your Revzenta demo call is scheduled" and "https://zoom.us/j/123456789" in l.get("text", "")]
 assert demos, lines
 print("  ✓ 50e: invitation email contains the meeting link (Join the meeting here)")
+# Owner 2026-08-21 - the invite date/time must read Arizona MST in 12-hour
+# AM/PM (the demo was scheduled 2026-08-26T16:00 -> 4:00 PM MST), never the
+# raw 24-hour 16:00.
+inv = demos[-1].get("text", "")
+assert "4:00 PM MST" in inv, inv
+assert "16:00" not in inv, inv
+assert "Arizona, UTC-7, no DST" in inv, inv
+print("  ✓ 50e: invite email time is Arizona MST 12-hour AM/PM (4:00 PM MST), not 24-hour 16:00")
 PY
 if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50e: invite email missing the meeting link"; fi
 # (b) Demo outcome 'maybe' persists the follow-up note and the lead STAYS on Leads.
@@ -6780,12 +6790,50 @@ css = open('src/styles.css').read()
 i = css.index('.owner-actions-dropdown {')
 j = css.index('}', i)
 blk = css[i:j]
-assert 'bottom: calc(100% + 4px)' in blk, blk
+# Owner 2026-08-21: the dropdown opens DOWNWARD and must never be clipped by
+# the .table-wrap overflow container. position:fixed escapes that overflow;
+# the upward anchor must be gone. max-height + overflow-y:auto stay as the
+# safety net for long item lists.
+assert 'position: fixed' in blk, blk
+assert 'bottom: calc(100% + 4px)' not in blk, blk
 assert 'max-height' in blk, blk
 assert 'overflow-y: auto' in blk, blk
-print("  ✓ source: Actions dropdown opens upward as its own bounded scroll box (bottom-anchored + max-height + overflow-y:auto)")
+print("  ✓ source: Actions dropdown is position:fixed (escapes table-wrap overflow, never clipped) with max-height + overflow-y:auto; upward anchor removed")
 PY
-then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: Actions dropdown scroll-box geometry missing from src/styles.css"; fi
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: Actions dropdown unclipped-downward geometry missing from src/styles.css"; fi
+if python3 - <<'PY'
+ts = open('src/Clients.tsx').read()
+# Downward open: top edge measured from the trigger's rect.bottom + 4; fixed
+# positioning set inline so no ancestor overflow clips the menu; all three
+# items (Edit/DNC/Lost) remain in the menu.
+assert 'getBoundingClientRect()' in ts, 'no getBoundingClientRect'
+assert 'r.bottom + 4' in ts, 'no downward anchor (r.bottom + 4)'
+assert 'position: "fixed"' in ts, 'no inline fixed positioning'
+assert '>Edit<' in ts and '>Lost<' in ts and '{client.dnc ? "Clear DNC" : "DNC"}' in ts, 'items missing'
+print("  ✓ source: OwnerActionsMenu opens downward (top = trigger.bottom + 4) as position:fixed (unclipped) with Edit/DNC/Lost")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: OwnerActionsMenu downward/fixed markers missing from src/Clients.tsx"; fi
+echo "-- 50f. Arizona MST + AM/PM demo time (owner 2026-08-21): picker options + readout + lead-row + Calendar + invite email are 12-hour AM/PM labeled Arizona MST, never 24-hour --"
+if test -f src/demoTime.ts && grep -Fq 'fmtDemoTime' src/demoTime.ts && grep -Fq 'Arizona (MST)' src/demoTime.ts && grep -Fq 'PM' src/demoTime.ts && grep -Fq '"AM"' src/demoTime.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: shared demoTime helper formats 12-hour AM/PM with an Arizona (MST) label (UTC-7, no DST)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: src/demoTime.ts AM/PM + Arizona (MST) helper missing"
+fi
+if grep -Fq 'aria-label="Demo time"' src/Clients.tsx && grep -Fq 'Demo time ({DEMO_TZ_NAME}, 15-min slots' src/Clients.tsx && grep -Fq 'fmtDemoTime(t)' src/Clients.tsx && grep -Fq 'fmtDemoTime(demoTime)' src/Clients.tsx && ! grep -Fq 'Demo time (local, 15-min slots)' src/Clients.tsx && grep -Fq 'fmtDemoDateTime(c.demoScheduledAt)' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Schedule-Demo picker + selected readout show AM/PM with an Arizona (MST) label; lead-row + notice use formatted Arizona MST datetime"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Schedule-Demo/lead-row Arizona MST AM/PM markers missing from src/Clients.tsx"
+fi
+if grep -Fq 'from "./demoTime"' src/Calendar.tsx && grep -Fq 'fmtDemoTime(t)' src/Calendar.tsx && grep -Fq 'DEMO_TZ_SHORT' src/Calendar.tsx && ! grep -Fq 'toLocaleTimeString' src/Calendar.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Calendar renders demo time as 12-hour AM/PM + MST, never through a Date.toLocaleTimeString (no local-tz shift)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Calendar Arizona MST AM/PM markers missing from src/Calendar.tsx"
+fi
+if grep -Fq 'MST' server/email.ts && grep -Fq 'fmtMstTime' server/email.ts && grep -Fq 'Your demo call is scheduled for ${when}' server/email.ts && ! grep -Fq 'Your demo call is scheduled for ${opts.scheduledAt}' server/email.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: demo invite email formats the datetime as Arizona MST AM/PM via fmtMstTime"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: invite email Arizona MST formatting missing from server/email.ts"
+fi
 
 # -------------------------------- cleanup ------------------------------------
 stop_crm "$MOCK50/srv.pid" 2>/dev/null

@@ -3847,15 +3847,15 @@ legend.field-label {
 .owner-actions-trigger .caret { color: var(--lime); margin-left: 4px; }
 .owner-actions-trigger:disabled { opacity: 0.55; cursor: default; }
 .owner-actions-dropdown {
-  position: absolute;
-  /* Owner 2026-08-20 — open UPWARD (above the trigger) so a row near the
-     bottom of the table never pushes the table/page to scroll, and bound the
-     menu to its own scroll box: if the item list ever exceeds max-height the
-     menu scrolls internally, never the table. */
-  bottom: calc(100% + 4px);
-  right: 0;
-  z-index: 40;
-  min-width: 140px;
+  /* Owner 2026-08-21 — the owner Actions dropdown opens DOWNWARD (top edge is
+     set inline to the trigger's rect.bottom + 4) and renders position: fixed
+     so the `.table-wrap` overflow container can NEVER clip it. top/right come
+     from the inline style set in src/Clients.tsx on open. max-height +
+     overflow-y:auto remain as the safety net for very long item lists, and
+     z-index keeps it above the table. */
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
   max-height: 220px;
   overflow-y: auto;
   background: #141519;
