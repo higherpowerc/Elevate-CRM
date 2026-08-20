@@ -460,6 +460,100 @@ legend.field-label {
   padding-right: 32px;
 }
 
+/* ── Schedule Demo modal — mini calendar (owner 2026-08-21) ──────
+   Hand-rolled native month calendar: a 7-col grid of day buttons with a
+   prev/next header. Matches the app's dark field styling (bg-soft line-strong
+   inset; lime accent for the selected day + focus ring to match inputs). */
+.mini-cal {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px 12px;
+}
+.mini-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.mini-cal-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  text-transform: capitalize;
+}
+.mini-cal-nav {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-dim);
+  font-size: 18px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.mini-cal-nav:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background: var(--bg);
+}
+.mini-cal-nav:focus-visible {
+  outline: none;
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+.mini-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.mini-cal-dow {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--muted-2);
+  letter-spacing: 0.04em;
+  padding: 2px 0 4px;
+}
+.mini-cal-cell {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1;
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.mini-cal-cell:hover:not(.mini-cal-blank) {
+  border-color: var(--line-strong);
+  background: var(--bg);
+}
+.mini-cal-cell:focus-visible {
+  outline: none;
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+.mini-cal-cell.mini-cal-blank {
+  cursor: default;
+}
+.mini-cal-cell.mini-cal-selected {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #0a0a0c;
+  font-weight: 700;
+}
+
 /* ── SearchableSelect (type-to-search combobox) ────────────── */
 /* Replaces native client <select>s on the Finance tab. The input looks like
    the other form controls (plus a chevron hint); the dropdown is absolutely

@@ -101,6 +101,100 @@ function localTodayStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+/* ── Owner 2026-08-21 — Schedule Demo modal pickers ──────────────
+   A small hand-rolled, native calendar + a 15-min time-slot <select> replace
+   the old free-text "YYYY-MM-DDTHH:MM" field (no third-party dependency,
+   consistent with the app's hand-built UI). Month nav (prev/next), day
+   selection, and the chosen day is highlighted + echoed inline. All date math
+   is LOCAL — the demo-call endpoint expects "YYYY-MM-DDTHH:MM" local. */
+const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const MONTHS = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+/** Local YYYY-MM-DD from a Date. */
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+/** Parse "YYYY-MM-DD" into a LOCAL Date (midnight). Avoids the UTC shift the
+ *  bare `new Date("YYYY-MM-DD")` string form introduces. */
+function fromYmd(ymd: string): Date {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y || 0, (m || 1) - 1, d || 1);
+}
+function daysInMonth(y: number, m0: number): number {
+  return new Date(y, m0 + 1, 0).getDate();
+}
+/** Human-friendly readout for the chosen day, e.g. "Tue, Sep 2, 2026". */
+function fmtLongDate(ymd: string): string {
+  const d = fromYmd(ymd);
+  return `${WEEKDAYS[d.getDay()]}, ${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}, ${d.getFullYear()}`;
+}
+/** Default demo time = the next hour (rolled to 00:00 past midnight) — the
+ *  owner schedules forward-looking demos, so this is a sensible starting slot. */
+function nextHourStr(d: Date = new Date()): string {
+  const h = d.getHours() + 1;
+  return `${pad2(h > 23 ? 0 : h)}:00`;
+}
+/** 15-minute business-hour slots for the demo time <select>. */
+const DEMO_TIME_SLOTS: string[] = [];
+for (let h = 8; h <= 19; h++) {
+  for (const mm of ["00", "15", "30", "45"]) DEMO_TIME_SLOTS.push(`${pad2(h)}:${mm}`);
+}
+
+/** Native mini-calendar: month view with prev/next nav and day selection.
+ *  `value` is the selected "YYYY-MM-DD" ('' = none); clicking a day calls
+ *  onSelect with that day's YYYY-MM-DD. Self-contained, no third-party dep. */
+function MiniCalendar({ value, onSelect }: { value: string; onSelect: (ymd: string) => void }) {
+  const initial = value ? fromYmd(value) : new Date();
+  const [viewY, setViewY] = useState<number>(initial.getFullYear());
+  const [viewM, setViewM] = useState<number>(initial.getMonth());
+  const go = (delta: number) => {
+    let m = viewM + delta;
+    let y = viewY;
+    if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
+    setViewM(m);
+    setViewY(y);
+  };
+  const firstDow = new Date(viewY, viewM, 1).getDay(); // 0 = Sunday
+  const dim = daysInMonth(viewY, viewM);
+  const cells: Array<number | null> = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= dim; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  return (
+    <div className="mini-cal">
+      <div className="mini-cal-head">
+        <button type="button" className="mini-cal-nav" onClick={() => go(-1)} aria-label="Previous month">‹</button>
+        <span className="mini-cal-title">{MONTHS[viewM]} {viewY}</span>
+        <button type="button" className="mini-cal-nav" onClick={() => go(1)} aria-label="Next month">›</button>
+      </div>
+      <div className="mini-cal-grid" role="grid" aria-label="Pick a date">
+        {WEEKDAYS.map((wd) => (
+          <div key={wd} className="mini-cal-dow">{wd}</div>
+        ))}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={`b-${i}`} className="mini-cal-cell mini-cal-blank" aria-hidden="true" />;
+          const ymd = `${viewY}-${pad2(viewM + 1)}-${pad2(d)}`;
+          const sel = ymd === value;
+          return (
+            <button
+              key={ymd}
+              type="button"
+              className={"mini-cal-cell" + (sel ? " mini-cal-selected" : "")}
+              aria-pressed={sel}
+              onClick={() => onSelect(ymd)}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Owner cockpit B (owner direction 2026-08-15; PR #53 adds the full
  *  DocuSign lifecycle) — the owner's Onboarding tab DocuSign agreement
  *  status vocabulary: badge label + badge tone + the select's option label.
@@ -674,19 +768,32 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
    *  surfaced as a warn notice (never a failure). */
   const [demoNotice, setDemoNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
   const [demoTarget, setDemoTarget] = useState<Client | null>(null);
-  const [demoDt, setDemoDt] = useState("");
+  /* Owner 2026-08-21 — the Schedule Demo modal now picks a date on a mini
+     calendar and a 15-min time slot (no more free-type). demoDate is
+     "YYYY-MM-DD", demoTime is "HH:MM"; the endpoint still receives the same
+     composed "YYYY-MM-DDTHH:MM" local string. */
+  const [demoDate, setDemoDate] = useState("");
+  const [demoTime, setDemoTime] = useState("");
   const [demoLink, setDemoLink] = useState("");
   function openDemoModal(c: Client) {
-    setDemoDt(c.demoScheduledAt || "");
+    const existing = c.demoScheduledAt || "";
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(existing)) {
+      setDemoDate(existing.slice(0, 10));
+      setDemoTime(existing.slice(11, 16));
+    } else {
+      // Brand-new demo: default today + the next hour so the owner only nudges.
+      setDemoDate(localTodayStr());
+      setDemoTime(nextHourStr());
+    }
     setDemoLink(c.demoMeetingLink || "");
     setDemoTarget(c);
   }
   async function handleScheduleDemoSubmit() {
     if (!demoTarget) return;
     const c = demoTarget;
-    const dt = (demoDt || "").trim();
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dt)) {
-      setError("Enter the demo time as YYYY-MM-DDTHH:MM, e.g. 2026-08-25T14:00.");
+    const dt = `${demoDate}T${demoTime}`;
+    if (!demoDate || !demoTime || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dt)) {
+      setError("Pick a demo date and time, then Schedule.");
       return;
     }
     setBusy(true);
@@ -1757,14 +1864,31 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               </p>
               <div className="modal-form">
                 <div className="field">
-                  <span className="field-label">Demo date &amp; time (YYYY-MM-DDTHH:MM, local)</span>
-                  <input
-                    type="text"
-                    value={demoDt}
-                    onChange={(e) => setDemoDt(e.target.value)}
-                    placeholder="e.g. 2026-08-25T14:00"
-                    aria-label="Demo date and time"
-                  />
+                  <span className="field-label">Demo date</span>
+                  <MiniCalendar value={demoDate} onSelect={setDemoDate} />
+                  <span className="field-hint">
+                    {demoDate ? (
+                      <>Selected: <strong>{fmtLongDate(demoDate)}</strong>{demoTime ? ` at ${demoTime}` : ""}</>
+                    ) : (
+                      "Pick a date above."
+                    )}
+                  </span>
+                </div>
+                <div className="field">
+                  <span className="field-label">Demo time (local, 15-min slots)</span>
+                  <select
+                    value={demoTime}
+                    onChange={(e) => setDemoTime(e.target.value)}
+                    aria-label="Demo time"
+                  >
+                    {(DEMO_TIME_SLOTS.includes(demoTime) ? DEMO_TIME_SLOTS : [demoTime, ...DEMO_TIME_SLOTS]).map(
+                      (t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ),
+                    )}
+                  </select>
                 </div>
                 <div className="field">
                   <span className="field-label">Meeting link (Zoom / Google Meet)</span>

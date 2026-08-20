@@ -6760,10 +6760,10 @@ if grep -Fq 'ownerLeadsTab && (' src/Clients.tsx && grep -Fq 'aria-label="Demo o
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: demo-outcome edit-modal markers missing (src/Clients.tsx / src/ClientModal.tsx)"
 fi
-if grep -Fq 'Meeting link (Zoom / Google Meet)' src/Clients.tsx && grep -Fq 'aria-label="Meeting link"' src/Clients.tsx && grep -Fq 'body: JSON.stringify({ scheduledAt, meetingLink, duration })' src/api.ts; then
-  PASS=$((PASS+1)); echo "  ✓ source: Schedule Demo modal captures the meeting link and sends it via the API"
+if grep -Fq 'function MiniCalendar' src/Clients.tsx && grep -Fq 'aria-label="Demo time"' src/Clients.tsx && grep -Fq 'Meeting link (Zoom / Google Meet)' src/Clients.tsx && grep -Fq 'aria-label="Meeting link"' src/Clients.tsx && ! grep -Fq 'Demo date &amp; time (YYYY-MM-DDTHH:MM, local)' src/Clients.tsx && grep -Fq 'body: JSON.stringify({ scheduledAt, meetingLink, duration })' src/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: Schedule Demo modal captures date via a mini calendar + a time select + the meeting link (no free-text datetime)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: Schedule Demo meeting-link markers missing"
+  FAIL=$((FAIL+1)); echo "  ✗ source: Schedule Demo calendar-picker / time-select / meeting-link markers missing"
 fi
 # -------------------------------- cleanup ------------------------------------
 stop_crm "$MOCK50/srv.pid" 2>/dev/null
