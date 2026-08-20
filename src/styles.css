@@ -3848,10 +3848,16 @@ legend.field-label {
 .owner-actions-trigger:disabled { opacity: 0.55; cursor: default; }
 .owner-actions-dropdown {
   position: absolute;
-  top: calc(100% + 4px);
+  /* Owner 2026-08-20 — open UPWARD (above the trigger) so a row near the
+     bottom of the table never pushes the table/page to scroll, and bound the
+     menu to its own scroll box: if the item list ever exceeds max-height the
+     menu scrolls internally, never the table. */
+  bottom: calc(100% + 4px);
   right: 0;
   z-index: 40;
   min-width: 140px;
+  max-height: 220px;
+  overflow-y: auto;
   background: #141519;
   border: 1px solid var(--line-strong);
   border-radius: 9px;

@@ -6750,10 +6750,10 @@ if grep -Fq 'function OwnerActionsMenu' src/Clients.tsx && grep -Fq '>Edit<' src
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: OwnerActionsMenu (Edit/DNC/Lost) missing from src/Clients.tsx"
 fi
-if grep -Fq 'ownerOnboardingTab && ownerOrg ? (' src/Clients.tsx && grep -Fq '<th>Next action (send agreements)</th>' src/Clients.tsx && grep -Fq '<th>Agreement stages</th>' src/Clients.tsx && grep -Fq '<th>Send payment link</th>' src/Clients.tsx && grep -Fq '<th className="actions-th">Edit</th>' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: owner Onboarding tab is 6 cols (Name | Contact | Next action | Agreement stages | Send payment link | Edit)"
+if grep -Fq 'ownerOnboardingTab && ownerOrg ? (' src/Clients.tsx && grep -Fq 'sales-onboarding' src/Clients.tsx && grep -Fq '<th>Next action (send agreements)</th>' src/Clients.tsx && grep -Fq '<th>Agreement stages</th>' src/Clients.tsx && ! grep -Fq '<th>Send payment link</th>' src/Clients.tsx && grep -Fq '<th className="actions-th">Edit</th>' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Onboarding tab is 5 cols (Name | Contact | Next action | Agreement stages | Edit; Send-payment-link column removed)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: 6-col owner Onboarding headers missing from src/Clients.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: 5-col owner Onboarding headers wrong — Send-payment-link column must be gone — in src/Clients.tsx"
 fi
 if grep -Fq 'ownerLeadsTab && (' src/Clients.tsx && grep -Fq 'aria-label="Demo outcome"' src/ClientModal.tsx && grep -Fq '<option value="sold">Sold</option>' src/ClientModal.tsx && grep -Fq '<option value="not_sold">Not sold</option>' src/ClientModal.tsx && grep -Fq '<option value="maybe">Maybe</option>' src/ClientModal.tsx && grep -Fq 'Follow-up note' src/ClientModal.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: demo outcome (Sold/Not sold/Maybe + follow-up note) lives in the owner-Leads edit modal"
@@ -6765,6 +6765,28 @@ if grep -Fq 'function MiniCalendar' src/Clients.tsx && grep -Fq 'aria-label="Dem
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Schedule Demo calendar-picker / time-select / meeting-link markers missing"
 fi
+# (e) Owner Leads/Onboarding UI fixes (2026-08-20): the "Manage stages" button is
+# NOT on the owner Leads tab (scope "first") NOR the owner Onboarding tab (scope
+# "middle") — it stays only in Settings so stage management remains reachable; the
+# Actions dropdown is its own bounded scroll box that opens UPWARD with internal
+# overflow so it never pushes the table/page to scroll.
+if grep -Fq '{canEdit && !(ownerLeadsTab || ownerOnboardingTab) && (' src/Clients.tsx && grep -Fq 'Manage stages' src/Clients.tsx && grep -Fq 'onClick={() => setStageModal(true)}' src/Clients.tsx && ! grep -Fq 'canEdit && !ownerLeadsTab' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Manage-stages button hidden on owner Leads+Onboarding, kept in Settings"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Manage-stages gating missing from src/Clients.tsx"
+fi
+if python3 - <<'PY'
+css = open('src/styles.css').read()
+i = css.index('.owner-actions-dropdown {')
+j = css.index('}', i)
+blk = css[i:j]
+assert 'bottom: calc(100% + 4px)' in blk, blk
+assert 'max-height' in blk, blk
+assert 'overflow-y: auto' in blk, blk
+print("  ✓ source: Actions dropdown opens upward as its own bounded scroll box (bottom-anchored + max-height + overflow-y:auto)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: Actions dropdown scroll-box geometry missing from src/styles.css"; fi
+
 # -------------------------------- cleanup ------------------------------------
 stop_crm "$MOCK50/srv.pid" 2>/dev/null
 kill "$MOCK50_PID" 2>/dev/null
