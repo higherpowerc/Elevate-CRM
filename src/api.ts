@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
+import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -326,4 +326,21 @@ export const api = {
      green until a Stripe webhook auto-flips it in Phase 5. */
   clientPaymentPaid: (id: number) =>
     request<{ ok: true; paymentStatus: "paid" }>(`/api/clients/${id}/payment-paid`, { method: "POST" }),
+  /* Owner 2026-08-20 sales rework — "Schedule demo call" on a lead
+     (owner-only): creates an appointments row, mirrors the time onto the
+     client's demo_scheduled_at, and emails the lead a confirmation. */
+  scheduleDemoCall: (clientId: number, scheduledAt: string, duration?: number) =>
+    request<{
+      ok: true;
+      appointment: Appointment;
+      client: Client;
+      emailStatus: "sent" | "failed";
+      emailError?: string;
+    }>(`/api/clients/${clientId}/demo-call`, {
+      method: "POST",
+      body: JSON.stringify({ scheduledAt, duration }),
+    }),
+  /* Owner 2026-08-20 — the calendar: every org's demo-call appointments with
+     the linked client name. Owner-only. */
+  appointments: () => request<{ appointments: Appointment[] }>("/api/appointments"),
 };

@@ -3103,12 +3103,19 @@ fi
 PROV_ORG30E=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $PAR_ID][0])")
 
 echo "-- 30f. UI surface strings in the built bundle (terminal-split wording) =="
+# Owner 2026-08-20 sales rework — the OWNER Clients tab is now the Client
+# accounts list (no sold bin); the sold-directory wording is the TENANT surface.
 NEWEST_JS30=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS30" ] && [ -f "$NEWEST_JS30" ]; then
   if grep -q "No sold clients yet" "$NEWEST_JS30" && grep -q "sold customers" "$NEWEST_JS30"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the sold-customer directory wording (\"No sold clients yet\" + \"sold customers\")"
+    PASS=$((PASS+1)); echo "  ✓ bundle keeps the TENANT sold-customer directory wording (\"No sold clients yet\" + \"sold customers\")"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ terminal-split strings missing from $NEWEST_JS30"
+    FAIL=$((FAIL+1)); echo "  ✗ tenant terminal-split strings missing from $NEWEST_JS30"
+  fi
+  if grep -q "Client accounts" "$NEWEST_JS30"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle ships the OWNER Clients tab as the Client-accounts list (\"Client accounts\")"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ owner Client-accounts wording missing from $NEWEST_JS30"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 30f bundle surface check"

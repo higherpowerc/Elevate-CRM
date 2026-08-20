@@ -4,6 +4,7 @@ import ResetPassword from "./ResetPassword";
 import Dashboard from "./Dashboard";
 import Clients from "./Clients";
 import ClientsDirectory from "./ClientsDirectory";
+import Calendar from "./Calendar";
 import Tasks from "./Tasks";
 import Finance from "./Finance";
 import Admin from "./Admin";
@@ -29,7 +30,7 @@ import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "
  * (prospects), Onboarding = the MIDDLE stages (intake leads), Clients = the
  * terminal stage (sold). Client accounts (role=member) are unchanged: their
  * Leads tab keeps showing every stage except their terminal one. */
-type View = "dashboard" | "leads" | "onboarding" | "clients" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
+type View = "dashboard" | "leads" | "onboarding" | "clients" | "calendar" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -158,6 +159,8 @@ export default function App() {
       case "leads":
       case "clients":
         return canSeeTab("clients");
+      case "calendar":
+        return isOwnerOrg;
       case "tasks":
         return canSeeTab("tasks");
       case "finance":
@@ -385,6 +388,16 @@ export default function App() {
                 Onboarding
               </button>
             )}
+            {/* Owner 2026-08-20 sales rework — the owner's Calendar view:
+                demo-call appointments, owner-workspace only. */}
+            {isOwnerOrg && (
+              <button
+                className={effectiveView === "calendar" ? "tab active" : "tab"}
+                onClick={() => setView("calendar")}
+              >
+                Calendar
+              </button>
+            )}
             {canSeeTab("clients") && (
               <button
                 className={effectiveView === "clients" ? "tab active" : "tab"}
@@ -520,7 +533,9 @@ export default function App() {
         ) : effectiveView === "clients" ? (
           /* Owner live-test reorg 2026-08-18 — the owner's Clients tab hosts
              the ACCOUNT management panel (create / view / reset / delete) via
-             ClientsDirectory's Accounts sub-component. */
+             ClientsDirectory's Accounts sub-component. Owner 2026-08-20 — the
+             owner's Clients tab is now the CLIENT ACCOUNTS list (the single
+             client list), not a sold directory. */
           <ClientsDirectory
             stages={stages}
             ownerOrg={isOwnerOrg}
@@ -528,6 +543,10 @@ export default function App() {
             ownerOrgId={isOwnerOrg ? user.orgId : undefined}
             onViewAccount={isOwnerOrg ? handleImpersonate : undefined}
           />
+        ) : effectiveView === "calendar" ? (
+          /* Owner 2026-08-20 sales rework — the owner's Calendar view of
+             demo-call appointments. Owner-workspace only. */
+          <Calendar />
         ) : effectiveView === "tasks" ? (
           <Tasks canEdit={canEditTab("tasks")} />
         ) : effectiveView === "finance" ? (
