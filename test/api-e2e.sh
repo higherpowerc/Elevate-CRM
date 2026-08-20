@@ -7007,6 +7007,62 @@ if [ -n "$NEWEST_JS52" ] && [ -f "$NEWEST_JS52" ]; then
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 52d bundle surface check"
 fi
+# (e) EDIT-MODAL 'sold' path — clobber regression (PR #84). The client PUT is a
+#     true partial update, so handleSave's relocate MUST merge into the freshly
+#     saved `input` (which carries demoOutcome=sold) rather than a stale
+#     `...editing` spread (whose PRE-SAVE demoOutcome would be written back over
+#     the new "sold"). Replay the exact two-PUT sequence handleSave performs:
+#     (1) save `input` (demoOutcome=sold, stage still first), then (2) the merged
+#     relocate `{...input, stage:onboardingStage}` — assert outcome+relocation
+#     BOTH persist. With the old stale-spread code, (2) was `{...editing,
+#     stage:onboardingStage}` and rewrote demoOutcome back to the stale value.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Edit Modal Sale Co\",\"contactName\":\"Emma E\",\"email\":\"emma@editmodal.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$F52\"}" "$BASE/api/clients")
+check "52e: owner creates a lead for the edit-modal path -> 201" 201 "$S"
+EM_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+# Establish a STALE pre-save demoOutcome (the value the old buggy spread would
+# clobber 'sold' back to). The client PUT is partial, so this writes only
+# demoOutcome — no stage change.
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"maybe\"}" "$BASE/api/clients/$EM_ID")
+check "52e: pre-save demoOutcome=maybe recorded on the lead -> 200" 200 "$S"
+grep -q '"demoOutcome":"maybe"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52e: stale pre-save demoOutcome=maybe in place (the clobber value)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52e: payload: $(cat /tmp/body.json)"; }
+# (1) The edit-modal save (`input`): demoOutcome set to sold, stage still F52.
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$F52\"}" "$BASE/api/clients/$EM_ID")
+check "52e: edit-modal first PUT saves demoOutcome=sold -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52e: first PUT carried demoOutcome=sold"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52e: payload: $(cat /tmp/body.json)"; }
+# (2) The merged relocate `{...input, stage:onboardingStage}` — input already
+#     carries demoOutcome=sold, so it must NOT be clobbered back to 'maybe'.
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$M52\"}" "$BASE/api/clients/$EM_ID")
+check "52e: edit-modal merged relocate (demoOutcome=sold kept) -> 200" 200 "$S"
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+if EM_ID="$EM_ID" F52="$F52" M52="$M52" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['EM_ID'])][0]
+first, mid = os.environ['F52'], os.environ['M52']
+assert me['stage'] == mid, me['stage']
+assert me['demoOutcome'] == 'sold', ("demoOutcome clobbered: " + repr(me['demoOutcome']))
+leads_bucket = [c for c in clients if c['stage'] == first]
+onboard_bucket = [c for c in clients if c['stage'] == mid]
+assert me not in leads_bucket, "sold lead still in the Leads bucket"
+assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
+print("  ✓ 52e: edit-modal sold lead relocated to Onboarding with demoOutcome=sold PERSISTED (no stale-spread clobber)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 52e: edit-modal sold relocation + retained outcome verified (no clobber)"; else FAIL=$((FAIL+1)); echo "  ✗ 52e: edit-modal sold relocate/clobber check failed"; cat "$PASS_TMP"; fi
+if python3 - <<'PY'
+ts = open('src/Clients.tsx').read()
+hd = ts.index('async function handleSave')
+blk = ts[hd:ts.index('async function handleDelete', hd)]
+assert 'ownerLeadsTab' in blk, 'no ownerLeadsTab gate'
+assert '...input, stage: onboardingStage' in blk, 'sold relocate must merge into input, not a stale spread'
+assert 'editing, stage: onboardingStage' not in blk, 'stale ...editing spread still present in sold relocate'
+assert '...input, lost: true' in blk, 'not_sold relocate must merge into input'
+print("  ✓ source: handleSave sold/not_sold relocates merge into the freshly-saved input (no stale ...editing spread)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleSave stale ...editing spread not fully removed from src/Clients.tsx"; fi
 echo "  ✓ 52: OwnerActionsMenu one-click demo outcomes complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 

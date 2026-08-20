@@ -556,10 +556,15 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       // 'maybe' keeps the lead on Leads untouched (its follow-up note is saved
       // with the record above).
       if (editing && ownerLeadsTab) {
+        // Merge into `input` (which already carries the just-saved demoOutcome),
+        // NOT a stale `...editing` spread — the client PUT is a true partial
+        // update, so a stale spread would write the PRE-SAVE demoOutcome back
+        // over the freshly-saved one (a real clobber). Mirror handleDemoOutcome's
+        // single merged PUT so the new outcome survives the relocation.
         if (input.demoOutcome === "sold" && onboardingStage && editing.stage !== onboardingStage) {
-          await api.updateClient(editing.id, { ...editing, stage: onboardingStage });
+          await api.updateClient(editing.id, { ...input, stage: onboardingStage });
         } else if (input.demoOutcome === "not_sold" && !editing.lost) {
-          await api.updateClient(editing.id, { ...editing, lost: true, lostReason: "Not sold after demo" });
+          await api.updateClient(editing.id, { ...input, lost: true, lostReason: "Not sold after demo" });
         }
       }
       setModal(null);
