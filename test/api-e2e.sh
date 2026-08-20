@@ -6913,6 +6913,101 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 51d bundle surface check"
 fi
 echo "  ✓ 51: Owner-settings cleanup battery complete"
+echo "-- 52a. OwnerActionsMenu one-click demo outcomes: the owner Leads row's Actions dropdown lists Sold / Not sold / Maybe next to Edit / DNC / Lost, and a one-click 'sold' relocates the lead into Onboarding exactly like the edit modal --"
+# Owner finding 2026-08-21: the Sold outcome was only reachable inside the edit
+# modal's "Demo outcome" select. Quick actions (Sold / Not sold / Maybe) were added
+# to the owner Leads Actions dropdown (OwnerActionsMenu). Each calls
+# handleDemoOutcome(client, outcome), which records the demoOutcome AND now performs
+# the SAME side-effects handleSave runs for the edit-modal select: 'sold' relocates
+# the lead into the ONBOARDING bucket (orgStages[1]), 'not_sold' flags it lost.
+# Behavioral checks run against the shared throwaway server with $JAR (owner).
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+F52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
+M52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][1])")
+echo "     (owner buckets: Leads=\"$F52\", onboarding=\"$M52\")"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"One-Click Sale Co\",\"contactName\":\"Oscar O\",\"email\":\"oscar@oneclick.example\",\"clientType\":\"commercial\",\"dealValue\":5000,\"stage\":\"$F52\"}" "$BASE/api/clients")
+check "52a: owner creates a fresh lead in the first stage -> 201" 201 "$S"
+OC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+# The dropdown's Sold quick action calls handleDemoOutcome(c,'sold'), which fires a
+# SINGLE updateClient carrying demoOutcome=sold AND stage=onboardingStage together
+# (never a stale two-PUT that would clobber the outcome) — replay that call verbatim.
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"One-Click Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$M52\"}" "$BASE/api/clients/$OC_ID")
+check "52a: one-click Sold PUTs demoOutcome=sold + onboarding stage together -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$M52\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52a: sold lead now carries demoOutcome=sold and sits in the Onboarding stage (single PUT)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52a: payload: $(cat /tmp/body.json)"; }
+code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
+if OC_ID="$OC_ID" F52="$F52" M52="$M52" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['OC_ID'])][0]
+first, mid = os.environ['F52'], os.environ['M52']
+assert me['stage'] == mid, me['stage']
+assert me['demoOutcome'] == 'sold', me['demoOutcome']
+leads_bucket = [c for c in clients if c['stage'] == first]
+onboard_bucket = [c for c in clients if c['stage'] == mid]
+assert me not in leads_bucket, "sold lead still in the Leads bucket"
+assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
+print("  ✓ 52a: one-click Sold moved the lead out of the Leads bucket into the Onboarding bucket (demoOutcome retained)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 52a: sold relocation via the dropdown path verified (Leads -> Onboarding)"; else FAIL=$((FAIL+1)); echo "  ✗ 52a: sold relocation failed"; cat "$PASS_TMP"; fi
+# (b) 'Not sold' quick action: keeps the lead but flags it lost (not-interested),
+#     the same side-effect the edit modal applies.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Not Sold Co\",\"contactName\":\"Nia N\",\"email\":\"nia@notsold.example\",\"clientType\":\"commercial\",\"dealValue\":2500,\"stage\":\"$F52\"}" "$BASE/api/clients")
+check "52b: owner creates another fresh lead -> 201" 201 "$S"
+NS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Not Sold Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"not_sold\",\"lost\":true,\"lostReason\":\"Not sold after demo\"}" "$BASE/api/clients/$NS_ID")
+check "52b: one-click Not sold PUTs demoOutcome=not_sold + lost flag -> 200" 200 "$S"
+grep -q '"demoOutcome":"not_sold"' /tmp/body.json && grep -q '"lost":true' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52b: not_sold lead flagged lost (not-interested)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52b: payload: $(cat /tmp/body.json)"; }
+# (c) Source markers — the owner Leads Actions dropdown ships Edit / Sold / Not sold /
+#     Maybe / DNC / Lost in that order, wired to handleDemoOutcome; and
+#     handleDemoOutcome itself performs the sold -> onboarding relocation (owner Leads).
+if python3 - <<'PY'
+ts = open('src/Clients.tsx').read()
+oa = ts.index('function OwnerActionsMenu')
+menu = ts[oa:ts.index('export default function Clients', oa)]
+assert '>Edit<' in menu
+assert 'onDemo(client, "sold")' in menu
+assert 'onDemo(client, "not_sold")' in menu
+assert 'onDemo(client, "maybe")' in menu
+assert 'onFlag(client, "dnc")' in menu
+assert 'onFlag(client, "lost")' in menu
+# Order top->down must be Edit, Sold, Not sold, Maybe, DNC, Lost.
+idx = {
+ 'Edit': menu.index('>Edit<'), 'Sold': menu.index('onDemo(client, "sold")'),
+ 'NotSold': menu.index('onDemo(client, "not_sold")'), 'Maybe': menu.index('onDemo(client, "maybe")'),
+ 'DNC': menu.index('onFlag(client, "dnc")'), 'Lost': menu.index('onFlag(client, "lost")'),
+}
+assert idx['Edit'] < idx['Sold'] < idx['NotSold'] < idx['Maybe'] < idx['DNC'] < idx['Lost'], idx
+print("  ✓ source: OwnerActionsMenu ships Edit then Sold / Not sold / Maybe then DNC / Lost (one-click quick actions)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: OwnerActionsMenu Sold/Not sold/Maybe quick actions missing from src/Clients.tsx"; fi
+if python3 - <<'PY'
+ts = open('src/Clients.tsx').read()
+hd = ts.index('async function handleDemoOutcome')
+blk = ts[hd:hd+1100]
+assert 'ownerLeadsTab' in blk, 'no ownerLeadsTab gate'
+assert '"sold"' in blk and 'onboardingStage' in blk, 'no sold relocate wiring'
+assert 'c.stage !== onboardingStage' in blk, 'no stage-compare guard'
+assert 'patch.stage = onboardingStage' in blk, 'no onboarding stage write on the patch'
+assert 'demoOutcome: outcome' in blk and 'patch' in blk, 'single-PUT merge missing'
+print("  ✓ source: handleDemoOutcome performs the sold -> Onboarding relocate in a single PUT (owner Leads tab)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleDemoOutcome sold-relocate logic missing from src/Clients.tsx"; fi
+# (d) Shipped bundle carries the quick-action labels.
+bun run build >/dev/null 2>&1
+NEWEST_JS52=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS52" ] && [ -f "$NEWEST_JS52" ]; then
+  for STR52 in "Not sold" "Maybe"; do
+    if grep -Fq "$STR52" "$NEWEST_JS52"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR52\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR52\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 52d bundle surface check"
+fi
+echo "  ✓ 52: OwnerActionsMenu one-click demo outcomes complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

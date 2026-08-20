@@ -255,9 +255,12 @@ function AgreementTracker({ status }: { status: AgreementStatus }) {
 }
 
 /** Owner 2026-08-20 sales rework — the owner Leads tab's ACTIONS dropdown
- *  menu. Trigger "Actions ▾" opens a menu listing EXACTLY Edit / DNC / Lost
- *  (Delete + Archive are intentionally NOT here on the owner Leads tab — they
- *  remain available via the edit modal and other tabs). Accessible: the
+ *  menu. Trigger "Actions ▾" opens a menu listing Edit / Sold / Not sold / Maybe /
+ *  DNC / Lost (Delete + Archive are intentionally NOT here on the owner Leads tab —
+ *  they remain available via the edit modal and other tabs). Sold / Not sold / Maybe
+ *  are the one-click demo outcomes: "Sold" records the sold outcome and relocates
+ *  the lead into Onboarding (the same path the edit modal's outcome select takes).
+ *  Accessible: the
  *  trigger is aria-haspopup/aria-expanded, each item role=menuitem with a
  *  keyboard tab-stop, Esc closes the menu, and the menu closes on outside
  *  click.
@@ -269,10 +272,11 @@ function AgreementTracker({ status }: { status: AgreementStatus }) {
  *  relative, so no ancestor overflow can clip it) at the trigger's bottom edge
  *  (top = rect.bottom + 4). max-height + overflow-y:auto stay as the safety
  *  net for very long item lists. */
-function OwnerActionsMenu({ client, busy, onEdit, onFlag }: {
+function OwnerActionsMenu({ client, busy, onEdit, onDemo, onFlag }: {
   client: Client;
   busy: boolean;
   onEdit: () => void;
+  onDemo: (c: Client, outcome: "sold" | "not_sold" | "maybe") => void;
   onFlag: (c: Client, flag: "lost" | "dnc") => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -328,6 +332,15 @@ function OwnerActionsMenu({ client, busy, onEdit, onFlag }: {
           style={{ position: "fixed", top: pos.top, right: pos.right }}
         >
           <button type="button" role="menuitem" onClick={() => close(onEdit)}>Edit</button>
+          <button type="button" role="menuitem" onClick={() => close(() => onDemo(client, "sold"))}>
+            Sold
+          </button>
+          <button type="button" role="menuitem" onClick={() => close(() => onDemo(client, "not_sold"))}>
+            Not sold
+          </button>
+          <button type="button" role="menuitem" onClick={() => close(() => onDemo(client, "maybe"))}>
+            Maybe
+          </button>
           <button type="button" role="menuitem" onClick={() => close(() => onFlag(client, "dnc"))}>
             {client.dnc ? "Clear DNC" : "DNC"}
           </button>
@@ -770,12 +783,30 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
    *  ('' clears it back to no-demo). "sold" is a RECORDED state — it does NOT
    *  auto-create a client account (the owner manually creates one after sold +
    *  signed agreements + paid); it just marks the lead so the flow can move on
-   *  to Agreements/Onboarding. Mirrors the demoOutcome PUT faithfully. */
+   *  to Agreements/Onboarding. Mirrors the demoOutcome PUT faithfully.
+   *  Owner 2026-08-21 — this is now also reached by the owner Leads dropdown's
+   *  one-click Sold / Not sold / Maybe quick actions, so beside recording the
+   *  demoOutcome it reproduces the SAME side-effects handleSave performs for the
+   *  edit-modal outcome select (gated on ownerLeadsTab): 'sold' relocates the
+   *  lead into the ONBOARDING bucket (the same positional path "Start
+   *  Onboarding" used) and 'not_sold' flags the lead lost (not-interested).
+   *  Implemented as ONE updateClient carrying the outcome AND its relocate
+   *  fields together — never a second Put of a stale object — so the recorded
+   *  demoOutcome is never clobbered by the relocation. */
   async function handleDemoOutcome(c: Client, outcome: "" | "sold" | "not_sold" | "maybe") {
     setBusy(true);
     setError(null);
     try {
-      await api.updateClient(c.id, { ...c, demoOutcome: outcome });
+      const patch: ClientInput = { ...c, demoOutcome: outcome };
+      if (ownerLeadsTab) {
+        if (outcome === "sold" && onboardingStage && c.stage !== onboardingStage) {
+          patch.stage = onboardingStage;
+        } else if (outcome === "not_sold" && !c.lost) {
+          patch.lost = true;
+          patch.lostReason = "Not sold after demo";
+        }
+      }
+      await api.updateClient(c.id, patch);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Demo outcome update failed.");
@@ -1276,6 +1307,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         client={c}
                         busy={busy}
                         onEdit={() => setModal({ mode: "edit", client: c })}
+                        onDemo={handleDemoOutcome}
                         onFlag={handleFlag}
                       />
                     </td>
