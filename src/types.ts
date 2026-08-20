@@ -169,6 +169,37 @@ export interface Client {
   /** Phase 5 — the owner-entered amount (USD cents) the last Stripe payment
    *  link was sent for. OWNER-only, like paymentStatus. */
   paymentAmountCents?: number;
+  /** Owner 2026-08-20 sales rework — the demo-call outcome recorded on a lead
+   *  after a demo: '' (no demo yet) | 'sold' | 'not_sold' | 'maybe'. 'sold' is
+   *  a RECORDED state — it does NOT auto-create a client account (the owner
+   *  creates one after sold + signed agreements + paid). OWNER-workspace-only;
+   *  additive to `stage`, never a replacement. */
+  demoOutcome?: "" | "sold" | "not_sold" | "maybe";
+  /** The "YYYY-MM-DDTHH:MM" a demo call was scheduled for ('' = none); mirrors
+   *  the appointments table. OWNER-workspace-only. */
+  demoScheduledAt?: string;
+  /** Owner 2026-08-20 — true when this record's `stage` is NOT in its org's
+   *  current stage list, so the UI can surface it in an "out of pipeline"
+   *  bucket rather than silently dropping it from every tab. OWNER-workspace-
+   *  only. */
+  orphanedStage?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Owner 2026-08-20 sales rework — a demo-call appointment on the owner's
+ *  calendar. `scheduledAt` is a local "YYYY-MM-DDTHH:MM" string; `status` ∈
+ *  scheduled | confirmed | held | cancelled. */
+export interface Appointment {
+  id: number;
+  orgId: number;
+  clientId: number | null;
+  clientName: string;
+  title: string;
+  scheduledAt: string;
+  duration: number;
+  status: "scheduled" | "confirmed" | "held" | "cancelled";
+  notes: string;
   createdAt: string;
   updatedAt: string;
 }

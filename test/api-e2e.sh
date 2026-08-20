@@ -1983,6 +1983,7 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ boot verify failed: $BF_VERIFY"
 fi
 kill "$(cat "$BF_DIR/boot.pid")" 2>/dev/null
+for x in $(lsof -ti:3099 2>/dev/null); do kill "$x" 2>/dev/null; done
 rm -rf "$BF_DIR" /tmp/backfill_result.json /tmp/boot_verify.json
 echo "== 25d. Individual lead rows: no person name under 'Business name'; full name in Contact — GLOBAL (owner AND tenant, owner direction 2026-08-16) =="
 # The PR #62 display rules (live-test finding 2026-08-15) are now GLOBAL: an
@@ -2322,14 +2323,20 @@ fi
 # CRM server with its own fresh DB and waits until it answers.
 start_crm() {
   local port=$1 dir=$2 logf=$3 pidf=$4; shift 4
-  ( cd "$APP_DIR" && env "$@" DATA_DIR="$dir" PORT="$port" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" nohup bun ./server/index.ts > "$logf" 2>&1 & echo $! > "$pidf" )
+  ( cd "$APP_DIR" && env "$@" DATA_DIR="$dir" PORT="$port" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" nohup bun ./server/index.ts > "$logf" 2>&1 & echo "$port $!" > "$pidf" )
   local i=0
   until curl -s -o /dev/null "http://localhost:$port/api/auth/me" 2>/dev/null; do
     i=$((i+1)); [ "$i" -gt 50 ] && { echo "  ✗ CRM server on :$port failed to start (see $logf)"; return 1; }
     sleep 0.2
   done
 }
-stop_crm() { kill "$(cat "$1")" 2>/dev/null; }
+stop_crm() {
+  local port pid
+  read port pid < "$1" 2>/dev/null || return 0
+  [ -n "${port:-}" ] && for x in $(lsof -ti:"$port" 2>/dev/null); do kill "$x" 2>/dev/null; done
+  [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null
+  sleep 0.3
+}
 
 echo "-- 27a. RESEND_API_KEY unset → provision succeeds, email skipped, no crash =="
 start_crm 3002 "$MOCK/db-a" "$MOCK/srv-a.log" "$MOCK/srv-a.pid" -u RESEND_API_KEY -u RESEND_URL -u TEST_EMAIL_TO
@@ -3103,12 +3110,19 @@ fi
 PROV_ORG30E=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $PAR_ID][0])")
 
 echo "-- 30f. UI surface strings in the built bundle (terminal-split wording) =="
+# Owner 2026-08-20 sales rework — the OWNER Clients tab is now the Client
+# accounts list (no sold bin); the sold-directory wording is the TENANT surface.
 NEWEST_JS30=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS30" ] && [ -f "$NEWEST_JS30" ]; then
   if grep -q "No sold clients yet" "$NEWEST_JS30" && grep -q "sold customers" "$NEWEST_JS30"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the sold-customer directory wording (\"No sold clients yet\" + \"sold customers\")"
+    PASS=$((PASS+1)); echo "  ✓ bundle keeps the TENANT sold-customer directory wording (\"No sold clients yet\" + \"sold customers\")"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ terminal-split strings missing from $NEWEST_JS30"
+    FAIL=$((FAIL+1)); echo "  ✗ tenant terminal-split strings missing from $NEWEST_JS30"
+  fi
+  if grep -q "Client accounts" "$NEWEST_JS30"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle ships the OWNER Clients tab as the Client-accounts list (\"Client accounts\")"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ owner Client-accounts wording missing from $NEWEST_JS30"
   fi
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 30f bundle surface check"
@@ -6472,6 +6486,168 @@ kill "$MOCK49_PID" 2>/dev/null
 rm -f "$JA49" "$MOCK49/ev.json" "$MOCK49/ev.sig" "$MOCK49/evb.json" "$MOCK49/evb.sig" "$MOCK49/evx.json" "$MOCK49/evx.sig" "$MOCK49/evu.json" "$MOCK49/evu.sig" "$MOCK49/evns.json"
 rm -rf "$MOCK49"
 echo "  ✓ 49: Phase 5 Stripe billing webhook battery complete"
+echo "== 50. Leads -> Demo call -> Client accounts (owner 2026-08-20 sales rework) =="
+# Hermetic battery (throwaway server + mock Resend, mirroring the section-49
+# pattern). Covers (a) the demo-outcome dropdown -> API (owner set/clear +
+# validation + non-owner 403 on the demo routes), (b) schedule-demo-call ->
+# calendar + confirmation email, (c) the orphaned-stage safety surface (records
+# whose stage left the org's stage list are flagged, never silently dropped),
+# and (d) a signed+sold lead -> the owner manually creates a Client account ->
+# it appears in the owner's account list.
+# NOTE: the client update route (PUT) validates the full body (companyName +
+# clientType required), so every demo/lead mutation below carries them — only
+# the mutate keys change. The orphaned-stage check uses a DB fixture (raw
+# sqlite, like section 49) to plant a legacy "Proposal" stage on a record,
+# because the API create/update reject a stage outside the org's stage list
+# (that is exactly the point — a stage can only leave the list via legacy data
+# or a direct write).
+MOCK50=$(mktemp -d)
+cat > "$MOCK50/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock50-emails.jsonl";
+const server = Bun.serve({
+  port: 3213,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+TS
+MOCK_OUT="$MOCK50/emails.jsonl" nohup bun "$MOCK50/resend.ts" > "$MOCK50/resend.log" 2>&1 &
+MOCK50_PID=$!
+sleep 1
+if curl -s -o /dev/null http://127.0.0.1:3213/health; then
+  PASS=$((PASS+1)); echo "  ✓ 50: mock Resend up on :3213"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 50: mock Resend failed to start"
+fi
+# Server on :3013 (free of every suite section). Stripe keys stripped.
+start_crm 3013 "$MOCK50/db" "$MOCK50/srv.log" "$MOCK50/srv.pid" -u STRIPE_SECRET_KEY RESEND_API_KEY=test-key-50 RESEND_URL=http://127.0.0.1:3213 TEST_EMAIL_TO=owner-test@gmail.com
+B50=http://localhost:3013
+JA50=$(mktemp)
+JT50=$(mktemp)
+S=$(code -c "$JA50" -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B50/api/auth/login")
+check "50a: owner login -> 200" 200 "$S"
+echo "-- 50a. Demo-outcome dropdown -> API (owner set/clear + non-owner denied) --"
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Demo Outcome Co","contactName":"Dana D","email":"dana@demo.example","clientType":"commercial","dealValue":3000,"stage":"Leads"}' "$B50/api/clients")
+check "50a: owner creates demo lead -> 201" 201 "$S"
+DL_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":"sold"}' "$B50/api/clients/$DL_ID")
+check "50a: owner sets demoOutcome=sold -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50a: payload reflects sold"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50a: payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":"not_sold"}' "$B50/api/clients/$DL_ID")
+check "50a: owner sets demoOutcome=not_sold -> 200" 200 "$S"
+grep -q '"demoOutcome":"not_sold"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50a: payload reflects not_sold"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50a: payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":"maybe"}' "$B50/api/clients/$DL_ID")
+check "50a: owner sets demoOutcome=maybe -> 200" 200 "$S"
+grep -q '"demoOutcome":"maybe"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50a: payload reflects maybe"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50a: payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":""}' "$B50/api/clients/$DL_ID")
+check "50a: owner CLEARS demoOutcome -> 200" 200 "$S"
+grep -q '"demoOutcome":""' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50a: payload reflects cleared"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50a: payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":"bogus"}' "$B50/api/clients/$DL_ID")
+check "50a: invalid demoOutcome -> 400" 400 "$S"
+# Non-owner denied: create a tenant account, login as it, prove it can neither
+# schedule a demo-call nor read the owner calendar (requireAdmin -> 403).
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Demo Tenant Co","email":"tenant50@demo.example","password":"tenantpass123"}' "$B50/api/admin/orgs")
+check "50a: owner creates tenant account -> 201" 201 "$S"
+S=$(code -c "$JT50" -b "$JT50" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"tenant50@demo.example","password":"tenantpass123"}' "$B50/api/auth/login")
+check "50a: tenant login -> 200" 200 "$S"
+check "50a: tenant cannot schedule demo-call on owner lead -> 403" 403 $(code -b "$JT50" -X POST -H 'Content-Type: application/json' -d '{"scheduledAt":"2026-08-25T10:00"}' "$B50/api/clients/$DL_ID/demo-call")
+check "50a: tenant cannot read owner calendar -> 403" 403 $(code -b "$JT50" "$B50/api/appointments")
+echo "-- 50b. Schedule demo call -> calendar + confirmation email --"
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":"sold"}' "$B50/api/clients/$DL_ID")
+check "50b: mark the lead sold (enables Agreements path) -> 200" 200 "$S"
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' -d '{"scheduledAt":"2026-08-25T14:30","duration":45}' "$B50/api/clients/$DL_ID/demo-call")
+check "50b: owner schedules demo call -> 201" 201 "$S"
+grep -q '"ok":true' /tmp/body.json && grep -q '"scheduledAt":"2026-08-25T14:30"' /tmp/body.json && grep -q '"status":"scheduled"' /tmp/body.json && grep -q '"duration":45' /tmp/body.json && grep -q '"emailStatus":"sent"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50b: response carries appointment + mirrored time + sent email"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50b: demo-call response: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" "$B50/api/clients/$DL_ID")
+check "50b: owner GET lead -> 200" 200 "$S"
+grep -q '"demoScheduledAt":"2026-08-25T14:30"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50b: demo time mirrored onto the lead"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50b: lead payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" "$B50/api/appointments")
+check "50b: owner calendar lists the appointment -> 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+apps = d.get('appointments', [])
+m = [a for a in apps if a.get('scheduledAt') == '2026-08-25T14:30' and a.get('status') == 'scheduled' and a.get('duration') == 45 and a.get('clientName') == 'Demo Outcome Co']
+assert m, apps
+print("  ✓ 50b: calendar returns the scheduled demo (clientName + time + status)")
+PY
+if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50b: calendar assertion failed"; fi
+sleep 1
+python3 - "$MOCK50/emails.jsonl" <<'PY'
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+demos = [l for l in lines if l.get("subject") == "Your Revzenta demo call is scheduled" and "2026-08-25T14:30" in l.get("text", "")]
+assert demos, lines
+print("  ✓ 50b: confirmation email sent to the lead with the demo time")
+PY
+if [ $? -eq 0 ]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50b: confirmation email assertion failed"; fi
+echo "-- 50c. Out of pipeline / orphaned-stage safety surface --"
+code -b "$JA50" "$B50/api/settings" > /dev/null
+ORIG_STAGES50=$(python3 -c "import json;print(json.dumps(json.load(open('/tmp/body.json'))['settings']['stages']))")
+FIRST_STAGE50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
+# Create an in-pipeline lead, then use a raw DB fixture to plant a legacy
+# "Proposal" stage on it (a stage that is NOT in the owner's current stage list,
+# exactly how a legacy record ends up orphaned). It must be flagged orphaned and
+# STILL returned (never the silent-drop path), and re-admitting the stage to the
+# org's settings clears the flag.
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Orphan Co\",\"contactName\":\"Opal O\",\"email\":\"opal@orphan.example\",\"clientType\":\"commercial\",\"dealValue\":1200,\"stage\":\"$FIRST_STAGE50\"}" "$B50/api/clients")
+check "50c: owner creates an in-pipeline lead -> 201" 201 "$S"
+OR_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+cat > "$MOCK50/fix50.ts" <<'TS'
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.FIX50_DB ?? "data/crm.db");
+db.query("UPDATE clients SET stage = 'Proposal' WHERE id = ?").run(Number(process.argv[2]));
+console.log("fix50 ok");
+TS
+if FIX50_DB="$MOCK50/db/crm.db" bun "$MOCK50/fix50.ts" "$OR_ID"; then
+  PASS=$((PASS+1)); echo "  ✓ 50c: DB fixture planted the legacy Proposal stage on the lead"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 50c: 50c DB fixture failed"
+fi
+S=$(code -b "$JA50" "$B50/api/clients/$OR_ID")
+check "50c: GET lead -> 200" 200 "$S"
+grep -q '"orphanedStage":true' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50c: legacy-stage record flagged orphaned (never silently dropped)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50c: payload: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA50" "$B50/api/clients")
+check "50c: owner clients list still returns the orphaned record -> 200" 200 "$S"
+grep -q 'Orphan Co' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50c: orphaned record surfaced in the owner list"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50c: orphaned record dropped from list: $(cat /tmp/body.json)"; }
+NEW_STAGES50=$(python3 -c "import json,sys; s=json.loads(sys.argv[1]); s.append('Proposal'); print(json.dumps(s))" "$ORIG_STAGES50")
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"stages\":$NEW_STAGES50}" "$B50/api/settings")
+check "50c: owner restores the legacy stage into settings -> 200" 200 "$S"
+S=$(code -b "$JA50" "$B50/api/clients/$OR_ID")
+check "50c: GET lead after restoring stage -> 200" 200 "$S"
+grep -q '"orphanedStage":false' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50c: restored stage clears the orphaned flag"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50c: payload: $(cat /tmp/body.json)"; }
+echo "-- 50d. Signed + sold lead -> owner manually creates Client account --"
+S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Demo Outcome Co","clientType":"commercial","demoOutcome":"sold","stage":"Sold","agreementStatus":"signed"}' "$B50/api/clients/$DL_ID")
+check "50d: mark the lead sold + agreement signed -> 200" 200 "$S"
+grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50d: agreement signed on the sold lead"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50d: payload: $(cat /tmp/body.json)"; }
+NEW_NAME50="Account From Sold Lead Co"
+S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
+  -d "{\"name\":\"$NEW_NAME50\",\"email\":\"soldlead50@example.com\",\"password\":\"soldpass123\"}" "$B50/api/admin/orgs")
+check "50d: owner manually creates the client account -> 201" 201 "$S"
+S=$(code -b "$JA50" "$B50/api/admin/orgs")
+check "50d: owner account list -> 200" 200 "$S"
+grep -q "$NEW_NAME50" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50d: new client account appears in the owner account list"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50d: account missing from list: $(cat /tmp/body.json)"; }
+# -------------------------------- cleanup ------------------------------------
+stop_crm "$MOCK50/srv.pid" 2>/dev/null
+kill "$MOCK50_PID" 2>/dev/null
+rm -f "$JA50" "$JT50"
+rm -rf "$MOCK50"
+echo "  ✓ 50: Leads -> Demo call -> Client accounts battery complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

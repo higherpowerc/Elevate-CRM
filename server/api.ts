@@ -14,6 +14,8 @@ import {
   type TenantTab,
   INVOICE_STATUSES,
   isInvoiceStatus,
+  isAppointmentStatus,
+  type AppointmentRow,
   TICKET_STATUSES,
   TICKET_PRIORITIES,
   isTicketStatus,
@@ -65,7 +67,7 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
 import Stripe from "stripe";
 import { generateInvoicePdf } from "./invoices";
 import { stripeClient } from "./stripe";
@@ -532,8 +534,31 @@ function toClient(row: ClientRow, ownerOrg = false) {
           paymentLinkUrl: row.payment_link_url,
           paidAt: row.paid_at,
           paymentAmountCents: row.payment_amount_cents ?? 0,
+          // Owner 2026-08-20 sales rework — demo outcome ('', sold, not_sold,
+          // maybe) + scheduled demo datetime + orphaned-stage flag. OWNER-only.
+          demoOutcome: typeof row.demo_outcome === "string" ? row.demo_outcome : "",
+          demoScheduledAt: typeof row.demo_scheduled_at === "string" ? row.demo_scheduled_at : "",
+          orphanedStage: isStageOrphaned(row.org_id, row.stage),
         }
       : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Owner 2026-08-20 sales rework — serialize an appointment row for the API,
+ *  normalizing the optional client's name for the owner's calendar view. */
+function toAppointment(row: AppointmentRow, clientName?: string) {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    clientId: row.client_id,
+    clientName: clientName ?? "",
+    title: row.title,
+    scheduledAt: row.scheduled_at,
+    duration: row.duration,
+    status: isAppointmentStatus(row.status) ? row.status : "scheduled",
+    notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1599,6 +1624,21 @@ function isFinalStage(orgId: number, stage: string): boolean {
   const stages = parseStages(org.stages);
   if (stages.length === 0) return false;
   return stage.trim().toLowerCase() === stages[stages.length - 1].toLowerCase();
+}
+
+/** Invisibility-bug fix (owner 2026-08-20): true when the client record's
+ *  `stage` is NOT in its org's CURRENT stage list. Such a record is not part
+ *  of any pipeline bucket (Leads/Onboarding/Clients scope by stage position),
+ *  so without this flag the client UI's strict scopedStages.includes filter
+ *  would drop it from EVERY tab — silently orphaned. The owner UI surfaces
+ *  these in a dedicated "Out of pipeline" bucket so no record ever vanishes
+ *  (and a repaired/moved stage re-enters the normal pipeline). */
+function isStageOrphaned(orgId: number, stage: string): boolean {
+  const org = getOrg(orgId);
+  if (!org) return false;
+  const stages = parseStages(org.stages);
+  if (stages.length === 0) return false;
+  return !stages.some((s) => s.trim().toLowerCase() === (stage || "").trim().toLowerCase());
 }
 
 /** Match a client's free-text industry against the vertical catalog:
@@ -3465,6 +3505,73 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     ).run(new Date().toISOString(), id, orgId);
     return json({ ok: true, paymentStatus: "paid" });
   }
+  /* Owner 2026-08-20 sales rework — "Schedule demo call" on a lead. OWNER-ONLY
+     (requireAdmin, like the agreement/payment routes). Body:
+     { scheduledAt: "YYYY-MM-DDTHH:MM", duration?: number }. Creates an
+     appointments row (status 'scheduled') linked to the client, mirrors the
+     time onto the client's demo_scheduled_at, and emails the lead a
+     confirmation (sendDemoCallEmail — fire-and-forget: sendEmail never throws,
+     so a delivery failure is surfaced as emailStatus:'failed' in the response,
+     never a 5xx). The appointment then appears on the owner's calendar. */
+  const demoCallMatch = pathname.match(/^\/api\/clients\/(\d+)\/demo-call$/);
+  if (demoCallMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(demoCallMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
+    if (!client) return err("Client not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const scheduledAt = typeof body.scheduledAt === "string" ? body.scheduledAt.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduledAt)) {
+      return err("scheduledAt must be a YYYY-MM-DDTHH:MM local datetime.", 400);
+    }
+    const duration =
+      Number.isFinite(Number(body.duration)) && Number(body.duration) > 0 ? Math.round(Number(body.duration)) : 30;
+    const title = `Demo call — ${client.company_name}`;
+    const info = db
+      .query(
+        `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes)
+         VALUES (?, ?, ?, ?, ?, 'scheduled', ?)`,
+      )
+      .run(orgId, client.id, title, scheduledAt, duration, "");
+    db.query(
+      "UPDATE clients SET demo_scheduled_at = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+    ).run(scheduledAt, id, orgId);
+    const row = db.query("SELECT * FROM appointments WHERE id = ?").get(info.lastInsertRowid) as AppointmentRow;
+    const email = await sendDemoCallEmail({
+      to: client.email.trim() || "",
+      clientName: client.company_name || client.contact_name || "there",
+      scheduledAt,
+    });
+    const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
+    return json(
+      {
+        ok: true,
+        appointment: toAppointment(row, client.company_name),
+        client: toClient(updated, true),
+        emailStatus: email.ok ? "sent" : "failed",
+        emailError: email.ok ? undefined : email.error,
+      },
+      201,
+    );
+  }
+  /* Calendar — the owner's demo-call appointments. OWNER-ONLY (requireAdmin).
+     Every org's demo appointments, with the linked client's name (LEFT JOIN,
+     so an appointment whose lead was deleted still shows, unlinked). */
+  if (pathname === "/api/appointments" && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const rows = db
+      .query(
+        `SELECT a.*, c.company_name AS client_name
+           FROM appointments a
+           LEFT JOIN clients c ON c.id = a.client_id
+          ORDER BY a.scheduled_at, a.id`,
+      )
+      .all() as (AppointmentRow & { client_name: string | null })[];
+    return json({ appointments: rows.map((r) => toAppointment(r, r.client_name ?? undefined)) });
+  }
   /* Client item */
   const itemMatch = pathname.match(/^\/api\/clients\/(\d+)$/);
   if (itemMatch) {
@@ -3585,6 +3692,18 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       if (isOwnerSession(auth) && rec.agreementStatus !== undefined) {
         sets.push("agreement_status = ?");
         params.push(rec.agreementStatus as string);
+      }
+      // Owner 2026-08-20 sales rework — demo outcome: persisted ONLY for the
+      // owner org and only when present in the body ('' | 'sold' | 'not_sold'
+      // | 'maybe'). Partial updates never clobber an absent value. 'sold' is a
+      // RECORDED state — it never auto-creates a client account.
+      if (isOwnerSession(auth) && body.demoOutcome !== undefined && body.demoOutcome !== null) {
+        const o = String(body.demoOutcome);
+        if (o !== "" && !["sold", "not_sold", "maybe"].includes(o)) {
+          return err("demoOutcome must be '', sold, not_sold or maybe.", 400);
+        }
+        sets.push("demo_outcome = ?");
+        params.push(o);
       }
       sets.push("updated_at = datetime('now')");
       params.push(id, orgId);

@@ -218,6 +218,33 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
     );
   }
 
+  /* Owner 2026-08-20 sales rework — "I don't want a clients sold bin there
+     should only be a client accounts tab." The OWNER's Clients tab is now the
+     CLIENT ACCOUNTS list (the Accounts panel / workspace directory) — NOT the
+     terminal-stage "sold customers" table. The reminder that the pipeline
+     still HAS a terminal stage (and that sold records live there) is handled
+     by the Onboarding → terminal flow; this tab no longer renders a sold
+     directory. Client ACCOUNTS (role=member) keep the original sold-customer
+     directory below — that is *their* widgets. */
+  if (ownerOrg) {
+    return (
+      <div className="page">
+        <div className="page-head">
+          <div>
+            <h1>
+              Client accounts{" "}
+              <em className="serif">— the client list</em>
+            </h1>
+            <p className="page-sub">
+              Every client workspace. Create a new one, open a client's CRM, reset a password, or delete an account.
+            </p>
+          </div>
+        </div>
+        {ownerOrgId && onViewAccount && <Accounts ownerOrgId={ownerOrgId} onViewAccount={onViewAccount} />}
+      </div>
+    );
+  }
+
   /* The sold set (terminal-stage clients) — drives the header counts, the
      empty state and the (tenant-only, owner direction 2026-08-15) "+ New
      client" default stage. */

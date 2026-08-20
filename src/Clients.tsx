@@ -16,8 +16,11 @@ import StageEditor from "./StageEditor";
 
 /** Owner request 2026-08-14 — "lost" and "dnc" are STATUS views: they render
  *  the Lost section / DNC list instead of the pipeline table. The pipeline
- *  segs (Active/Archived/All) exclude lost leads from their counts. */
-type Filter = "active" | "archived" | "all" | "lost" | "dnc";
+ *  segs (Active/Archived/All) exclude lost leads from their counts.
+ *  Owner 2026-08-20 — "orphaned" is the OUT-OF-PIPELINE safety bucket: any
+ *  record whose stage is no longer in the org's stage list (isStageOrphaned)
+ *  surfaces here instead of silently vanishing from every tab. */
+type Filter = "active" | "archived" | "all" | "lost" | "dnc" | "orphaned";
 
 /** Owner request 2026-08-15 — which slice of the org's ordered pipeline this
  *  pipeline view renders (positional, rename-safe — never hardcoded names):
@@ -297,6 +300,12 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           matchesQuery(c),
       );
     }
+    /* Owner 2026-08-20 — the OUT-OF-PIPELINE safety bucket: any record whose
+       stage is no longer in the org's stage list surfaces here regardless of
+       scope, so no record ever silently vanishes. */
+    if (filter === "orphaned") {
+      return clients.filter((c) => c.orphanedStage === true && matchesQuery(c));
+    }
     return clients.filter((c) => {
       /* Positional pipeline buckets (owner request 2026-08-14/15): only
          clients whose stage is inside THIS view's scoped stage slice are
@@ -563,6 +572,65 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       setBusy(false);
     }
   }
+  /** Owner 2026-08-20 sales rework — the demo-outcome dropdown. Owner Leads
+   *  tab only. Records the demo result on a lead: Sold / Not sold / Maybe
+   *  ('' clears it back to no-demo). "sold" is a RECORDED state — it does NOT
+   *  auto-create a client account (the owner manually creates one after sold +
+   *  signed agreements + paid); it just marks the lead so the flow can move on
+   *  to Agreements/Onboarding. Mirrors the demoOutcome PUT faithfully. */
+  async function handleDemoOutcome(c: Client, outcome: "" | "sold" | "not_sold" | "maybe") {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateClient(c.id, { ...c, demoOutcome: outcome });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Demo outcome update failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** Owner 2026-08-20 sales rework — "Schedule demo call" on a lead. Owner
+   *  Leads tab only. Prompts for a local YYYY-MM-DDTHH:MM datetime, then calls
+   *  the owner-only demo-call endpoint: creates an appointments row (appears
+   *  on the owner's Calendar), mirrors the time onto the lead's
+   *  demo_scheduled_at, and emails the lead a confirmation. If the email
+   *  failed, surface it as a warn notice (never a failure). */
+  const [demoNotice, setDemoNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+  async function handleScheduleDemo(c: Client) {
+    const entered = window.prompt(
+      "Schedule the demo call for this lead — enter a date and time (YYYY-MM-DDTHH:MM, local), e.g. 2026-08-25T14:00.",
+      c.demoScheduledAt || "",
+    );
+    if (entered === null) return; // canceled
+    const dt = (entered || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dt)) {
+      setError("Enter the demo time as YYYY-MM-DDTHH:MM, e.g. 2026-08-25T14:00.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setDemoNotice(null);
+    try {
+      const r = await api.scheduleDemoCall(c.id, dt);
+      setDemoNotice(
+        r.emailStatus === "sent"
+          ? {
+              kind: "success",
+              text: `Demo call scheduled for ${dt} — confirmation emailed to ${c.email || "the lead"} and added to your Calendar.`,
+            }
+          : {
+              kind: "warn",
+              text: `Demo call scheduled for ${dt} and added to your Calendar, but the confirmation email could not be sent: ${r.emailError ?? "unknown error"}`,
+            },
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not schedule the demo call.");
+    } finally {
+      setBusy(false);
+    }
+  }
   /** Native e-signature — the owner's agreement audit view: status, signer
    *  name, timestamp, IP address, consent, expiry and the PDF copy. */
   async function openAudit(c: Client) {
@@ -603,6 +671,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     all: scoped.filter((c) => !c.lost).length,
     lost: scoped.filter((c) => c.lost).length,
     dnc: scoped.filter((c) => c.dnc).length,
+    orphaned: clients.filter((c) => c.orphanedStage === true).length,
   };
 
   /* Owner cockpit A (owner direction 2026-08-15) — the owner's LEADS tab
@@ -689,15 +758,15 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           {/* Owner request 2026-08-14 — the seg row gains "Lost" (the Lost
               section: leads marked not-interested, out of the pipeline
               counts) and "DNC" (do-not-call list with its warning). */}
-          {(["active", "archived", "all", "lost", "dnc"] as Filter[]).map((f) => (
+          {([...(["active", "archived", "all", "lost", "dnc"] as Filter[]), ...(ownerOrg ? (["orphaned"] as Filter[]) : [])]).map((f) => (
             <button
               key={f}
               className={filter === f ? "seg-btn active" : "seg-btn"}
               onClick={() => setFilter(f)}
             >
-              {f === "active" ? "Active" : f === "archived" ? "Archived" : f === "all" ? "All" : f === "lost" ? "Lost" : "DNC"}
+              {f === "active" ? "Active" : f === "archived" ? "Archived" : f === "all" ? "All" : f === "lost" ? "Lost" : f === "dnc" ? "DNC" : "Out of pipeline"}
               <span className="seg-count">
-                {f === "active" ? counts.active : f === "archived" ? counts.archived : f === "all" ? counts.all : f === "lost" ? counts.lost : counts.dnc}
+                {f === "active" ? counts.active : f === "archived" ? counts.archived : f === "all" ? counts.all : f === "lost" ? counts.lost : f === "dnc" ? counts.dnc : counts.orphaned}
               </span>
             </button>
           ))}
@@ -753,22 +822,27 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               ? "No lost leads"
               : filter === "dnc"
                 ? "No DNC entries"
-                : scoped.length === 0
-                  ? emptyTitle
-                  : "Nothing matches"}
+                : filter === "orphaned"
+                  ? "No out-of-pipeline records"
+                  : scoped.length === 0
+                    ? emptyTitle
+                    : "Nothing matches"}
           </p>
           <p className="empty-sub">
             {filter === "lost"
               ? "Leads you mark as lost show up here — they stay out of your pipeline counts."
               : filter === "dnc"
                 ? "Leads with a do-not-contact flag show up here with their warning."
-                : scoped.length === 0
-                  ? emptySub
-                  : "Try a different search or filter."}
+                : filter === "orphaned"
+                  ? "Records whose stage is no longer in your pipeline show up here instead of silently disappearing — edit them to move them back into a current stage."
+                  : scoped.length === 0
+                    ? emptySub
+                    : "Try a different search or filter."}
           </p>
           {/* Live-test finding 2026-08-17 — same entry-point rule for the
-              empty state: no add-lead CTA on the Onboarding tab. */}
-          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && scope !== "middle" && (
+              empty state: no add-lead CTA on the Onboarding tab. Out-of-
+              pipeline (orphaned) is a repair surface, not a creation one. */}
+          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && filter !== "orphaned" && scope !== "middle" && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {emptyCta}
             </button>
@@ -1208,6 +1282,44 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             owner (archiving lives on the Clients directory and
                             the Onboarding tab). Client accounts keep their
                             Archive row action exactly as before. */}
+                        {/* Owner 2026-08-20 sales rework — the demo-outcome
+                            dropdown + "Schedule demo call" (owner Leads tab
+                            only). The flow: Leads → Schedule demo call
+                            (calendar + confirmation email) → demo outcome
+                            Sold/Not sold/Maybe → if Sold: Agreements + Payment
+                            link → then the owner manually creates the client
+                            account. 'sold' is recorded, never auto-creating an
+                            account. */}
+                        {ownerLeadsTab && (
+                          <>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title={
+                                c.demoScheduledAt
+                                  ? `Demo call scheduled for ${c.demoScheduledAt} — re-schedule or view it on the Calendar`
+                                  : "Schedule a demo call — appears on your Calendar and emails the lead"
+                              }
+                              aria-label={`Schedule demo call for ${c.companyName}`}
+                              onClick={() => handleScheduleDemo(c)}
+                              disabled={busy}
+                            >
+                              Schedule demo
+                            </button>
+                            <select
+                              className="demo-outcome-select"
+                              value={c.demoOutcome ?? ""}
+                              aria-label={`Demo outcome for ${c.companyName}`}
+                              onChange={(e) => handleDemoOutcome(c, e.target.value as "" | "sold" | "not_sold" | "maybe")}
+                              disabled={busy}
+                            >
+                              <option value="">Demo —</option>
+                              <option value="sold">Sold</option>
+                              <option value="not_sold">Not sold</option>
+                              <option value="maybe">Maybe</option>
+                            </select>
+                          </>
+                        )}
                         {ownerLeadsTab && (
                           <button
                             className="icon-btn"
@@ -1310,6 +1422,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           role={payNotice.kind === "success" ? "status" : "alert"}
         >
           {payNotice.text}
+        </div>
+      )}
+      {demoNotice && (
+        <div
+          className={demoNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+          role={demoNotice.kind === "success" ? "status" : "alert"}
+        >
+          {demoNotice.text}
         </div>
       )}
       {(audit || auditError) && (
