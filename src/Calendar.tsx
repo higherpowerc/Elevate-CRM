@@ -43,6 +43,7 @@ function fmtTime(dt: string): string {
 export default function Calendar() {
   const [appointments, setAppointments] = useState<Appointment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -56,6 +57,18 @@ export default function Calendar() {
 
   useEffect(() => {
     load();
+  }, [load]);
+  const cancel = useCallback(async (id: number) => {
+    setCancellingId(id);
+    setError(null);
+    try {
+      await api.cancelAppointment(id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to cancel the appointment.");
+    } finally {
+      setCancellingId(null);
+    }
   }, [load]);
 
   const groups = useMemo(() => {
@@ -120,6 +133,16 @@ export default function Calendar() {
                           {a.clientName ? <span>{a.clientName}</span> : <span className="cell-muted">Unlinked lead</span>}
                           <span className="cell-muted">· {a.duration} min</span>
                         </div>
+                      </div>
+                      <div className="calendar-actions">
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => cancel(a.id)}
+                          disabled={cancellingId === a.id}
+                        >
+                          {cancellingId === a.id ? "Cancelling…" : "Cancel"}
+                        </button>
                       </div>
                     </div>
                   );

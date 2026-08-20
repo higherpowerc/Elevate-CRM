@@ -3797,6 +3797,7 @@ legend.field-label {
   padding-top: 2px;
 }
 .calendar-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.calendar-actions { margin-left: auto; align-self: center; }
 .calendar-title { display: flex; flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
 .calendar-sub { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 
