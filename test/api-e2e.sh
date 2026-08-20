@@ -7064,6 +7064,45 @@ print("  ✓ source: handleSave sold/not_sold relocates merge into the freshly-s
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleSave stale ...editing spread not fully removed from src/Clients.tsx"; fi
 echo "  ✓ 52: OwnerActionsMenu one-click demo outcomes complete"
+echo "-- 53. Demo reschedule + calendar cancel (owner 2026-08-22): rescheduling a demo REPLACES the prior appointment; a one-click Cancel clears the active demo --"
+# demo REPLACES the prior appointment (old one marked cancelled, history kept)
+# instead of leaving a ghost slot; and a one-click Cancel removes the active
+# demo from the calendar AND clears the client's mirrored demo_scheduled_at.
+# Runs last against the shared throwaway server ($JAR = owner, $BASE).
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+F53=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Resched Co\",\"contactName\":\"Rita R\",\"email\":\"rita@resched.example\",\"clientType\":\"commercial\",\"dealValue\":2000,\"stage\":\"$F53\"}" "$BASE/api/clients")
+check "53: owner creates fresh lead -> 201" 201 "$S"
+RC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+# (a) schedule a demo for the client, then RESCHEDULE the SAME client to a new
+#     time (the owner's 4:30 -> 7:15 analogue). The old slot must be cancelled.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"scheduledAt":"2026-08-27T16:30","duration":30}' "$BASE/api/clients/$RC_ID/demo-call")
+check "53a: owner schedules demo at 4:30 PM -> 201" 201 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"scheduledAt":"2026-08-27T19:15","duration":30}' "$BASE/api/clients/$RC_ID/demo-call")
+check "53a: owner RESCHEDULES the same client to 7:15 PM -> 201" 201 "$S"
+S=$(code -b "$JAR" "$BASE/api/appointments")
+check "53: owner calendar lists appointments -> 200" 200 "$S"
+if python3 -c "import json;apps=json.load(open('/tmp/body.json'))['appointments'];mine=[a for a in apps if a.get('clientName')=='Resched Co'];a26=[a for a in mine if a.get('scheduledAt')=='2026-08-27T16:30' and a.get('status')=='scheduled'];a73=[a for a in mine if a.get('scheduledAt')=='2026-08-27T19:15' and a.get('status')=='scheduled'];assert len(a26)==0 and len(a73)==1 and len([a for a in mine if a.get('status')=='scheduled'])==1, mine"; then PASS=$((PASS+1)); echo "  ✓ 53a: reschedule REPLACED the old 4:30 - only the 7:15 is active (no ghost slot)"; else FAIL=$((FAIL+1)); echo "  ✗ 53a: old appointment not cleared on reschedule"; fi
+S=$(code -b "$JAR" "$BASE/api/clients/$RC_ID")
+check "53: owner GET lead -> 200" 200 "$S"
+grep -q '"demoScheduledAt":"2026-08-27T19:15"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 53a: lead demo_scheduled_at mirrored to the new 7:15 time"; } || { FAIL=$((FAIL+1)); echo "  ✗ 53a: lead mirror"; }
+# (b) one-click cancel via the new owner route.
+S=$(code -b "$JAR" "$BASE/api/appointments")
+APPT53=$(python3 -c "import json;apps=json.load(open('/tmp/body.json'))['appointments'];print([a['id'] for a in apps if a.get('clientName')=='Resched Co' and a.get('scheduledAt')=='2026-08-27T19:15'][0])")
+S=$(code -b "$JAR" -X POST "$BASE/api/appointments/$APPT53/cancel")
+check "53b: owner cancels the demo appointment -> 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/appointments")
+check "53: owner calendar after cancel -> 200" 200 "$S"
+if python3 -c "import json;apps=json.load(open('/tmp/body.json'))['appointments'];assert [a for a in apps if a.get('clientName')=='Resched Co']==[], apps"; then PASS=$((PASS+1)); echo "  ✓ 53b: cancelled appointment no longer appears on the calendar"; else FAIL=$((FAIL+1)); echo "  ✗ 53b: cancelled appointment still on calendar"; fi
+S=$(code -b "$JAR" "$BASE/api/clients/$RC_ID")
+check "53: owner GET lead after cancel -> 200" 200 "$S"
+if grep -q '"demoScheduledAt":""' /tmp/body.json || grep -q '"demoScheduledAt":null' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 53b: client demo_scheduled_at cleared after cancel"; else FAIL=$((FAIL+1)); echo "  ✗ 53b: client demo mirror still set after cancel"; fi
+check "53: cancel nonexistent appointment -> 404" 404 $(code -b "$JAR" -X POST "$BASE/api/appointments/999999/cancel")
+echo "  ✓ 53: demo reschedule + calendar cancel complete"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

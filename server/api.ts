@@ -3535,6 +3535,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const duration =
       Number.isFinite(Number(body.duration)) && Number(body.duration) > 0 ? Math.round(Number(body.duration)) : 30;
     const title = `Demo call — ${client.company_name}`;
+    // Reschedule fix (owner 2026-08-22): a client may hold at most ONE active
+    // (status='scheduled') demo appointment. Before inserting the new one,
+    // cancel any prior scheduled appointment(s) for THIS client + org so a
+    // reschedule never leaves a stale/ghost slot on the owner Calendar (the
+    // owner's 4:30 -> 7:15 reschedule left the old 4:30 behind). History is
+    // preserved — the prior row is marked 'cancelled', not deleted. Scoped to
+    // client.id + orgId only; never touches another client's appointments.
+    db.query(
+      "UPDATE appointments SET status = 'cancelled', updated_at = datetime('now') WHERE org_id = ? AND client_id = ? AND status = 'scheduled'",
+    ).run(orgId, client.id);
     const info = db
       .query(
         `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes)
@@ -3569,15 +3579,49 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
   if (pathname === "/api/appointments" && method === "GET") {
     const admin = requireAdmin(req);
     if (admin instanceof Response) return admin;
+    // Reschedule fix (owner 2026-08-22): cancelled appointments are retained
+    // in the DB for history, but do NOT surface on the owner Calendar — the
+    // list is the owner's live schedule of active demo calls only.
     const rows = db
       .query(
         `SELECT a.*, c.company_name AS client_name
            FROM appointments a
            LEFT JOIN clients c ON c.id = a.client_id
+          WHERE a.status != 'cancelled'
           ORDER BY a.scheduled_at, a.id`,
       )
       .all() as (AppointmentRow & { client_name: string | null })[];
     return json({ appointments: rows.map((r) => toAppointment(r, r.client_name ?? undefined)) });
+  }
+  /* Owner 2026-08-22 — one-click "Cancel" on an owner Calendar row.
+     OWNER-ONLY (requireAdmin). Marks the appointment 'cancelled' (history
+     retained); because a client can hold at most one active scheduled demo,
+     cancelling the client's active one also clears the mirrored
+     demo_scheduled_at / demo_meeting_link so the lead no longer reads as
+     scheduled. Scoped to this org only (org_id in the WHERE). The cancelled
+     row disappears from GET /api/appointments (filtered above). */
+  const cancelMatch = pathname.match(/^\/api\/appointments\/(\d+)\/cancel$/);
+  if (cancelMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const apptId = Number(cancelMatch[1]);
+    const appt = db.query("SELECT * FROM appointments WHERE id = ? AND org_id = ?").get(apptId, orgId) as AppointmentRow | null;
+    if (!appt) return err("Appointment not found.", 404);
+    const wasScheduled = appt.status === "scheduled";
+    db.query(
+      "UPDATE appointments SET status = 'cancelled', updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+    ).run(apptId, orgId);
+    if (wasScheduled && appt.client_id != null) {
+      db.query(
+        "UPDATE clients SET demo_scheduled_at = '', demo_meeting_link = '', updated_at = datetime('now') WHERE id = ? AND org_id = ?",
+      ).run(appt.client_id, orgId);
+    }
+    const clientName =
+      appt.client_id != null
+        ? (db.query("SELECT company_name FROM clients WHERE id = ? AND org_id = ?").get(appt.client_id, orgId) as
+            { company_name: string } | null)?.company_name
+        : undefined;
+    return json({ ok: true, appointment: toAppointment({ ...appt, status: "cancelled" }, clientName) });
   }
   /* Client item */
   const itemMatch = pathname.match(/^\/api\/clients\/(\d+)$/);

@@ -345,4 +345,10 @@ export const api = {
   /* Owner 2026-08-20 — the calendar: every org's demo-call appointments with
      the linked client name. Owner-only. */
   appointments: () => request<{ appointments: Appointment[] }>("/api/appointments"),
+  /* Owner 2026-08-22 — one-click "Cancel" on an owner Calendar row
+     (owner-only). Marks the appointment 'cancelled' (history retained) and, if
+     it was the client's active demo, clears the client's mirrored
+     demo_scheduled_at. The row then disappears from the calendar list. */
+  cancelAppointment: (id: number) =>
+    request<{ ok: true; appointment: Appointment }>(`/api/appointments/${id}/cancel`, { method: "POST" }),
 };
