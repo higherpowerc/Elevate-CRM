@@ -6841,6 +6841,78 @@ kill "$MOCK50_PID" 2>/dev/null
 rm -f "$JA50" "$JT50"
 rm -rf "$MOCK50"
 echo "  ✓ 50: Leads -> Demo call -> Client accounts battery complete"
+
+echo "== 51. Owner-settings cleanup (2026-08-2x): owner workspace hides Account setup / Custom intake groups / Revenue model / Business type (clients keep all four editable); owner dashboard surfaces real invoice revenue =="
+echo "-- 51a. Owner Settings gating: the four tenant-customization cards are wrapped inside the {!isOwnerOrg && ( <> ... </> )} gate (owner sees none; clients keep them) --"
+if python3 - <<'PY'
+s = open("src/Settings.tsx").read()
+titles = ["Business type", "Revenue model", "Account setup", "Custom intake groups"]
+gate_open = s.find("{!isOwnerOrg && (")
+gate_frag = s.find("<>", gate_open)
+idxs = [s.find(">" + t + "</h2>") for t in titles]
+gate_close = s.find("</>", gate_frag)
+gate_close2 = s.find(")}", gate_close)
+# every card must sit after the gate-open/fragment and before the gate-close,
+# with the gate-close after the last card — i.e. all four exist only in the
+# owner-hidden branch, while remaining in source for CLIENT workspaces.
+ok = (gate_open != -1 and gate_frag != -1 and all(i != -1 and gate_frag < i < gate_close for i in idxs)
+      and gate_close2 > gate_close > idxs[3])
+raise SystemExit(0 if ok else 1)
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 51a: owner Settings wraps Account setup / Custom intake groups / Revenue model / Business type inside {!isOwnerOrg && ( ... )}"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 51a: owner Settings gating missing/incorrect in src/Settings.tsx"
+fi
+echo "-- 51b. CLIENT settings intact: the four tenant-customization cards + their save handlers are STILL in src/Settings.tsx (clients keep them editable) --"
+if grep -Fq '>Business type</h2>' src/Settings.tsx \
+   && grep -Fq '>Revenue model</h2>' src/Settings.tsx \
+   && grep -Fq '>Account setup</h2>' src/Settings.tsx \
+   && grep -Fq '>Custom intake groups</h2>' src/Settings.tsx \
+   && grep -Fq 'saveIntakeSetup' src/Settings.tsx \
+   && grep -Fq 'saveRevenueModel' src/Settings.tsx \
+   && grep -Fq 'applyVerticalTemplate' src/Settings.tsx \
+   && grep -Fq 'INTAKE_OPT_LABELS' src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ 51b: client Settings still renders Account setup / Custom intake groups / Revenue model / Business type (handlers intact)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 51b: client Settings tenant-customization cards/handlers missing from src/Settings.tsx"
+fi
+echo "-- 51c. Owner dashboard revenue summary: real invoice figures (Total billed / Paid / Outstanding / Overdue) computed from api.invoices, owner-only --"
+if python3 - <<'PY'
+s = open("src/Dashboard.tsx").read()
+checks = {
+    "fetches invoices via api": ".invoices()" in s,
+    "owner-only effect short-circuits": "if (!ownerOrg) return;" in s,
+    "owner-only render gate": "ownerOrg && revenue" in s,
+    "total invoiced (all amounts)": "revenue.invoiced" in s,
+    "paid from paid invoices": "revenue.paid" in s and 'i.status === "paid"' in s,
+    "outstanding from sent invoices": "revenue.outstanding" in s and 'i.status === "sent"' in s,
+    "overdue past due-date": "revenue.overdue" in s and "i.dueDate" in s,
+    "Total billed label": "Total billed" in s,
+    "Outstanding label": ">Outstanding<" in s,
+    "Overdue label": ">Overdue<" in s,
+    "Paid label": ">Paid<" in s,
+}
+missing = [k for k, ok in checks.items() if not ok]
+raise SystemExit(0 if not missing else 1)
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ 51c: owner Dashboard revenue summary computes real invoice figures (Total billed/Paid/Outstanding/Overdue) from api invoices, gated on ownerOrg"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 51c: owner Dashboard revenue summary missing from src/Dashboard.tsx"
+fi
+echo "-- 51d. Shipped bundle carries the owner revenue-summary surface --"
+bun run build >/dev/null 2>&1
+NEWEST_JS51=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS51" ] && [ -f "$NEWEST_JS51" ]; then
+  for STR51 in "Total billed" "Outstanding" "Overdue" "Revenue summary"; do
+    if grep -Fq "$STR51" "$NEWEST_JS51"; then PASS=$((PASS+1)); echo "  ✓ bundle contains \"$STR51\""
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle missing \"$STR51\""; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 51d bundle surface check"
+fi
+echo "  ✓ 51: Owner-settings cleanup battery complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

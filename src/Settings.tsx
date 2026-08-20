@@ -952,6 +952,8 @@ export default function Settings({
           </form>
         </div>
 
+        {!isOwnerOrg && (
+        <>
         <div className="card admin-form">
           <div className="admin-card-head">
             <h2 className="admin-card-title">Business type</h2>
@@ -1320,6 +1322,8 @@ export default function Settings({
             )}
           </div>
         </div>
+        </>
+        )}
 
         <div className="card admin-table">
           <div className="admin-card-head">

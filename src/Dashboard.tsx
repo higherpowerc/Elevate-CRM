@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import { stageTone, money, fmtDate, type DashboardData, type Stage } from "./types";
+import { stageTone, money, fmtDate, type DashboardData, type Invoice, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
 import ProvisionNotices from "./ProvisionNotices";
@@ -71,6 +71,20 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /* Owner revenue summary (owner 2026-08-20) — the OWNER's dashboard
+     surfaces real invoice-based revenue (the same figures the Finance tab
+     shows for its Total invoiced / Paid / Outstanding / Overdue KPIs) so the
+     owner can watch revenue without leaving the dashboard. Computed from the
+     same /api/invoices source the Finance ledger uses — never fabricated.
+     Owner-only; client accounts show nothing extra. A failed invoice fetch
+     is non-fatal (the summary just stays hidden). */
+  const [revenue, setRevenue] = useState<{
+    invoiced: number;
+    paid: number;
+    outstanding: number;
+    overdue: number;
+  } | null>(null);
+
   /* Global privacy eye (2026-08-14 owner request): blur client/company names
      on this page too (task overview rows + Recently updated). The eye itself
      lives in the top nav (App.tsx); this just consumes its state. */
@@ -102,6 +116,38 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load dashboard."));
   }, []);
+
+  /* Owner revenue summary — fetch the org's invoices (owner-only) and reduce
+     them to the same four figures the Finance tab shows. Mirrors the totals
+     computation in src/Finance.tsx so both stay in lockstep. */
+  useEffect(() => {
+    if (!ownerOrg) return;
+    let alive = true;
+    api
+      .invoices()
+      .then(({ invoices }) => {
+        if (!alive) return;
+        let invoiced = 0;
+        let paid = 0;
+        let outstanding = 0;
+        let overdue = 0;
+        for (const i of invoices) {
+          invoiced += i.amount;
+          if (i.status === "paid") paid += i.amount;
+          if (i.status === "sent") {
+            outstanding += i.amount;
+            if (i.dueDate && i.dueDate < localToday()) overdue += i.amount;
+          }
+        }
+        setRevenue({ invoiced, paid, outstanding, overdue });
+      })
+      .catch(() => {
+        /* non-fatal — the revenue summary just stays hidden */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [ownerOrg]);
 
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return <div className="skeleton-block" aria-label="Loading dashboard" />;
@@ -363,6 +409,38 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
           <h2 className="section-title">Stage breakdown</h2>
           <div className="stage-grid">{stageCards}</div>
         </>
+      )}
+
+      {/* Owner revenue summary (owner 2026-08-20) — real invoice-based
+          revenue figures on the owner dashboard, mirroring the Finance tab
+          KPIs (Total billed / Paid / Outstanding / Overdue). Computed from
+          /api/invoices. Owner-only; client accounts render nothing here. */}
+      {ownerOrg && revenue && (
+        <section aria-label="Revenue summary">
+          <h2 className="section-title">Revenue</h2>
+          <div className="kpi-row kpi-row-4">
+            <div className="card kpi">
+              <span className="kpi-label">Total billed</span>
+              <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(revenue.invoiced)}</span>
+              <span className="kpi-note">All invoices — draft + sent + paid</span>
+            </div>
+            <div className="card kpi">
+              <span className="kpi-label">Paid</span>
+              <span className={`kpi-value green${blur(moneyHidden)}`}>{money(revenue.paid)}</span>
+              <span className="kpi-note">Marked paid — money in</span>
+            </div>
+            <div className="card kpi">
+              <span className="kpi-label">Outstanding</span>
+              <span className={`kpi-value${blur(moneyHidden)}`}>{money(revenue.outstanding)}</span>
+              <span className="kpi-note">Sent, not yet paid</span>
+            </div>
+            <div className="card kpi">
+              <span className="kpi-label">Overdue</span>
+              <span className={`kpi-value red${blur(moneyHidden)}`}>{money(revenue.overdue)}</span>
+              <span className="kpi-note">Sent, past due date</span>
+            </div>
+          </div>
+        </section>
       )}
 
       {/* Task overview (2026-08-14 owner request) — org-scoped task stats
