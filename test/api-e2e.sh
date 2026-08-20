@@ -6472,6 +6472,109 @@ kill "$MOCK49_PID" 2>/dev/null
 rm -f "$JA49" "$MOCK49/ev.json" "$MOCK49/ev.sig" "$MOCK49/evb.json" "$MOCK49/evb.sig" "$MOCK49/evx.json" "$MOCK49/evx.sig" "$MOCK49/evu.json" "$MOCK49/evu.sig" "$MOCK49/evns.json"
 rm -rf "$MOCK49"
 echo "  ✓ 49: Phase 5 Stripe billing webhook battery complete"
+
+MOCK50=$(mktemp -d)
+echo "== 50. Developer Command Center Phase A (owner-only) — request capture + audit + merge-gate approval =="
+# Hermetic throwaway server, no real Stripe/Resend. Phase A is fully additive on
+# the existing CRM routes (server/db.ts tables + server/api.ts /api/dev/* + the
+# owner-only Developer nav tab in src/Developer.tsx). Every /api/dev/* route is
+# requireAdmin OR gated on owner session, so a tenant admin (stored role='admin'
+# in a NON-owner org) must get 403 on create/list/approve — the key rule: no
+# path for a non-owner to pass a merge gate.
+start_crm 3015 "$MOCK50/db" "$MOCK50/srv.log" "$MOCK50/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET -u RESEND_API_KEY -u RESEND_URL
+B50=http://localhost:3015
+J50=$(mktemp)
+S=$(code -c "$J50" -b "$J50" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B50/api/auth/login")
+check "50a: owner login -> 200" 200 "$S"
+# ---- provision a tenant + promote its first user to stored role='admin' ----
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Dev Tenant Co","email":"devtenant@example.com","password":"devtenantpass123"}' "$B50/api/admin/orgs")
+check "50b: owner provisions tenant org -> 201" 201 "$S"
+DTEN_USER_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['user']['id'])")
+# First user is the org's structural admin (isOrgAdmin) — it promotes itself.
+TOKEN=$(sed -n 's/.*elevate_session=\([^;]*\).*/\1/p' "$J50" 2>/dev/null)
+JT=$(mktemp)
+S=$(code -c "$JT" -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"devtenant@example.com","password":"devtenantpass123"}' "$B50/api/auth/login")
+check "50c: tenant first-user login -> 200" 200 "$S"
+S=$(code -b "$JT" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"role":"admin"}' "$B50/api/org/members/$DTEN_USER_ID")
+check "50d: tenant promotes itself to stored admin -> 200" 200 "$S"
+# Re-login so the session carries role='admin' (a NON-owner tenant admin).
+S=$(code -c "$JT" -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"devtenant@example.com","password":"devtenantpass123"}' "$B50/api/auth/login")
+check "50e: tenant admin re-login -> 200" 200 "$S"
+grep -q '"isOwner":false' /tmp/body.json && echo "  ✓ 50e: tenant admin isOwner=false (not the platform owner)" || { FAIL=$((FAIL+1)); echo "  ✗ 50e: tenant admin flagged as owner: $(cat /tmp/body.json)"; }
+
+# ---------------- non-owner (tenant admin) is DENIED (403) ----------------
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"x","request":"y"}' "$B50/api/dev/runs")
+check "50f: tenant admin create run -> 403" 403 "$S"
+S=$(code -b "$JT" "$B50/api/dev/runs")
+check "50g: tenant admin list runs -> 403" 403 "$S"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' -d '{"gate":"merge"}' "$B50/api/dev/runs/1/approve")
+check "50h: tenant admin approve -> 403" 403 "$S"
+# Unauthenticated also denied
+S=$(curl -s -o /tmp/body.json -w "%{http_code}" -X POST -H 'Content-Type: application/json' -d '{"title":"x","request":"y"}' "$B50/api/dev/runs")
+check "50i: no cookie create -> 401" 401 "$S"
+
+# ---------------- owner capture -> list -> detail -> approve/reject ----------------
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' -d '{"title":"","request":"y"}' "$B50/api/dev/runs")
+check "50j: owner create missing title -> 400" 400 "$S"
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Add CSV export","request":"Add CSV export to the Clients tab so I can pull a backup each week."}' "$B50/api/dev/runs")
+check "50k: owner create run -> 201" 201 "$S"
+grep -q '"status":"captured"' /tmp/body.json && echo "  ✓ 50k: new run status=captured" || { FAIL=$((FAIL+1)); echo "  ✗ 50k status: $(cat /tmp/body.json)"; }
+RUN50_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['run']['id'])")
+S=$(code -b "$J50" "$B50/api/dev/runs")
+check "50l: owner list runs -> 200" 200 "$S"
+grep -q "\"title\":\"Add CSV export\"" /tmp/body.json && echo "  ✓ 50l: list contains the new run" || { FAIL=$((FAIL+1)); echo "  ✗ 50l list: $(cat /tmp/body.json)"; }
+S=$(code -b "$J50" "$B50/api/dev/runs/$RUN50_ID")
+check "50m: owner get detail -> 200" 200 "$S"
+grep -q '"steps":\[' /tmp/body.json && grep -q '"captured"' /tmp/body.json && echo "  ✓ 50m: detail carries a captured step" || { FAIL=$((FAIL+1)); echo "  ✗ 50m detail: $(cat /tmp/body.json)"; }
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' -d '{"gate":"merge","note":"go ahead"}' "$B50/api/dev/runs/$RUN50_ID/approve")
+check "50n: owner approve -> 200" 200 "$S"
+grep -q '"status":"approved"' /tmp/body.json && grep -q '"approval"' /tmp/body.json && echo "  ✓ 50n: run approved + approval recorded" || { FAIL=$((FAIL+1)); echo "  ✗ 50n approve: $(cat /tmp/body.json)"; }
+grep -q '"status":"approved"' /tmp/body.json && grep -q '"gate":"merge"' /tmp/body.json && grep -q '"decided_by"' /tmp/body.json && echo "  ✓ 50n: approval gate=merge, decided_by owner set" || { FAIL=$((FAIL+1)); echo "  ✗ 50n approval row: $(cat /tmp/body.json)"; }
+S=$(code -b "$J50" "$B50/api/dev/runs/$RUN50_ID")
+check "50o: detail after approve -> 200" 200 "$S"
+grep -q '"approved"' /tmp/body.json && echo "  ✓ 50o: approved step appended to log" || { FAIL=$((FAIL+1)); echo "  ✗ 50o steps: $(cat /tmp/body.json)"; }
+
+# ---- reject another, then advance to awaiting_approval + merged ----
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Rename invoices","request":"Rename the invoice numbers to start with INVX."}' "$B50/api/dev/runs")
+RUN50B_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['run']['id'])")
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' -d '{"gate":"merge","note":"not now"}' "$B50/api/dev/runs/$RUN50B_ID/reject")
+check "50p: owner reject -> 200" 200 "$S"
+grep -q '"status":"rejected"' /tmp/body.json && echo "  ✓ 50p: run rejected + approval recorded" || { FAIL=$((FAIL+1)); echo "  ✗ 50p reject: $(cat /tmp/body.json)"; }
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' -d '{"status":"awaiting_approval"}' "$B50/api/dev/runs/$RUN50B_ID/status")
+check "50q: owner advance to awaiting_approval -> 200" 200 "$S"
+grep -q '"status":"awaiting_approval"' /tmp/body.json && echo "  ✓ 50q: status advanced to awaiting_approval" || { FAIL=$((FAIL+1)); echo "  ✗ 50q status: $(cat /tmp/body.json)"; }
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' -d '{"status":"merged","detail":"PM confirmed merge"}' "$B50/api/dev/runs/$RUN50_ID/status")
+check "50r: owner mark merged -> 200" 200 "$S"
+grep -q '"status":"merged"' /tmp/body.json && echo "  ✓ 50r: run advanced to merged" || { FAIL=$((FAIL+1)); echo "  ✗ 50r status: $(cat /tmp/body.json)"; }
+S=$(code -b "$J50" -X POST -H 'Content-Type: application/json' -d '{"status":"bogus"}' "$B50/api/dev/runs/$RUN50_ID/status")
+check "50s: owner invalid status -> 400" 400 "$S"
+
+# ---- bundle + source markers for the owner-only Developer nav tab ----
+if grep -Fq 'Developer' dist/index-*.js && grep -Fq 'Merge / production gate' dist/index-*.js; then
+  PASS=$((PASS+1)); echo "  ✓ 50t: Developer nav + approve labels shipped in the built bundle"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 50t: Developer markers missing from dist bundle"
+fi
+if grep -Fq '"developer"' src/App.tsx && grep -Fq 'isOwnerOrg && (' src/App.tsx && grep -Fq 'devRuns' src/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ 50u: source markers — owner-only nav gating + api client"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 50u: Developer source markers missing"
+fi
+# ---- cleanup ----
+stop_crm "$MOCK50/srv.pid" 2>/dev/null
+rm -f "$J50" "$JT"
+rm -rf "$MOCK50"
+echo "  ✓ 50: Developer Command Center Phase A battery complete"
+
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

@@ -45,6 +45,17 @@ import {
   type TicketStatus,
   type TicketPriority,
   type TabPermissions,
+  createDevRun,
+  appendDevStep,
+  getDevRun,
+  getDevSteps,
+  getDevApprovals,
+  listDevRuns,
+  setDevRunStatus,
+  decideApproval,
+  type DevRunRow,
+  type DevStepRow,
+  type DevApprovalRow,
 } from "./db";
 import {
   VERTICALS,
@@ -4078,6 +4089,133 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     }
 
     return err("Method not allowed.", 405);
+  }
+
+
+  /* =========================================================================
+   * Developer Command Center — Phase A (PM-orchestrated, owner-approved
+   * 2026-08-19). OWNER-ONLY routes (requireAdmin, exactly like /api/admin).
+   * They record the platform owner's own plain-English dev requests, an
+   * audit-preserved chronological step log, and the explicit owner approval
+   * gate that must be satisfied before any merge / production change from a
+   * run. The actual PR → QA → deploy loop stays on the existing workflow
+   * (done externally by the team); this Command Center only records intent +
+   * approval history. No LLM / API-key / agent logic (Phases B/C/D) lives
+   * here — that separate orchestrator service is deliberately NOT scaffolded.
+   *
+   * Status lifecycle: 'captured' (created) → the team works it through the
+   * existing PR/QA/deploy workflow; the owner records progression via the
+   * status endpoint ('awaiting_approval', 'merged') and the approve/reject
+   * gate. A run can only be approved/rejected by the owner session (requireAdmin)
+   * — there is NO path for a non-owner to pass a merge gate. All data is
+   * global to the owner (no org_id) and records nothing tenant-specific.
+   * ========================================================================= */
+  const ownerDisplay = () => getUserById(auth.userId)?.email ?? `owner-${auth.userId}`;
+
+  /* POST /api/dev/runs — capture a new plain-English request. Owner-only. */
+  if (pathname === "/api/dev/runs" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    const request = typeof body.request === "string" ? body.request.trim() : "";
+    if (!title) return err("Title is required.", 400);
+    if (!request) return err("Request description is required.", 400);
+    const id = createDevRun(title, request);
+    return json({ run: getDevRun(id) }, 201);
+  }
+
+  /* GET /api/dev/runs — list runs newest first with step count + pending
+     approval state (for the list UI). Owner-only. */
+  if (pathname === "/api/dev/runs" && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    return json({ runs: listDevRuns() });
+  }
+
+  /* GET /api/dev/runs/:id — full detail: run + steps (by seq) + approvals. */
+  const devDetailMatch = pathname.match(/^\/api\/dev\/runs\/(\d+)(?:\/(approve|reject|status))?$/);
+  if (devDetailMatch && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(devDetailMatch[1]);
+    const run = getDevRun(id);
+    if (!run) return err("Dev run not found.", 404);
+    return json({
+      run,
+      steps: getDevSteps(id),
+      approvals: getDevApprovals(id),
+    });
+  }
+
+  /* POST /api/dev/runs/:id/approve — the OWNER passes the merge gate. Records
+     the approval decision, sets the run to 'approved' and appends a step.
+     Owner-only: a non-owner can never approve a merge gate. */
+  if (devDetailMatch && method === "POST" && devDetailMatch[2] === "approve") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(devDetailMatch[1]);
+    const run = getDevRun(id);
+    if (!run) return err("Dev run not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    const decidedBy = ownerDisplay();
+    const approval = decideApproval(id, "merge", "approved", decidedBy, note);
+    setDevRunStatus(id, "approved");
+    appendDevStep(
+      id,
+      "approved",
+      `Merge gate approved by ${decidedBy}.${note ? " Note: " + note : ""}`,
+      decidedBy,
+    );
+    return json({ run: getDevRun(id), approval });
+  }
+
+  /* POST /api/dev/runs/:id/reject — the OWNER rejects the merge gate. Sets the
+     run to 'rejected' and appends a step. Owner-only. */
+  if (devDetailMatch && method === "POST" && devDetailMatch[2] === "reject") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(devDetailMatch[1]);
+    const run = getDevRun(id);
+    if (!run) return err("Dev run not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    const decidedBy = ownerDisplay();
+    const approval = decideApproval(id, "merge", "rejected", decidedBy, note);
+    setDevRunStatus(id, "rejected");
+    appendDevStep(
+      id,
+      "rejected",
+      `Merge gate rejected by ${decidedBy}.${note ? " Note: " + note : ""}`,
+      decidedBy,
+    );
+    return json({ run: getDevRun(id), approval });
+  }
+
+  /* POST /api/dev/runs/:id/status — record a lifecycle progression
+     ('awaiting_approval', 'merged', ...) with an optional detail, appending a
+     step. Owner-only. Used to advance a run (e.g. the owner moves it to
+     'awaiting_approval' while the team works, and to 'merged' once the team
+     confirms the merge on the existing workflow). */
+  if (devDetailMatch && method === "POST" && devDetailMatch[2] === "status") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(devDetailMatch[1]);
+    const run = getDevRun(id);
+    if (!run) return err("Dev run not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const status = typeof body.status === "string" ? body.status.trim() : "";
+    const detail = typeof body.detail === "string" ? body.detail.trim() : "";
+    const allowed = ["captured", "awaiting_approval", "approved", "rejected", "merged"];
+    if (!allowed.includes(status)) return err("Invalid status.", 400);
+    setDevRunStatus(id, status);
+    appendDevStep(id, status, detail || `Status advanced to ${status}.`, ownerDisplay());
+    return json({ run: getDevRun(id) });
   }
 
   return err("Not found.", 404);

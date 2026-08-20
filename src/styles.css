@@ -3672,3 +3672,91 @@ legend.field-label {
 .modal-head { padding: 18px 22px 0; }
 .modal-body { padding: 14px 22px; }
 .modal-actions { padding: 0 22px 20px; display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ── Developer Command Center (Phase A, owner-only) ─────────────────────────
+   Request capture + audit + owner approval gate. Reuses the shared card/form/
+   btn/badge language; these classes lay out the run list, step timeline and
+   the merge-gate card. Owner workspace only (nav gated in App.tsx). */
+.dev-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: var(--panel, rgba(255, 255, 255, 0.02));
+  color: inherit;
+  padding: 9px 12px;
+  font: inherit;
+}
+.dev-input:focus {
+  outline: none;
+  border-color: var(--accent, #d6ff3f);
+}
+.dev-input-textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+.dev-note {
+  max-width: 360px;
+}
+.dev-run {
+  border: 1px solid var(--line, rgba(128, 128, 128, 0.25));
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: var(--panel, rgba(255, 255, 255, 0.015));
+}
+.dev-run-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.dev-run-head:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+.dev-run-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+.dev-run-body {
+  padding: 4px 14px 14px;
+  border-top: 1px solid var(--line, rgba(128, 128, 128, 0.15));
+}
+.dev-gate {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px dashed var(--line, rgba(128, 128, 128, 0.4));
+  border-radius: 10px;
+}
+.dev-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dev-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.08);
+}
+.dev-step:last-child {
+  border-bottom: 0;
+}
+.dev-step-detail {
+  flex: 1;
+}
+.dev-step-meta {
+  font-size: 12px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
