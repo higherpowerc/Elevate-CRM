@@ -356,6 +356,38 @@ export function sendDemoCallEmail(opts: {
   });
 }
 
+/** Appointments production (backlog 5a104eae) — the day-before "appointment
+ *  tomorrow" reminder. The two action links are the credential: each carries
+ *  the appointment's unguessable token so the recipient can Confirm (flips
+ *  status → confirmed) or Reschedule (pick a new time) WITHOUT logging in.
+ *  Fire-and-forget like every transactional email. */
+export function sendAppointmentReminderEmail(opts: {
+  to: string;
+  clientName: string;
+  scheduledAt: string;
+  confirmUrl: string;
+  rescheduleUrl: string;
+}): Promise<SendEmailResult> {
+  const when = fmtMstDateTime(opts.scheduledAt);
+  const text = [
+    `Hi ${opts.clientName},`,
+    "",
+    `A reminder that your appointment with Revzenta is coming up: ${when}.`,
+    "",
+    "Please confirm so we know you're still coming:",
+    opts.confirmUrl,
+    "",
+    "Need a different time? Reschedule here:",
+    opts.rescheduleUrl,
+    "",
+    "— Revzenta",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: "Your Revzenta appointment is tomorrow",
+    text,
+  });
+}
 function fmtUsd(cents: number): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
