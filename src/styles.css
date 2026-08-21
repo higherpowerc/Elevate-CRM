@@ -3608,6 +3608,75 @@ legend.field-label {
 .tickets-table .status-select:disabled {
   opacity: 0.6;
 }
+/* Owner-only reply queue (backlog 58435d2b): expanded ticket shows replies
+   (draft/sent), the reviewer's draft textarea, and the per-draft "Approve &
+   send" button. Never rendered for tenants. */
+.tickets-table .ticket-replies {
+  margin: 10px 0 4px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  background: rgba(128, 128, 128, 0.06);
+}
+.tickets-table .ticket-replies-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tickets-table .ticket-replies-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tickets-table .ticket-reply {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.1);
+}
+.tickets-table .ticket-reply.reply-draft {
+  border-left: 3px solid var(--amber, #f5b942);
+}
+.tickets-table .ticket-reply.reply-sent {
+  border-left: 3px solid var(--green, #4ade80);
+}
+.tickets-table .ticket-reply-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  font-size: 0.85rem;
+}
+.tickets-table .ticket-reply-meta .btn-sm {
+  margin-left: auto;
+}
+.tickets-table .ticket-reply-body {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.tickets-table .ticket-reply-draft textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: var(--surface, #141417);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+.tickets-table .ticket-reply-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
 .tickets-table .ticket-saving {
   display: block;
   margin-top: 3px;

@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketStatus, User } from "./types";
+import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -112,6 +112,21 @@ export const api = {
     request<{ ticket: Ticket }>(`/api/tickets/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+  /* Ticket replies (owner direction, backlog 58435d2b) — OWNER-only ("agent
+     draft-reply review queue"). A draft is showing status draft/awaiting the
+     owner's approval; it is only emailed after the send step. Tenants never
+     call these (the server 403s them). */
+  ticketReplies: (ticketId: number) =>
+    request<{ replies: TicketReply[] }>(`/api/tickets/${ticketId}/replies`),
+  createTicketReply: (ticketId: number, data: { author?: string; body: string }) =>
+    request<{ reply: TicketReply }>(`/api/tickets/${ticketId}/replies`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  sendTicketReply: (ticketId: number, replyId: number) =>
+    request<{ reply: TicketReply }>(`/api/tickets/${ticketId}/replies/${replyId}/send`, {
+      method: "POST",
     }),
 
   /* Team users per client account (owner request 2026-08-14) — org-scoped

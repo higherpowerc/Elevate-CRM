@@ -44,6 +44,7 @@ import {
   type InvoiceRow,
   type InvoiceStatus,
   type TicketRow,
+  type TicketReplyRow,
   type TicketStatus,
   type TicketPriority,
   type TabPermissions,
@@ -67,7 +68,7 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, sendAppointmentReminderEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, sendAppointmentReminderEmail, sendTicketOwnerAlertEmail, sendTicketReplyEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
 import Stripe from "stripe";
 import { generateInvoicePdf } from "./invoices";
 import { stripeClient } from "./stripe";
@@ -1379,6 +1380,18 @@ const TICKET_SELECT = `
   FROM tickets t
   LEFT JOIN orgs o ON o.id = t.org_id
 `;
+/** TicketReplyRow → API shape (OWNER-only endpoints). */
+function toTicketReply(row: TicketReplyRow) {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id,
+    author: row.author,
+    body: row.body,
+    status: row.status,
+    sentAt: row.sent_at ?? "",
+    createdAt: row.created_at,
+  };
+}
 
 function fetchTicket(id: number, orgId: number) {
   const row = db
@@ -4382,6 +4395,28 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const row = db
       .query(`${TICKET_SELECT} WHERE t.id = ? AND t.org_id = ?`)
       .get(Number(info.lastInsertRowid), orgId) as TicketRowJoined;
+    /* Owner direction (backlog 58435d2b) — a CLIENT-submitted ticket alerts
+       the owner by email (account name, subject, message snippet, deep link).
+       Skipped for the owner's OWN org (don't email yourself) and never blocks
+       the create: the helper is fire-and-forget and never throws. */
+    if (!ownerOrgIds().includes(orgId)) {
+      const ownerEmail = db
+        .query("SELECT email FROM users WHERE org_id = ? ORDER BY id ASC LIMIT 1")
+        .get(getOwnerOrgId()) as { email: string } | null;
+      const clientName = getOrg(orgId)?.name ?? row.org_name ?? `org ${orgId}`;
+      const snippet = v.value.message.length > 220
+        ? `${v.value.message.slice(0, 220)}…`
+        : v.value.message;
+      if (ownerEmail?.email) {
+        void sendTicketOwnerAlertEmail({
+          to: ownerEmail.email,
+          clientName,
+          subject: v.value.subject,
+          messageSnippet: snippet,
+          appUrl: appUrlFrom(req),
+        });
+      }
+    }
     return json({ ticket: toTicket(row, isOwnerSession(auth)) }, 201);
   }
 
@@ -4413,6 +4448,76 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ ticket: toTicket(updated as TicketRowJoined, true) });
   }
 
+  /* Ticket replies (owner direction; backlog 58435d2b). The "agent
+     draft-reply review queue": the reviewer (the team agent / PM acting for
+     the owner) drafts a reply that stays status='draft' (awaiting owner
+     approval), and it is ONLY emailed to the submitting account after the
+     owner confirms it with the explicit send step (status flips to 'sent').
+     ALL THREE routes are OWNER-only (requireAdmin) — tenants can never read,
+     draft, or send replies, so the reply machinery + other orgs' tickets stay
+     fully isolated from client accounts. */
+  const replyMatch = pathname.match(/^\/api\/tickets\/(\d+)\/replies$/);
+  if (replyMatch && method === "GET") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const ticketId = Number(replyMatch[1]);
+    const ticket = db.query("SELECT t.*, o.name AS org_name FROM tickets t LEFT JOIN orgs o ON o.id = t.org_id WHERE t.id = ?").get(ticketId) as TicketRowJoined | null;
+    if (!ticket) return err("Ticket not found.", 404);
+    const rows = db
+      .query("SELECT * FROM ticket_replies WHERE ticket_id = ? ORDER BY created_at ASC, id ASC")
+      .all(ticketId) as TicketReplyRow[];
+    return json({ replies: rows.map(toTicketReply) });
+  }
+  if (replyMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const ticketId = Number(replyMatch[1]);
+    const ticket = db.query("SELECT * FROM tickets WHERE id = ?").get(ticketId) as TicketRow | null;
+    if (!ticket) return err("Ticket not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const replyBody = typeof body.body === "string" ? body.body.trim() : "";
+    if (!replyBody) return err("Reply body is required.", 400);
+    if (replyBody.length > 10000) return err("Reply must be under 10000 characters.", 400);
+    const author = typeof body.author === "string" && body.author.trim() !== ""
+      ? body.author.trim().slice(0, 200)
+      : "Revzenta team";
+    const info = db
+      .query("INSERT INTO ticket_replies (ticket_id, author, body, status) VALUES (?, ?, ?, 'draft')")
+      .run(ticketId, author, replyBody);
+    const reply = db
+      .query("SELECT * FROM ticket_replies WHERE id = ?")
+      .get(Number(info.lastInsertRowid)) as TicketReplyRow;
+    return json({ reply: toTicketReply(reply) }, 201);
+  }
+  const replySendMatch = pathname.match(/^\/api\/tickets\/(\d+)\/replies\/(\d+)\/send$/);
+  if (replySendMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const ticketId = Number(replySendMatch[1]);
+    const replyId = Number(replySendMatch[2]);
+    const ticket = db.query("SELECT t.*, o.name AS org_name FROM tickets t LEFT JOIN orgs o ON o.id = t.org_id WHERE t.id = ?").get(ticketId) as TicketRowJoined | null;
+    if (!ticket) return err("Ticket not found.", 404);
+    const reply = db.query("SELECT * FROM ticket_replies WHERE id = ? AND ticket_id = ?").get(replyId, ticketId) as TicketReplyRow | null;
+    if (!reply) return err("Reply not found.", 404);
+    /* Only an unsent draft may be sent — idempotent for already-sent. */
+    if (reply.status === "sent") {
+      return json({ reply: toTicketReply(reply) });
+    }
+    const clientEmail = db
+      .query("SELECT email FROM users WHERE org_id = ? ORDER BY id ASC LIMIT 1")
+      .get(ticket.org_id) as { email: string } | null;
+    db.query("UPDATE ticket_replies SET status = 'sent', sent_at = datetime('now') WHERE id = ?").run(replyId);
+    if (clientEmail?.email) {
+      void sendTicketReplyEmail({
+        to: clientEmail.email,
+        ticketSubject: ticket.subject,
+        replyBody: reply.body,
+      });
+    }
+    const updated = db.query("SELECT * FROM ticket_replies WHERE id = ?").get(replyId) as TicketReplyRow;
+    return json({ reply: toTicketReply(updated) });
+  }
   /* Team users per client account (owner request 2026-08-14) — org-scoped
      member management. ALL FOUR routes are admin-only (requireOrgAdmin: the
      account's original owner login or a role='admin' team member); a
