@@ -169,6 +169,10 @@ export interface Client {
   /** Phase 5 — the owner-entered amount (USD cents) the last Stripe payment
    *  link was sent for. OWNER-only, like paymentStatus. */
   paymentAmountCents?: number;
+  /** Owner workflow views (2026-08-21) — whether a workspace has been
+   *  provisioned for this sold client (0 = none yet; a positive org id means
+   *  an account was built). OWNER-only (tenant responses never carry the key). */
+  provisionedOrgId?: number;
   /** Owner 2026-08-20 sales rework — the demo-call outcome recorded on a lead
    *  after a demo: '' (no demo yet) | 'sold' | 'not_sold' | 'maybe'. 'sold' is
    *  a RECORDED state — it does NOT auto-create a client account (the owner

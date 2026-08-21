@@ -7252,6 +7252,151 @@ if [ -n "$TOKEN54" ] && curl -s "http://localhost:3015/appointment/$TOKEN54/resc
 if [ -n "$TOKEN54" ] && curl -s "http://localhost:3015/appointment/$TOKEN54/confirm" | grep -q "Revzenta"; then PASS=$((PASS+1)); echo "  ✓ 54: public confirm landing page renders"; else FAIL=$((FAIL+1)); echo "  ✗ 54: confirm landing page did not render"; fi
 stop_crm "$MOCK54/srv.pid"; kill "$MOCK54_PID" 2>/dev/null; sleep 0.3
 rm -f "$J54" "$M54" "$O54"; rm -rf "$MOCK54"
+echo "== 55. Owner workflow views (backlog 586097cb): Finance 'Signed · account pending' + Clients 'Paid but unbuilt' window + owner Build-account action =="
+# Self-contained: a fresh throwaway CRM server on :3016 (own DB) POSTs emails to
+# a mock Resend endpoint on :3221 (records JSONL). Covers (a) the Finance
+# "Signed · account pending" bucket data (signed + provisioned + unbilled —
+# which puts it in the pending list, NOT the paid list), (b) the Clients "Paid
+# but unbuilt" window data (paid + unprovisioned) + the owner "Build account"
+# admin endpoint (success, idempotent 409, non-sold 400, tenant 403), and (c)
+# tenant isolation — tenant /api/clients responses never carry the owner-only
+# fields (agreementStatus/paymentStatus/paymentLinkUrl/paidAt/paymentAmountCents
+# /provisionedOrgId).
+MOCK55=$(mktemp -d)
+MOCK55_EMAILS="$MOCK55/emails.jsonl"
+: > "$MOCK55_EMAILS"
+cat > "$MOCK55/resend.ts" <<'TS55'
+import { appendFileSync } from "node:fs";
+const PORT = 3221;
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock resend on " + PORT);
+TS55
+MOCK_OUT="$MOCK55_EMAILS" nohup bun "$MOCK55/resend.ts" > "$MOCK55/resend.log" 2>&1 &
+MOCK55_PID=$!
+i=0; until curl -sf http://127.0.0.1:3221/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+if curl -sf http://127.0.0.1:3221/health >/dev/null 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ 55: mock Resend endpoint up on :3221"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 55: mock Resend endpoint failed to start"
+fi
+start_crm 3016 "$MOCK55/db" "$MOCK55/srv.log" "$MOCK55/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET RESEND_API_KEY=test-key-55 RESEND_URL=http://127.0.0.1:3221 TEST_EMAIL_TO=owner-test@gmail.com
+B55=http://localhost:3016
+J55=$(mktemp)
+JT55=$(mktemp)
+S=$(code -c "$J55" -b "$J55" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B55/api/auth/login")
+check "55: owner login → 200" 200 "$S"
+code -b "$J55" "$B55/api/settings" > /dev/null
+F55=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
+SOLD55=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+echo "     (owner buckets: first=\"$F55\", final/sold=\"$SOLD55\")"
+
+echo "-- 55a. Finance 'Signed · account pending': signed + provisioned + unbilled (not on the paid list) --"
+S=$(code -b "$J55" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Signed Pending Co\",\"contactName\":\"Sam P\",\"email\":\"sam@signedpending.example\",\"clientType\":\"commercial\",\"dealValue\":2400,\"stage\":\"$F55\"}" "$B55/api/clients")
+check "55a: owner creates a lead in the first stage → 201" 201 "$S"
+SP_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J55" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Signed Pending Co\",\"clientType\":\"commercial\",\"stage\":\"$SOLD55\",\"agreementStatus\":\"signed\"}" "$B55/api/clients/$SP_ID")
+check "55a: owner marks it sold + agreement signed → 200" 200 "$S"
+grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 55a: agreement signed on the sold lead"; } || { FAIL=$((FAIL+1)); echo "  ✗ 55a: no signed: $(cat /tmp/body.json)"; }
+S=$(code -b "$J55" "$B55/api/clients?archived=1")
+check "55a: owner GET clients → 200" 200 "$S"
+if SP_ID="$SP_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['SP_ID'])][0]
+assert me['agreementStatus'] == 'signed', me
+assert me['provisionedOrgId'] > 0, ("not provisioned: " + repr(me))
+assert me['paymentStatus'] == 'none', ("expected unbilled (none), got " + repr(me.get('paymentStatus')))
+# The Finance pending filter is signed && provisioned && not-billed; the paid
+# list is paymentStatus !== 'none'. So this client is PENDING, not on the paid list.
+assert me['paymentStatus'] != 'paid', "signed-pending client must NOT be on the paid list"
+print("  ✓ 55a: signed+pending client in the Finance pending bucket (signed, provisioned, unbilled) and NOT on the paid list")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 55a: Finance signed-pending bucket assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+
+echo "-- 55b. Clients 'Paid but unbuilt' window + owner Build-account action --"
+# Create a client directly in the final Sold stage via POST (POST never
+# auto-provisions) → provisionedOrgId stays 0 (unbuilt) while stage is sold.
+S=$(code -b "$J55" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Paid Unbuilt Co\",\"contactName\":\"Pia U\",\"email\":\"pia@paidunbuilt.example\",\"clientType\":\"commercial\",\"dealValue\":3600,\"stage\":\"$SOLD55\"}" "$B55/api/clients")
+check "55b: owner creates a sold-stage client (POST, no auto-provision) → 201" 201 "$S"
+PB_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J55" -X POST "$B55/api/clients/$PB_ID/payment-paid")
+check "55b: owner marks the client paid → 200" 200 "$S"
+S=$(code -b "$J55" "$B55/api/clients/$PB_ID")
+check "55b: owner GET client → 200" 200 "$S"
+grep -q '"paymentStatus":"paid"' /tmp/body.json && grep -q '"provisionedOrgId":0' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 55b: paid but unprovisioned client — appears in the Clients 'Paid but unbuilt' window (paymentStatus paid + provisionedOrgId 0)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 55b: paid-unbuilt data: $(cat /tmp/body.json)"; }
+# Build the account on demand (owner-only).
+S=$(code -b "$J55" -X POST "$B55/api/admin/clients/$PB_ID/provision")
+check "55b: owner Build account → 200" 200 "$S"
+PB_ORG=$(grep -o '"orgId":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+if [ -n "$PB_ORG" ] && [ "$PB_ORG" != "0" ]; then PASS=$((PASS+1)); echo "  ✓ 55b: Build account returned new workspace org $PB_ORG"; else FAIL=$((FAIL+1)); echo "  ✗ 55b: no orgId: $(cat /tmp/body.json)"; fi
+S=$(code -b "$J55" "$B55/api/clients/$PB_ID")
+check "55b: owner GET client after build → 200" 200 "$S"
+grep -q "\"provisionedOrgId\":$PB_ORG" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 55b: client now shows provisionedOrgId > 0 (no longer unbuilt)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 55b: provisionedOrgId not updated: $(cat /tmp/body.json)"; }
+S=$(code -b "$J55" "$B55/api/admin/orgs")
+check "55b: owner account list → 200" 200 "$S"
+grep -q 'Paid Unbuilt Co' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 55b: the built workspace appears in the owner account list"; } || { FAIL=$((FAIL+1)); echo "  ✗ 55b: workspace missing from account list"; }
+S=$(code -b "$J55" -X POST "$B55/api/admin/clients/$PB_ID/provision")
+check "55b: Build account again → 409 (already built)" 409 "$S"
+S=$(code -b "$J55" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Not Sold Co\",\"contactName\":\"Ned\",\"email\":\"ned@notsold.example\",\"clientType\":\"commercial\",\"stage\":\"$F55\"}" "$B55/api/clients")
+check "55b: owner creates a first-stage client → 201" 201 "$S"
+NS_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J55" -X POST "$B55/api/admin/clients/$NS_ID/provision")
+check "55b: Build account on a non-sold client → 400" 400 "$S"
+S=$(code -b "$J55" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Tenant ISO Co","email":"iso55@demo.example","password":"tenantpass123"}' "$B55/api/admin/orgs")
+check "55b: owner creates a tenant account → 201" 201 "$S"
+S=$(code -c "$JT55" -b "$JT55" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"iso55@demo.example","password":"tenantpass123"}' "$B55/api/auth/login")
+check "55b: tenant login → 200" 200 "$S"
+S=$(code -b "$JT55" -X POST "$B55/api/admin/clients/$NS_ID/provision")
+check "55b: tenant Build account → 403" 403 "$S"
+
+echo "-- 55c. Tenant isolation: tenant /api/clients never carries owner-only fields --"
+S=$(code -b "$JT55" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Tenant Own Co\",\"contactName\":\"Tia\",\"email\":\"tia@tenantown.example\",\"clientType\":\"commercial\",\"dealValue\":100}" "$B55/api/clients")
+check "55c: tenant creates a client → 201" 201 "$S"
+S=$(code -b "$JT55" "$B55/api/clients")
+check "55c: tenant GET clients → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+clients = json.load(open('/tmp/body.json'))['clients']
+for c in clients:
+    assert 'agreementStatus' not in c, c
+    assert 'paymentStatus' not in c, c
+    assert 'paymentLinkUrl' not in c, c
+    assert 'paidAt' not in c, c
+    assert 'paymentAmountCents' not in c, c
+    assert 'provisionedOrgId' not in c, c
+print("  ✓ 55c: tenant client response carries none of the owner-only fields (agreementStatus / paymentStatus / paymentLinkUrl / paidAt / paymentAmountCents / provisionedOrgId)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 55c: tenant isolation field leak:"; cat "$PASS_TMP" 2>/dev/null; fi
+
+# Source markers: the two views + build action are wired into the owner tabs.
+if grep -Fq 'signedPending' src/Finance.tsx && grep -Fq 'agreementStatus === "signed"' src/Finance.tsx && grep -Fq 'provisionedOrgId' src/Finance.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Finance 'Signed · account pending' bucket wired (signedPending filter)"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Finance pending bucket source marker missing"; fi
+if grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx && grep -Fq 'paymentStatus === "paid"' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Clients 'Paid but unbuilt' window + Build-account action wired"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Clients paid-unbuilt source marker missing"; fi
+
+stop_crm "$MOCK55/srv.pid"; kill "$MOCK55_PID" 2>/dev/null; sleep 0.3
+rm -f "$J55" "$JT55"; rm -rf "$MOCK55"
+echo "  ✓ 55: Owner workflow views complete"
+
 echo "  ✓ 54: Appointments production complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 

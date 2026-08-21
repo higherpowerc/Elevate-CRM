@@ -541,6 +541,11 @@ function toClient(row: ClientRow, ownerOrg = false) {
           demoMeetingLink: typeof row.demo_meeting_link === "string" ? row.demo_meeting_link : "",
           followUpNote: typeof row.follow_up_note === "string" ? row.follow_up_note : "",
           orphanedStage: isStageOrphaned(row.org_id, row.stage),
+          // Owner workflow views (2026-08-21) — whether a workspace has been
+          // provisioned for this sold client (0 = none yet; a positive org id
+          // means an account was built). OWNER-only, the same rule as the
+          // payment/agreement keys above: tenant responses never carry it.
+          provisionedOrgId: row.provisioned_org_id,
         }
       : {}),
     createdAt: row.created_at,
@@ -2599,6 +2604,38 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       },
       201,
     );
+  }
+
+  /* Owner workflow views (2026-08-21) — "Build account" for a paid-but-
+     unprovisioned client (backlog 586097cb). Owner-only (requireAdmin, like
+     every /api/admin route): provisions a brand-new clean tenant workspace for
+     an OWNER-org client on demand, reusing the SAME shared provisionSoldClient
+     path the sold-lead auto-provision hook uses (idempotent — the re-check
+     inside returns orgId 0 if already provisioned). Guards: the client must be
+     in an owner org, currently unprovisioned (provisioned_org_id = 0), and in
+     the final "Sold" stage. The intake email is fire-and-forget (sendEmail
+     never throws), so a delivery failure never fails the provision. */
+  const adminClientProvisionMatch = pathname.match(/^\/api\/admin\/clients\/(\d+)\/provision$/);
+  if (adminClientProvisionMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminClientProvisionMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ?").get(id) as ClientRow | null;
+    if (!client) return err("Client not found.", 404);
+    if (!ownerOrgIds().includes(client.org_id)) return err("Forbidden.", 403);
+    if (client.provisioned_org_id !== 0) return err("This client already has an account.", 409);
+    if (!isFinalStage(client.org_id, client.stage)) return err("This client is not in its final Sold stage yet.", 400);
+    const out = await provisionSoldClient(client);
+    if (out.orgId === 0) return err("This client already has an account.", 409);
+    // 3g-4 style: intake email AFTER the provision committed, fire-and-forget.
+    void sendIntakeEmail({
+      to: out.email,
+      orgName: getOrg(out.orgId)?.name ?? out.email,
+      loginEmail: out.email,
+      tempPassword: out.password,
+      appUrl: appUrlFrom(req),
+    });
+    return json({ ok: true, clientId: client.id, orgId: out.orgId, email: out.email });
   }
 
   const adminOrgMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)$/);

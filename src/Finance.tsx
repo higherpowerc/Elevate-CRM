@@ -266,6 +266,34 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
     [ownerOrg, clients],
   );
 
+  /* Owner workflow views (2026-08-21) — "Signed · account pending": clients who
+     signed the agreement AND had a workspace provisioned (account built) but
+     have NOT been billed yet (paymentStatus none/absent). These are the ones
+     ready to bill — a distinct pending list from the billed `bills` above. The
+     row action reuses the existing owner "Bill this account" flow: it pre-selects
+     the client in the top bill form and focuses the amount so the owner can
+     bill from right there. */
+  const signedPending = useMemo(
+    () =>
+      ownerOrg
+        ? clients.filter(
+            (c) =>
+              c.agreementStatus === "signed" &&
+              (c.provisionedOrgId ?? 0) > 0 &&
+              (!c.paymentStatus || c.paymentStatus === "none"),
+          )
+        : [],
+    [ownerOrg, clients],
+  );
+  const billFormRef = useRef<HTMLDivElement>(null);
+  const billAmountRef = useRef<HTMLInputElement>(null);
+  function focusBillForClient(c: Client) {
+    setBillClientId(String(c.id));
+    setBillInterval("month");
+    billFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    billAmountRef.current?.focus();
+  }
+
   if (!invoices) {
     return error ? (
       <div className="alert alert-error">{error}</div>
@@ -317,6 +345,39 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
           <span className="kpi-note">Sent, past due date</span>
         </div>
       </div>
+
+      {ownerOrg && signedPending.length > 0 && (
+        <div className="card pending-bills">
+          <div className="page-head" style={{ marginBottom: ".5rem" }}>
+            <div>
+              <h2 className="h3">
+                <em className="serif">Signed</em> · account pending
+              </h2>
+              <p className="page-sub">
+                Agreement signed, account built, not billed yet — ready to bill. Pick a client, then set the
+                amount and click "Bill this account" above.
+              </p>
+            </div>
+          </div>
+          <ul className="inv-list" style={{ margin: 0 }}>
+            {signedPending.map((c) => (
+              <li key={c.id} className="inv">
+                <div className="inv-body">
+                  <div className="inv-client">
+                    <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
+                    <span className="inv-notes">Signed · account ready — not billed yet</span>
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button className="icon-btn" onClick={() => focusBillForClient(c)} disabled={busy}>
+                    Bill this account
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {canEdit && (
       <form className="card inv-add" onSubmit={handleQuickAdd}>
@@ -373,7 +434,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
       )}
 
       {ownerOrg && canEdit && (
-        <div className="card inv-add stripe-bill">
+        <div className="card inv-add stripe-bill" ref={billFormRef}>
           <div className="page-head" style={{ marginBottom: ".5rem" }}>
             <div>
               <h2 className="h3">
@@ -404,6 +465,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
                 $
               </span>
               <input
+                ref={billAmountRef}
                 type="number"
                 min="0.01"
                 step="0.01"

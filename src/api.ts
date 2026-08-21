@@ -244,6 +244,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
+  /* Owner workflow views (2026-08-21) — "Build account": provision a client
+     workspace on demand for a paid-but-unprovisioned sold client. Owner-only
+     (server 403s members). Reuses the sold-lead auto-provision path. */
+  adminProvisionClient: (id: number) =>
+    request<{ ok: true; clientId: number; orgId: number; email: string }>(
+      `/api/admin/clients/${id}/provision`,
+      { method: "POST" },
+    ),
   /* 3k — owner-only: generate a fresh temp password for a tenant (the interim
      "client forgot their password and has no email access" answer). The
      plaintext comes back ONCE in this response (and stays on the Admin list

@@ -81,6 +81,34 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /* Owner workflow views (2026-08-21) — "Paid but unbuilt clients": those who
+     paid (paymentStatus === 'paid') but have no provisioned workspace yet
+     (provisioned_org_id 0) — the owner still needs to build their account. The
+     "Build account" action reuses the shared sold-lead provisioning path. */
+  const paidUnbuilt = useMemo(
+    () =>
+      ownerOrg && clients
+        ? clients.filter((c) => c.paymentStatus === "paid" && (c.provisionedOrgId ?? 0) === 0)
+        : [],
+    [ownerOrg, clients],
+  );
+  const [buildingId, setBuildingId] = useState<number | null>(null);
+  const [buildNotice, setBuildNotice] = useState<string | null>(null);
+  async function handleBuildAccount(c: Client) {
+    setBuildingId(c.id);
+    setError(null);
+    setBuildNotice(null);
+    try {
+      const r = await api.adminProvisionClient(c.id);
+      setBuildNotice(`Account built for ${c.companyName} — login sent to ${r.email}.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not build this account.");
+    } finally {
+      setBuildingId(null);
+    }
+  }
+
   /** Loads the FULL client list (active AND archived) plus org settings —
    *  the directory filters it to the terminal stage client-side. */
   const load = useCallback(async () => {
@@ -240,6 +268,46 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
             </p>
           </div>
         </div>
+        {ownerOrg && paidUnbuilt.length > 0 && (
+          <div className="card paid-unbuilt">
+            <div className="page-head" style={{ marginBottom: ".5rem" }}>
+              <div>
+                <h2 className="h3">
+                  <em className="serif">Paid</em> but unbuilt clients
+                </h2>
+                <p className="page-sub">
+                  These clients paid but don't have a CRM workspace yet — build their account below.
+                </p>
+              </div>
+            </div>
+            <ul className="inv-list" style={{ margin: 0 }}>
+              {paidUnbuilt.map((c) => (
+                <li key={c.id} className="inv">
+                  <div className="inv-body">
+                    <div className="inv-client">
+                      <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
+                      <span className="inv-notes">Paid · no account built yet</span>
+                    </div>
+                  </div>
+                  <div className="row-actions">
+                    <button
+                      className="icon-btn"
+                      onClick={() => handleBuildAccount(c)}
+                      disabled={buildingId !== null}
+                    >
+                      {buildingId === c.id ? "Building…" : "Build account"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {buildNotice && (
+          <div className="alert alert-success" role="status" style={{ margin: ".5rem 0" }}>
+            {buildNotice}
+          </div>
+        )}
         {ownerOrgId && onViewAccount && <Accounts ownerOrgId={ownerOrgId} onViewAccount={onViewAccount} />}
       </div>
     );
