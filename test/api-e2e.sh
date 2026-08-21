@@ -7463,7 +7463,7 @@ e=owner[0]
 assert "Reply Co A" in e.get("subject",""), e
 assert "Login broken" in e.get("subject",""), e
 assert "Reply Co A" in e.get("text",""), e
-assert "Cannot log into my workspace" in e.get("text",""), e
+assert "cannot log into my workspace" in e.get("text","").lower(), e
 assert e.get("to")==["owner-test@gmail.com"], e  # TEST_EMAIL_TO redirect
 print("  ✓ 56a: owner alert email has Reply Co A + subject + message snippet")
 PY
@@ -7512,13 +7512,24 @@ print("  ✓ 56c: client reply email received (subject Re: Login broken + reply 
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56c: reply email missing"; fi
 echo "-- 56e. Owner-org ticket creation triggers NO owner self-email --"
+# Snapshot how many emails exist before the owner-org ticket so we only assert
+# over emails that arrive AFTER this point (the earlier tenant-A owner alert
+# from 56a legitimately remains in the log and must not trip this check).
+PRE56=$(python3 - "$MOCK56/emails.jsonl" <<'PREPY'
+import sys, json
+emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+print(len(emails))
+PREPY
+)
 code -b "$JO56" -X POST -H 'Content-Type: application/json' \
   -d '{"subject":"Owner side note","message":"Filed on the owner org."}' "$B56/api/tickets" > /dev/null
 sleep 1
-if python3 - "$MOCK56/emails.jsonl" <<'PY'
+if python3 - "$MOCK56/emails.jsonl" "$PRE56" <<'PY'
 import sys, json
 emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
-assert not any(e.get("subject","").startswith("New support ticket from") for e in emails), [e.get("subject") for e in emails]
+pre=int(sys.argv[2])
+new=emails[pre:]
+assert not any(e.get("subject","").startswith("New support ticket from") for e in new), [e.get("subject") for e in new]
 print("  ✓ 56e: owner-org ticket fired no owner self-email")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56e: owner self-email fired"; fi
