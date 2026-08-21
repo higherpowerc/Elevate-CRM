@@ -8,8 +8,10 @@ import {
   fmtDate,
   ticketPriorityLabel,
   ticketStatusLabel,
+  ticketReplyLabel,
   type Ticket,
   type TicketPriority,
+  type TicketReply,
   type TicketStatus,
 } from "./types";
 import { usePii, blurPii } from "./pii";
@@ -49,6 +51,15 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
      in the owner's OWN org, exactly like a client's). */
   const [showModal, setShowModal] = useState(false);
 
+  /* Owner-only "agent draft-reply review queue" (backlog 58435d2b): replies
+     per expanded ticket, per-ticket draft textarea, and in-flight send id.
+     Tenants never touch these — the reply routes are owner-only server-side. */
+  const [repliesByTicket, setRepliesByTicket] = useState<Record<number, TicketReply[]>>({});
+  const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
+  const [sendingReplyId, setSendingReplyId] = useState<number | null>(null);
+  const [creatingReplyId, setCreatingReplyId] = useState<number | null>(null);
+  const [replyBusyId, setReplyBusyId] = useState<number | null>(null);
+
   const load = useCallback(async () => {
     setError(null);
     try {
@@ -77,6 +88,68 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
       setError(e instanceof Error ? e.message : "Update failed.");
     } finally {
       setSavingStatusId(null);
+    }
+  }
+
+  /* Owner-only reply queue handlers (backlog 58435d2b). `loadReplies` is
+     called when the owner expands a ticket; the draft textarea + per-draft
+     "Approve & send" render below in the expanded row. Tenants never reach
+     these (the buttons only render for ownerOrg). */
+  const loadReplies = useCallback(
+    async (ticketId: number) => {
+      setReplyBusyId(ticketId);
+      try {
+        const { replies } = await api.ticketReplies(ticketId);
+        setRepliesByTicket((prev) => ({ ...prev, [ticketId]: replies }));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load replies.");
+      } finally {
+        setReplyBusyId(null);
+      }
+    },
+    [],
+  );
+
+  async function toggleExpand(t: Ticket) {
+    const expanded = expandedId === t.id;
+    setExpandedId(expanded ? null : t.id);
+    if (!expanded && ownerOrg && !repliesByTicket[t.id]) {
+      void loadReplies(t.id);
+    }
+  }
+
+  async function handleCreateReply(ticketId: number) {
+    const body = (replyDrafts[ticketId] ?? "").trim();
+    if (!body) return;
+    setCreatingReplyId(ticketId);
+    setError(null);
+    try {
+      const { reply } = await api.createTicketReply(ticketId, { body });
+      setRepliesByTicket((prev) => ({
+        ...prev,
+        [ticketId]: [...(prev[ticketId] ?? []), reply],
+      }));
+      setReplyDrafts((prev) => ({ ...prev, [ticketId]: "" }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save draft.");
+    } finally {
+      setCreatingReplyId(null);
+    }
+  }
+
+  async function handleSendReply(ticketId: number, replyId: number) {
+    setSendingReplyId(replyId);
+    setError(null);
+    try {
+      const { reply } = await api.sendTicketReply(ticketId, replyId);
+      setRepliesByTicket((prev) => ({
+        ...prev,
+        [ticketId]: (prev[ticketId] ?? []).map((r) => (r.id === replyId ? reply : r)),
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send reply.");
+    } finally {
+      setSendingReplyId(null);
     }
   }
 
@@ -217,14 +290,31 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
                       <button
                         type="button"
                         className="ticket-subject"
-                        onClick={() => setExpandedId(expanded ? null : t.id)}
+                        onClick={() => toggleExpand(t)}
                         aria-expanded={expanded}
                         aria-label={expanded ? `Collapse ${t.subject}` : `Expand ${t.subject}`}
                       >
                         {t.subject}
                       </button>
                       {expanded && (
-                        <p className={`ticket-message${blurPii(pii)}`}>{t.message}</p>
+                        <>
+                          <p className={`ticket-message${blurPii(pii)}`}>{t.message}</p>
+                          {ownerOrg && (
+                            <TicketRepliesPanel
+                              ticketId={t.id}
+                              replies={repliesByTicket[t.id]}
+                              draft={replyDrafts[t.id] ?? ""}
+                              onDraftChange={(v) =>
+                                setReplyDrafts((prev) => ({ ...prev, [t.id]: v }))
+                              }
+                              busy={replyBusyId === t.id}
+                              creating={creatingReplyId === t.id}
+                              sendingId={sendingReplyId}
+                              onSaveDraft={() => handleCreateReply(t.id)}
+                              onApproveSend={(replyId) => handleSendReply(t.id, replyId)}
+                            />
+                          )}
+                        </>
                       )}
                     </td>
                     <td data-label="Status">
@@ -388,6 +478,94 @@ function TicketFormModal({ ownerOrg, onClose, onSubmitted }: ModalProps) {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+/* ── Owner-only ticket-reply panel (backlog 58435d2b) ──────────────────
+ * Shown when the owner expands a ticket. Lists existing replies (draft vs
+ * sent badge), a "Draft reply" textarea the reviewer saves as a draft, and a
+ * per-draft "Approve & send" button — the ONLY way a reply is emailed to the
+ * client (never auto-sent). Never rendered for tenant orgs. */
+interface RepliesPanelProps {
+  ticketId: number;
+  replies?: TicketReply[];
+  draft: string;
+  onDraftChange: (v: string) => void;
+  busy: boolean;
+  creating: boolean;
+  sendingId: number | null;
+  onSaveDraft: () => void;
+  onApproveSend: (replyId: number) => void;
+}
+
+function TicketRepliesPanel({
+  replies,
+  draft,
+  onDraftChange,
+  busy,
+  creating,
+  sendingId,
+  onSaveDraft,
+  onApproveSend,
+}: RepliesPanelProps) {
+  const pii = usePii();
+  const list = replies ?? [];
+  return (
+    <div className="ticket-replies">
+      <div className="ticket-replies-head">
+        <span className="field-label">Replies</span>
+        <span className="cell-muted">
+          {busy ? "Loading…" : list.length === 0 ? "No replies yet" : `${list.length} reply${list.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+      {list.length > 0 && (
+        <ul className="ticket-replies-list">
+          {list.map((r) => (
+            <li key={r.id} className={`ticket-reply ${r.status === "draft" ? "reply-draft" : "reply-sent"}`}>
+              <div className="ticket-reply-meta">
+                <span className="cell-strong">{r.author}</span>
+                <span className={`badge ${r.status === "draft" ? "tone-amber" : "tone-green"}`}>
+                  {ticketReplyLabel(r.status)}
+                </span>
+                {r.status === "draft" ? (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    onClick={() => onApproveSend(r.id)}
+                    disabled={sendingId !== null}
+                  >
+                    {sendingId === r.id ? "Sending…" : "Approve & send"}
+                  </button>
+                ) : (
+                  <span className="cell-muted">Sent {fmtDate(r.sentAt || r.createdAt)}</span>
+                )}
+              </div>
+              <p className={`ticket-reply-body${blurPii(pii)}`}>{r.body}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="ticket-reply-draft">
+        <textarea
+          rows={3}
+          value={draft}
+          onChange={(e) => onDraftChange(e.target.value)}
+          placeholder="Draft a reply to the client… (stays a draft until you approve &amp; send it)"
+          maxLength={10000}
+          aria-label="Draft reply"
+        />
+        <div className="ticket-reply-draft-actions">
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={onSaveDraft}
+            disabled={creating || !draft.trim()}
+          >
+            {creating ? "Saving…" : "Save draft"}
+          </button>
+        </div>
       </div>
     </div>
   );
