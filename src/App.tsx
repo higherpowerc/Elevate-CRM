@@ -5,6 +5,7 @@ import Dashboard from "./Dashboard";
 import Clients from "./Clients";
 import ClientsDirectory from "./ClientsDirectory";
 import Calendar from "./Calendar";
+import Appointments from "./Appointments";
 import Tasks from "./Tasks";
 import Finance from "./Finance";
 import Admin from "./Admin";
@@ -30,7 +31,7 @@ import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "
  * (prospects), Onboarding = the MIDDLE stages (intake leads), Clients = the
  * terminal stage (sold). Client accounts (role=member) are unchanged: their
  * Leads tab keeps showing every stage except their terminal one. */
-type View = "dashboard" | "leads" | "onboarding" | "clients" | "calendar" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
+type View = "dashboard" | "leads" | "onboarding" | "clients" | "calendar" | "appointments" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -161,6 +162,12 @@ export default function App() {
         return canSeeTab("clients");
       case "calendar":
         return isOwnerOrg;
+      case "appointments":
+        /* Appointments production (backlog 5a104eae): visible to every
+           session user — the owner sees all orgs' appointments, each client
+           account sees only its own org's (server-enforced on /api/org/
+           appointments). No per-tab permission exists for it. */
+        return true;
       case "tasks":
         return canSeeTab("tasks");
       case "finance":
@@ -398,6 +405,17 @@ export default function App() {
                 Calendar
               </button>
             )}
+            {/* Appointments production (backlog 5a104eae): the general
+                appointments tab. The owner sees it alongside (not instead of)
+                their demo-call Calendar; each client account sees its own
+                org's appointments (create-for-self gated by the account's
+                allowSelfSchedule toggle). Shown to every session user. */}
+            <button
+              className={effectiveView === "appointments" ? "tab active" : "tab"}
+              onClick={() => setView("appointments")}
+            >
+              Appointments
+            </button>
             {canSeeTab("clients") && (
               <button
                 className={effectiveView === "clients" ? "tab active" : "tab"}
@@ -547,6 +565,12 @@ export default function App() {
           /* Owner 2026-08-20 sales rework — the owner's Calendar view of
              demo-call appointments. Owner-workspace only. */
           <Calendar />
+        ) : effectiveView === "appointments" ? (
+          /* Appointments production (backlog 5a104eae): the general
+             appointments tab, in both workspaces. ownerOrg lets the component
+             pick the right API (owner /api/appointments vs tenant
+             /api/org/appointments) and controls the status-mutation actions. */
+          <Appointments ownerOrg={isOwnerOrg} />
         ) : effectiveView === "tasks" ? (
           <Tasks canEdit={canEditTab("tasks")} />
         ) : effectiveView === "finance" ? (

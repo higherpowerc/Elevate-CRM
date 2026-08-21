@@ -415,6 +415,15 @@ db.exec(`
     duration     INTEGER NOT NULL DEFAULT 30,
     status       TEXT NOT NULL DEFAULT 'scheduled',
     notes        TEXT NOT NULL DEFAULT '',
+    -- Appointments production (backlog 5a104eae): an unguessable public
+    -- token mints when the appointment is created so the emailed reminder's
+    -- Confirm / Reschedule links can act on this row WITHOUT a session
+    -- (the link is the credential, same as the agreement /sign token).
+    token        TEXT NOT NULL DEFAULT '',
+    -- Day-before reminder (automation roadmap): 1 once the "appointment
+    -- tomorrow" reminder email has been sent for this row, so the lazy
+    -- reminder sweep (run on appointment list reads) never re-sends.
+    reminder_sent INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
@@ -422,7 +431,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_appointments_org_scheduled ON appointments(org_id, scheduled_at);
   CREATE INDEX IF NOT EXISTS idx_appointments_org_client    ON appointments(org_id, client_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_org_status    ON appointments(org_id, status);
-
   -- 3g-3: owner's dismissible "auto-provisioned from sold lead" notifications.
   CREATE TABLE IF NOT EXISTS provision_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1062,6 +1070,29 @@ db.exec(`
   addOrgCol("status", "status TEXT NOT NULL DEFAULT 'active'");
   addOrgCol("canceled_at", "canceled_at TEXT NOT NULL DEFAULT ''");
   addOrgCol("retention_until", "retention_until TEXT NOT NULL DEFAULT ''");
+  // Appointments production (backlog 5a104eae): per-org toggle — when 1, the
+  // tenant can create/schedule appointments for themselves; when 0 (default)
+  // clients can only view/reschedule what the owner sets. Column is on `orgs`
+  // (one flag for the whole account), not per-client.
+  addOrgCol("allow_self_schedule", "allow_self_schedule INTEGER NOT NULL DEFAULT 0");
+}
+/**
+ * Appointments production (backlog 5a104eae): appointments gains the public
+ * token (minted on create so the emailed reminder's Confirm/Reschedule links
+ * can act on the row WITHOUT a session — the link is the credential, same as
+ * the agreement /sign token) and the once-only reminder_sent flag. Databases
+ * created BEFORE this migration get the columns idempotently here (the CREATE
+ * TABLE block above only covers fresh DBs).
+ */
+{
+  const apptCols = db.query("PRAGMA table_info(appointments)").all() as { name: string }[];
+  const addApptCol = (name: string, ddl: string) => {
+    if (!apptCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE appointments ADD COLUMN ${ddl}`);
+    }
+  };
+  addApptCol("token", "token TEXT NOT NULL DEFAULT ''");
+  addApptCol("reminder_sent", "reminder_sent INTEGER NOT NULL DEFAULT 0");
 }
 
 /**
@@ -1282,13 +1313,16 @@ export interface OrgRow {
   status: string;
   canceled_at: string;
   retention_until: string;
+  /** Appointments production (backlog 5a104eae): 1 = this account's clients
+   *  may schedule appointments for themselves; 0 = view/reschedule only. */
+  allow_self_schedule: number;
   created_at: string;
 }
 
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, status, canceled_at, retention_until, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, status, canceled_at, retention_until, allow_self_schedule, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }
@@ -1313,6 +1347,8 @@ export interface AppointmentRow {
   duration: number;
   status: AppointmentStatus;
   notes: string;
+  token: string;
+  reminder_sent: number;
   created_at: string;
   updated_at: string;
 }

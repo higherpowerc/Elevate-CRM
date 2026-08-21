@@ -277,6 +277,9 @@ export const api = {
     /** Native e-signature — the OWNER org's agreement template (owner-only;
      *  tenant writes are ignored server-side). */
     agreementTemplate?: string;
+    /** Appointments production (backlog 5a104eae): per-account toggle — 1 lets
+     *  this account's clients schedule appointments for themselves. */
+    allowSelfSchedule?: boolean;
   }) =>
     request<{ settings: OrgSettings }>("/api/settings", {
       method: "PUT",
@@ -351,4 +354,32 @@ export const api = {
      demo_scheduled_at. The row then disappears from the calendar list. */
   cancelAppointment: (id: number) =>
     request<{ ok: true; appointment: Appointment }>(`/api/appointments/${id}/cancel`, { method: "POST" }),
+  /* Appointments production (backlog 5a104eae) — tenant workspace. GET lists
+     THIS account's own appointments + whether self-scheduling is enabled;
+     POST creates one for the caller's own account (403 unless the account
+     toggle allowSelfSchedule is ON). */
+  orgAppointments: () =>
+    request<{ appointments: Appointment[]; allowSelfSchedule: boolean }>("/api/org/appointments"),
+  createOrgAppointment: (title: string, scheduledAt: string, duration?: number) =>
+    request<{ ok: true; appointment: Appointment }>("/api/org/appointments", {
+      method: "POST",
+      body: JSON.stringify({ title, scheduledAt, duration }),
+    }),
+  /* Owner — create an appointment (assign to a client account via orgId;
+     optional clientId within that account). */
+  createAppointment: (data: { title: string; scheduledAt: string; duration?: number; notes?: string; orgId?: number; clientId?: number }) =>
+    request<{ ok: true; appointment: Appointment }>("/api/appointments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /* Owner — edit status / time on an appointment. */
+  patchAppointment: (id: number, data: { status?: Appointment["status"]; scheduledAt?: string; title?: string; notes?: string }) =>
+    request<{ ok: true; appointment: Appointment }>(`/api/appointments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  /* Owner — force the day-before reminder sweep. */
+  runAppointmentReminders: () =>
+    request<{ ok: true; sent: number }>("/api/appointments/reminders", { method: "POST" }),
 };
+

@@ -67,7 +67,7 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, sendAppointmentReminderEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
 import Stripe from "stripe";
 import { generateInvoicePdf } from "./invoices";
 import { stripeClient } from "./stripe";
@@ -568,6 +568,60 @@ function toAppointment(row: AppointmentRow, clientName?: string) {
 
 /** Phase 3e: every client is Commercial or Residential — required on create
  *  and on edit. Existing records were backfilled to 'residential'. */
+/* ── Appointments production (backlog 5a104eae) — shared helpers ─────── */
+const APPT_SLOT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
+function newAppointmentToken(): string {
+  return randomBytes(24).toString("hex");
+}
+function fmtSlot(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function ensureAppointmentToken(id: number): string {
+  const row = db.query("SELECT token FROM appointments WHERE id = ?").get(id) as { token: string } | null;
+  if (row && row.token !== "") return row.token;
+  const token = newAppointmentToken();
+  db.query("UPDATE appointments SET token = ?, updated_at = datetime('now') WHERE id = ?").run(token, id);
+  return token;
+}
+function findAppointmentByToken(token: string): AppointmentRow | null {
+  if (typeof token !== "string" || token === "" || token.length > 200) return null;
+  return db.query("SELECT * FROM appointments WHERE token = ?").get(token) as AppointmentRow | null;
+}
+async function maybeSendAppointmentReminders(req: Request): Promise<number> {
+  const appUrl = appUrlFrom(req);
+  const now = new Date();
+  const from = fmtSlot(now);
+  const to = fmtSlot(new Date(now.getTime() + 26 * 3600 * 1000));
+  const rows = db
+    .query(
+      `SELECT a.*, c.company_name AS client_name, c.email AS client_email
+         FROM appointments a LEFT JOIN clients c ON c.id = a.client_id
+        WHERE a.status IN ('scheduled','confirmed')
+          AND a.reminder_sent = 0
+          AND a.scheduled_at >= ? AND a.scheduled_at <= ?`,
+    )
+    .all(from, to) as (AppointmentRow & { client_name: string | null; client_email: string | null })[];
+  let sent = 0;
+  for (const a of rows) {
+    const email = (a.client_email ?? "").trim();
+    const name = (a.client_name ?? "").trim() || "there";
+    if (email === "") continue;
+    const token = ensureAppointmentToken(a.id);
+    await sendAppointmentReminderEmail({
+      to: email,
+      clientName: name,
+      scheduledAt: a.scheduled_at,
+      confirmUrl: `${appUrl}/appointment/${token}/confirm`,
+      rescheduleUrl: `${appUrl}/appointment/${token}/reschedule`,
+    });
+    db.query(
+      "UPDATE appointments SET reminder_sent = 1, updated_at = datetime('now') WHERE id = ?",
+    ).run(a.id);
+    sent++;
+  }
+  return sent;
+}
 export const CLIENT_TYPES = ["commercial", "residential"] as const;
 export type ClientType = (typeof CLIENT_TYPES)[number];
 
@@ -2310,6 +2364,40 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ ok: true, received: true, event: typeof event.id === "string" ? event.id : "", handled: "unhandled_type" });
   }
 
+  /* Appointments production (backlog 5a104eae) — PUBLIC Confirm / Reschedule
+     routes. The emailed reminder's action links carry the appointment's
+     unguessable token — the link IS the credential (no session required),
+     exactly like the agreement /sign page. Confirm flips a live scheduled
+     appointment to confirmed; Reschedule moves it to a new slot (the client's
+     prior active slot is cancelled server-side — no ghost). Scoped strictly by
+     token: a caller with only the token can never touch another appointment. */
+  const apptConfirmMatch = pathname.match(/^\/api\/appointment\/([^/]+)\/confirm$/);
+  if (apptConfirmMatch && method === "POST") {
+    const appt = findAppointmentByToken(decodeURIComponent(apptConfirmMatch[1]));
+    if (!appt) return err("Appointment not found.", 404);
+    if (appt.status === "cancelled") return err("This appointment was cancelled.", 409);
+    db.query("UPDATE appointments SET status = 'confirmed', updated_at = datetime('now') WHERE id = ?").run(appt.id);
+    return json({ ok: true, status: "confirmed" });
+  }
+  const apptReschedMatch = pathname.match(/^\/api\/appointment\/([^/]+)\/reschedule$/);
+  if (apptReschedMatch && method === "POST") {
+    const appt = findAppointmentByToken(decodeURIComponent(apptReschedMatch[1]));
+    if (!appt) return err("Appointment not found.", 404);
+    if (appt.status === "cancelled") return err("This appointment was cancelled.", 409);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const at = typeof body.scheduledAt === "string" ? body.scheduledAt.trim() : "";
+    if (!APPT_SLOT_RE.test(at)) return err("scheduledAt must be a YYYY-MM-DDTHH:MM local datetime.", 400);
+    // Replaces the slot: any other active scheduled appointment for the same
+    // client in the same org is cancelled (no ghost) — reuse the demo behavior.
+    if (appt.client_id != null) {
+      db.query(
+        "UPDATE appointments SET status = 'cancelled', updated_at = datetime('now') WHERE org_id = ? AND client_id = ? AND id != ? AND status = 'scheduled'",
+      ).run(appt.org_id, appt.client_id, appt.id);
+    }
+    db.query("UPDATE appointments SET scheduled_at = ?, updated_at = datetime('now') WHERE id = ?").run(at, appt.id);
+    return json({ ok: true, scheduledAt: at });
+  }
   /* Everything below requires auth */
   const auth = requireAuth(req);
   if (auth instanceof Response) return auth;
@@ -2915,6 +3003,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         // owner-set (Admin) — the tenant sees it here but cannot change it.
         revenueModel: isRevenueModel(org.revenue_model) ? org.revenue_model : "sales",
         monthlySubscriptionAmount: org.monthly_subscription_amount ?? 0,
+        allowSelfSchedule: org.allow_self_schedule === 1,
         // Native e-signature — the OWNER org's editable agreement template.
         // Deliberately absent from tenant responses (owner-workspace only).
         ...(isOwnerSession(auth) ? { agreementTemplate: org.agreement_template ?? "" } : {}),
@@ -3149,6 +3238,11 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       }
       sets.push("agreement_template = ?");
       params.push(body.agreementTemplate);
+    }
+    if (body.allowSelfSchedule !== undefined) {
+      if (typeof body.allowSelfSchedule !== "boolean") return err("allowSelfSchedule must be a boolean.", 400);
+      sets.push("allow_self_schedule = ?");
+      params.push(body.allowSelfSchedule ? 1 : 0);
     }
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(orgId);
@@ -3547,10 +3641,10 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     ).run(orgId, client.id);
     const info = db
       .query(
-        `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes)
-         VALUES (?, ?, ?, ?, ?, 'scheduled', ?)`,
+        `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes, token)
+         VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?)`,
       )
-      .run(orgId, client.id, title, scheduledAt, duration, meetingLink ? `Meeting link: ${meetingLink}` : "");
+      .run(orgId, client.id, title, scheduledAt, duration, meetingLink ? `Meeting link: ${meetingLink}` : "", newAppointmentToken());
     db.query(
       "UPDATE clients SET demo_scheduled_at = ?, demo_meeting_link = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?",
     ).run(scheduledAt, meetingLink, id, orgId);
@@ -3579,6 +3673,9 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
   if (pathname === "/api/appointments" && method === "GET") {
     const admin = requireAdmin(req);
     if (admin instanceof Response) return admin;
+    // Appointments production (backlog 5a104eae): reading the calendar is a
+    // natural trigger for the lazy day-before reminder sweep (see call site).
+    await maybeSendAppointmentReminders(req);
     // Reschedule fix (owner 2026-08-22): cancelled appointments are retained
     // in the DB for history, but do NOT surface on the owner Calendar — the
     // list is the owner's live schedule of active demo calls only.
@@ -3592,6 +3689,168 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       )
       .all() as (AppointmentRow & { client_name: string | null })[];
     return json({ appointments: rows.map((r) => toAppointment(r, r.client_name ?? undefined)) });
+  }
+  /* Appointments production (backlog 5a104eae) — OWNER-WORKSPACE: create an
+     appointment and assign it to an account (orgId; default = the owner org
+     itself, i.e. a plain owner-calendar booking). Assigning it to a tenant
+     org makes it appear on THAT client's Appointments tab (scoped by org_id),
+     so the owner can schedule things for a client account. optional clientId
+     must belong to the target org and links the appointment to that client
+     for display + reminder email. If the target is a client that already has
+     an active scheduled appointment, that old slot is cancelled (no ghost).
+     OWNER-ONLY (requireAdmin). */
+  if (pathname === "/api/appointments" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (!title) return err("title is required.", 400);
+    const scheduledAt = typeof body.scheduledAt === "string" ? body.scheduledAt.trim() : "";
+    if (!APPT_SLOT_RE.test(scheduledAt)) {
+      return err("scheduledAt must be a YYYY-MM-DDTHH:MM local datetime.", 400);
+    }
+    const duration =
+      Number.isFinite(Number(body.duration)) && Number(body.duration) > 0 ? Math.round(Number(body.duration)) : 30;
+    const notes = typeof body.notes === "string" ? body.notes.slice(0, 2000) : "";
+    // target org: which account "owns" this appointment (default owner org).
+    const targetOrg = body.orgId !== undefined && body.orgId !== null ? Number(body.orgId) : orgId;
+    if (!Number.isInteger(targetOrg) || targetOrg <= 0) return err("orgId must be a positive integer.", 400);
+    const target = getOrg(targetOrg);
+    if (!target) return err("Account not found.", 404);
+    let clientId: number | null = null;
+    if (body.clientId !== undefined && body.clientId !== null) {
+      const cid = Number(body.clientId);
+      if (!Number.isInteger(cid) || cid <= 0) return err("clientId must be a positive integer.", 400);
+      const c = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(cid, targetOrg) as ClientRow | null;
+      if (!c) return err("Client not found in that account.", 404);
+      clientId = cid;
+      db.query(
+        "UPDATE appointments SET status = 'cancelled', updated_at = datetime('now') WHERE org_id = ? AND client_id = ? AND status = 'scheduled'",
+      ).run(targetOrg, clientId);
+    }
+    const info = db
+      .query(
+        `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes, token)
+         VALUES (?, ?, ?, ?, ?, 'scheduled', ?, ?)`,
+      )
+      .run(targetOrg, clientId, title, scheduledAt, duration, notes, newAppointmentToken());
+    const row = db.query("SELECT * FROM appointments WHERE id = ?").get(info.lastInsertRowid) as AppointmentRow;
+    const clientName =
+      clientId != null
+        ? (db.query("SELECT company_name FROM clients WHERE id = ? AND org_id = ?").get(clientId, targetOrg) as
+            { company_name: string } | null)?.company_name
+        : undefined;
+    await maybeSendAppointmentReminders(req);
+    return json({ ok: true, appointment: toAppointment(row, clientName) }, 201);
+  }
+  /* Appointments production — OWNER: force a one-off reminder sweep (also runs
+     lazily on calendar/list reads). OWNER-ONLY (requireAdmin). */
+  if (pathname === "/api/appointments/reminders" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const sent = await maybeSendAppointmentReminders(req);
+    return json({ ok: true, sent });
+  }
+  /* Appointments production — TENANT workspace: list THIS org's own
+     appointments (scoped by session org — a tenant can never see another
+     org's rows). Includes the linked client's name for display. The read
+     also triggers the lazy reminder sweep. */
+  if (pathname === "/api/org/appointments" && method === "GET") {
+    await maybeSendAppointmentReminders(req);
+    const rows = db
+      .query(
+        `SELECT a.*, c.company_name AS client_name
+           FROM appointments a
+           LEFT JOIN clients c ON c.id = a.client_id
+          WHERE a.org_id = ? AND a.status != 'cancelled'
+          ORDER BY a.scheduled_at, a.id`,
+      )
+      .all(orgId) as (AppointmentRow & { client_name: string | null })[];
+    const org = getOrg(orgId);
+    return json({
+      appointments: rows.map((r) => toAppointment(r, r.client_name ?? undefined)),
+      allowSelfSchedule: org ? org.allow_self_schedule === 1 : false,
+    });
+  }
+  /* Appointments production — TENANT: create an appointment for themselves
+     (client_id stays null; scoped to the session org). Only allowed when the
+     account-level toggle allow_self_schedule is ON (Settings). Server-enforced
+     so a client can never self-schedule when disabled. 403 otherwise. */
+  if (pathname === "/api/org/appointments" && method === "POST") {
+    const org = getOrg(orgId);
+    if (!org || org.allow_self_schedule !== 1) return err("Self-scheduling is not enabled for this account.", 403);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (!title) return err("title is required.", 400);
+    const scheduledAt = typeof body.scheduledAt === "string" ? body.scheduledAt.trim() : "";
+    if (!APPT_SLOT_RE.test(scheduledAt)) {
+      return err("scheduledAt must be a YYYY-MM-DDTHH:MM local datetime.", 400);
+    }
+    const duration =
+      Number.isFinite(Number(body.duration)) && Number(body.duration) > 0 ? Math.round(Number(body.duration)) : 30;
+    const info = db
+      .query(
+        `INSERT INTO appointments (org_id, client_id, title, scheduled_at, duration, status, notes, token)
+         VALUES (?, NULL, ?, ?, ?, 'scheduled', '', ?)`,
+      )
+      .run(orgId, title, scheduledAt, duration, newAppointmentToken());
+    const row = db.query("SELECT * FROM appointments WHERE id = ?").get(info.lastInsertRowid) as AppointmentRow;
+    return json({ ok: true, appointment: toAppointment(row) }, 201);
+  }
+  /* Appointments production — OWNER: PATCH (status + optional time edit) on an
+     appointment row. OWNER-ONLY. When rescheduling (scheduledAt changes) the
+     same client's old active scheduled slot is cancelled (no ghost). */
+  const apptPatchMatch = pathname.match(/^\/api\/appointments\/(\d+)$/);
+  if (apptPatchMatch && method === "PATCH") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const apptId = Number(apptPatchMatch[1]);
+    const appt = db.query("SELECT * FROM appointments WHERE id = ?").get(apptId) as AppointmentRow | null;
+    if (!appt) return err("Appointment not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const sets: string[] = [];
+    const params: (string | number)[] = [];
+    if (body.status !== undefined) {
+      if (!isAppointmentStatus(body.status)) return err("Invalid status.", 400);
+      sets.push("status = ?");
+      params.push(body.status);
+    }
+    if (body.scheduledAt !== undefined) {
+      const at = typeof body.scheduledAt === "string" ? body.scheduledAt.trim() : "";
+      if (!APPT_SLOT_RE.test(at)) return err("scheduledAt must be a YYYY-MM-DDTHH:MM local datetime.", 400);
+      sets.push("scheduled_at = ?");
+      params.push(at);
+      if (appt.client_id != null) {
+        db.query(
+          "UPDATE appointments SET status = 'cancelled', updated_at = datetime('now') WHERE org_id = ? AND client_id = ? AND id != ? AND status = 'scheduled'",
+        ).run(appt.org_id, appt.client_id, apptId);
+      }
+    }
+    if (body.title !== undefined) {
+      const t = typeof body.title === "string" ? body.title.trim() : "";
+      if (!t) return err("title is required.", 400);
+      sets.push("title = ?");
+      params.push(t);
+    }
+    if (body.notes !== undefined) {
+      const n = typeof body.notes === "string" ? body.notes.slice(0, 2000) : "";
+      sets.push("notes = ?");
+      params.push(n);
+    }
+    if (sets.length === 0) return err("Nothing to update.", 400);
+    sets.push("updated_at = datetime('now')");
+    params.push(apptId);
+    db.query(`UPDATE appointments SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    const row = db.query("SELECT * FROM appointments WHERE id = ?").get(apptId) as AppointmentRow;
+    const clientName =
+      row.client_id != null
+        ? (db.query("SELECT company_name FROM clients WHERE id = ? AND org_id = ?").get(row.client_id, row.org_id) as
+            { company_name: string } | null)?.company_name
+        : undefined;
+    return json({ ok: true, appointment: toAppointment(row, clientName) });
   }
   /* Owner 2026-08-22 — one-click "Cancel" on an owner Calendar row.
      OWNER-ONLY (requireAdmin). Marks the appointment 'cancelled' (history

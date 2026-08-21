@@ -106,6 +106,12 @@ export default function Settings({
   const [revenueModel, setRevenueModel] = useState<OrgSettings["revenueModel"]>("sales");
   const [monthlySubscriptionAmount, setMonthlySubscriptionAmount] = useState(0);
 
+  /* Appointments production (backlog 5a104eae): per-account toggle — 1 lets
+     this account's clients schedule appointments for themselves. Each org
+     (owner or client) controls its OWN setting; the server persists + enforces
+     it per org. */
+  const [allowSelfSchedule, setAllowSelfSchedule] = useState(false);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -412,6 +418,7 @@ export default function Settings({
       );
       setRevenueModel(settings.revenueModel);
       setMonthlySubscriptionAmount(settings.monthlySubscriptionAmount);
+      setAllowSelfSchedule(!!settings.allowSelfSchedule);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -515,6 +522,29 @@ export default function Settings({
     try {
       await api.updateSettings({ revenueModel });
       setSaved("Revenue model saved — your dashboard money figure updates to match.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Appointments production (backlog 5a104eae): self-schedule ──
+     Per-account toggle — 1 lets this account's clients schedule appointments
+     for themselves. Persists through the same Settings PUT; the server
+     enforces it on /api/org/appointments POST. */
+  async function saveAppointmentPrefs() {
+    setError(null);
+    setSaved(null);
+    setBusy(true);
+    try {
+      await api.updateSettings({ allowSelfSchedule });
+      setSaved(
+        allowSelfSchedule
+          ? "Clients can now schedule appointments for themselves."
+          : "Self-scheduling turned off.",
+      );
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed.");
@@ -1054,6 +1084,47 @@ export default function Settings({
               {canEdit && (
                 <button className="btn btn-primary" disabled={busy} onClick={saveRevenueModel}>
                   {busy ? "Saving…" : "Save revenue model"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">Appointments</h2>
+            <p className="admin-card-sub">
+              Whether clients on this account can book their own appointment times.
+            </p>
+          </div>
+          <div className="form">
+            <div className="field">
+              <label className="checkbox-line" htmlFor="allow-self-schedule">
+                <input
+                  id="allow-self-schedule"
+                  type="checkbox"
+                  checked={allowSelfSchedule}
+                  disabled={!canEdit}
+                  onChange={(e) => {
+                    setError(null);
+                    setSaved(null);
+                    setAllowSelfSchedule(e.target.checked);
+                  }}
+                />
+                <span className="field-label">
+                  Allow clients to schedule appointments for themselves
+                </span>
+              </label>
+              <span className="field-hint">
+                When on, a client on this account can book a slot from their Appointments
+                tab. When off, they can view and reschedule their existing appointments
+                but not create new ones.
+              </span>
+            </div>
+            <div className="stage-save">
+              {canEdit && (
+                <button className="btn btn-primary" disabled={busy} onClick={saveAppointmentPrefs}>
+                  {busy ? "Saving…" : "Save appointment settings"}
                 </button>
               )}
             </div>

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
 import { renderSignPage, readAgreementPdf, backfillSignedClients, backfillBrandRename } from "./agreements";
+import { renderConfirmPage, renderReschedulePage } from "./appointmentPages";
 import { db } from "./db";
 
 /**
@@ -142,6 +143,22 @@ const server = serve({
           "Content-Disposition": `inline; filename="agreement-${pdfId}.pdf"`,
         },
       });
+    }
+    /* Appointments production (backlog 5a104eae) — PUBLIC Confirm / Reschedule
+       landing pages. The day-before reminder email links here
+       (`/appointment/<token>/confirm` and `/appointment/<token>/reschedule`);
+       the token is the credential, single-org, no session. The forms POST the
+       JSON action to the public API routes (/api/appointment/<token>/…). Like
+       /sign/<token>, these must be checked BEFORE the SPA fallback. */
+    if (req.method === "GET" && url.pathname.startsWith("/appointment/")) {
+      const rest = url.pathname.slice("/appointment/".length);
+      const slash = rest.indexOf("/");
+      if (slash > 0) {
+        const token = decodeURIComponent(rest.slice(0, slash));
+        const action = rest.slice(slash + 1);
+        if (action === "confirm") return renderConfirmPage(token);
+        if (action === "reschedule") return renderReschedulePage(token);
+      }
     }
     return serveStatic(url.pathname);
   },
