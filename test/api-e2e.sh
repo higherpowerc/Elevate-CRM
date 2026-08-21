@@ -7103,6 +7103,156 @@ if grep -q '"demoScheduledAt":""' /tmp/body.json || grep -q '"demoScheduledAt":n
 check "53: cancel nonexistent appointment -> 404" 404 $(code -b "$JAR" -X POST "$BASE/api/appointments/999999/cancel")
 echo "  ✓ 53: demo reschedule + calendar cancel complete"
 
+echo "-- 54. Appointments production (backlog 5a104eae): self-schedule gating + isolation, owner-assign to a client account, reschedule no-ghost, day-before reminder email, public confirm --"
+# Self-contained: a fresh throwaway CRM server on :3015 (own DB) POSTs emails to
+# a mock Resend endpoint on :3220 (records JSONL). The MAIN server on $BASE is
+# untouched. start_crm/stop_crm are defined in §27 above (this runs last).
+# Ports 3220/3015 are free (suite uses 3195-3213 + 3002-3014).
+APP_DIR54="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MOCK54=$(mktemp -d)
+MOCK54_EMAILS="$MOCK54/emails.jsonl"
+: > "$MOCK54_EMAILS"
+cat > "$MOCK54/resend.ts" <<'TS54'
+import { appendFileSync } from "node:fs";
+const PORT = 3220;
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock resend on " + PORT);
+TS54
+MOCK_OUT="$MOCK54_EMAILS" nohup bun "$MOCK54/resend.ts" > "$MOCK54/resend.log" 2>&1 &
+MOCK54_PID=$!
+i=0; until curl -sf http://127.0.0.1:3220/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+if curl -sf http://127.0.0.1:3220/health >/dev/null 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ 54: mock Resend endpoint up on :3220"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 54: mock Resend endpoint failed to start"
+fi
+start_crm 3015 "$MOCK54/db" "$MOCK54/srv.log" "$MOCK54/srv.pid" -u TEST_EMAIL_TO RESEND_API_KEY=test-key-54 RESEND_URL=http://127.0.0.1:3220
+J54=$(mktemp)
+S=$(code -c "$J54" -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "http://localhost:3015/api/auth/login")
+check "54: owner login → 200" 200 "$S"
+# Provision two client accounts: Appt Org (self-schedule ON later) + Other Org.
+S=$(code -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Appt Org","email":"appt@org.example","password":"apptpass123"}' "http://localhost:3015/api/admin/orgs")
+check "54: owner provisions Appt Org → 201" 201 "$S"
+ORG54=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Other Org","email":"other@org.example","password":"otherpass123"}' "http://localhost:3015/api/admin/orgs")
+check "54: owner provisions Other Org → 201" 201 "$S"
+ORG54B=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+M54=$(mktemp)
+S=$(code -c "$M54" -b "$M54" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"appt@org.example","password":"apptpass123"}' "http://localhost:3015/api/auth/login")
+check "54: Appt Org member login → 200" 200 "$S"
+O54=$(mktemp)
+S=$(code -c "$O54" -b "$O54" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"other@org.example","password":"otherpass123"}' "http://localhost:3015/api/auth/login")
+check "54: Other Org member login → 200" 200 "$S"
+# (a) self-schedule gating: OFF by default -> blocked; toggle ON -> can create;
+#     other org is isolated and still gated OFF.
+S=$(code -b "$M54" "http://localhost:3015/api/org/appointments")
+check "54a: member lists appointments → 200" 200 "$S"
+if grep -q '"allowSelfSchedule":false' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 54a: self-schedule defaults OFF for a new account"; else FAIL=$((FAIL+1)); echo "  ✗ 54a: allowSelfSchedule not false by default"; fi
+S=$(code -b "$M54" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Appt Self","scheduledAt":"2027-01-15T09:00","duration":30}' "http://localhost:3015/api/org/appointments")
+check "54a: member self-schedule blocked while OFF → 403" 403 "$S"
+S=$(code -b "$M54" -X PUT -H 'Content-Type: application/json' \
+  -d '{"allowSelfSchedule":true}' "http://localhost:3015/api/settings")
+check "54a: member enables self-schedule via settings → 200" 200 "$S"
+S=$(code -b "$M54" "http://localhost:3015/api/settings")
+check "54a: member re-reads settings → 200" 200 "$S"
+if grep -q '"allowSelfSchedule":true' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 54a: settings persisted allowSelfSchedule=true"; else FAIL=$((FAIL+1)); echo "  ✗ 54a: allowSelfSchedule not true after settings PUT: $(cat /tmp/body.json)"; fi
+S=$(code -b "$M54" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Appt Self","scheduledAt":"2027-01-15T09:00","duration":30}' "http://localhost:3015/api/org/appointments")
+check "54a: member self-schedule allowed while ON → 201" 201 "$S"
+S=$(code -b "$M54" "http://localhost:3015/api/org/appointments")
+check "54a: member lists own appointment → 200" 200 "$S"
+if grep -q '"title":"Appt Self"' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 54a: member sees their own created appointment"; else FAIL=$((FAIL+1)); echo "  ✗ 54a: member appointment not listed"; fi
+S=$(code -b "$O54" "http://localhost:3015/api/org/appointments")
+check "54a: other-org member lists appointments → 200" 200 "$S"
+if grep -q '"title":"Appt Self"' /tmp/body.json; then FAIL=$((FAIL+1)); echo "  ✗ 54a: OTHER org saw Appt Org's appointment (ISOLATION BREACH)"; else PASS=$((PASS+1)); echo "  ✓ 54a: other org cannot see Appt Org's appointment (isolation)"; fi
+S=$(code -b "$O54" -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Other Self","scheduledAt":"2027-01-15T10:00","duration":30}' "http://localhost:3015/api/org/appointments")
+check "54a: other org self-schedule still blocked (its own toggle OFF) → 403" 403 "$S"
+# (b) owner-created appointment assigned to a client account shows on that org.
+S=$(code -b "$M54" "http://localhost:3015/api/settings")
+check "54b: member reads settings → 200" 200 "$S"
+STAGE54=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
+S=$(code -b "$M54" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Appt Client Co\",\"contactName\":\"Andy A\",\"email\":\"apptclient@example.com\",\"clientType\":\"commercial\",\"dealValue\":1500,\"stage\":\"$STAGE54\"}" "http://localhost:3015/api/clients")
+check "54b: member creates client in their org → 201" 201 "$S"
+CID54=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Owner Booked APP\",\"scheduledAt\":\"2027-01-16T10:00\",\"orgId\":$ORG54,\"clientId\":$CID54,\"duration\":30}" "http://localhost:3015/api/appointments")
+check "54b: owner creates appointment assigned to client account → 201" 201 "$S"
+APPT2=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['appointment']['id'])")
+grep -q "\"orgId\":$ORG54" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 54b: owner appointment stored under the client org"; } || { FAIL=$((FAIL+1)); echo "  ✗ 54b: owner appointment wrong org: $(cat /tmp/body.json)"; }
+S=$(code -b "$M54" "http://localhost:3015/api/org/appointments")
+check "54b: member lists appointments → 200" 200 "$S"
+if grep -q '"title":"Owner Booked APP"' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 54b: owner-created appointment appears on that client account's Appointments tab"; else FAIL=$((FAIL+1)); echo "  ✗ 54b: owner-created appointment missing from client org"; fi
+# (c) public reschedule replaces the old slot (no ghost): only the new time remains.
+TOKEN54=$(python3 -c "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute('SELECT token FROM appointments WHERE id=?',(int(sys.argv[2]),)).fetchone()[0])" "$MOCK54/db/crm.db" "$APPT2")
+S=$(code -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d '{"scheduledAt":"2027-01-16T11:00"}' "http://localhost:3015/api/appointment/$TOKEN54/reschedule")
+check "54c: public reschedule → 200" 200 "$S"
+S=$(code -b "$M54" "http://localhost:3015/api/org/appointments")
+check "54c: member lists appointments → 200" 200 "$S"
+if python3 -c "import json;apps=json.load(open('/tmp/body.json'))['appointments'];mine=[a for a in apps if a.get('title')=='Owner Booked APP'];assert len(mine)==1 and mine[0]['scheduledAt']=='2027-01-16T11:00' and mine[0]['status']=='scheduled', mine"; then PASS=$((PASS+1)); echo "  ✓ 54c: reschedule replaced the old slot — single row at the new time (no ghost)"; else FAIL=$((FAIL+1)); echo "  ✗ 54c: old slot not replaced / ghost present: $(cat /tmp/body.json)"; fi
+# (e) public confirm flips status to confirmed (token-credentialed, no session).
+S=$(code -b "$J54" -X POST "http://localhost:3015/api/appointment/$TOKEN54/confirm")
+check "54e: public confirm → 200" 200 "$S"
+if grep -q '"status":"confirmed"' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 54e: public confirm returned status confirmed"; else FAIL=$((FAIL+1)); echo "  ✗ 54e: confirm response: $(cat /tmp/body.json)"; fi
+S=$(code -b "$M54" "http://localhost:3015/api/org/appointments")
+check "54e: member lists appointments → 200" 200 "$S"
+if grep -q '"title":"Owner Booked APP"' /tmp/body.json && grep -q '"status":"confirmed"' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 54e: appointment now reads Confirmed for the client org"; else FAIL=$((FAIL+1)); echo "  ✗ 54e: confirmation not reflected: $(cat /tmp/body.json)"; fi
+# (d) day-before reminder email: a client-linked appointment due ~24h out triggers
+#     the lazy sweep (fire-and-forget); the email carries Confirm/Reschedule links.
+: > "$MOCK54_EMAILS"
+S=$(code -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Remind54 Co","contactName":"Remmy","email":"remind54@example.com","clientType":"commercial","dealValue":900,"stage":"Leads"}' "http://localhost:3015/api/clients")
+check "54d: owner creates reminder client → 201" 201 "$S"
+REM54=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+SLOT54=$(python3 -c "import datetime;print((datetime.datetime.now()+datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M'))")
+S=$(code -b "$J54" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Remind54 Call\",\"scheduledAt\":\"$SLOT54\",\"clientId\":$REM54,\"duration\":30}" "http://localhost:3015/api/appointments")
+check "54d: owner creates tomorrow appointment → 201" 201 "$S"
+sleep 1
+if python3 - "$MOCK54_EMAILS" <<'PY54' 2>"$MOCK54/remind.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+mine = [e for e in lines if (e.get("to") or []) == ["remind54@example.com"]]
+assert mine, [(e.get("to"), e.get("subject")) for e in lines]
+e = mine[0]
+assert e["subject"] == "Your Revzenta appointment is tomorrow", e["subject"]
+t = e["text"]
+assert "Remind54" in t, t
+assert "/appointment/" in t and "/confirm" in t, t
+assert "/appointment/" in t and "/reschedule" in t, t
+print("ok")
+PY54
+then PASS=$((PASS+1)); echo "  ✓ 54d: day-before reminder emailed to the client with Confirm + Reschedule links"; else FAIL=$((FAIL+1)); echo "  ✗ 54d: reminder email missing/incorrect:"; cat "$MOCK54/remind.err"; fi
+# The reminder also marked the appointment as reminded (WAS triggered by the
+# create-time lazy sweep; assert the DB column flipped so it is sent once).
+if python3 -c "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);r=c.execute('SELECT reminder_sent FROM appointments WHERE id=?',(int(sys.argv[2]),)).fetchone()[0];assert r==1, r" "$MOCK54/db/crm.db" "$(python3 -c "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute(\"SELECT id FROM appointments WHERE title='Remind54 Call'\").fetchone()[0])" "$MOCK54/db/crm.db")"; then PASS=$((PASS+1)); echo "  ✓ 54d: reminder_sent flag set (once-only)"; else FAIL=$((FAIL+1)); echo "  ✗ 54d: reminder_sent flag not set (would re-send)"; fi
+# Landing pages for the emailed links render HTML (single-org, no session).
+if [ -n "$TOKEN54" ] && curl -s "http://localhost:3015/appointment/$TOKEN54/reschedule" | grep -q "Reschedule your appointment"; then PASS=$((PASS+1)); echo "  ✓ 54: public reschedule landing page renders"; else FAIL=$((FAIL+1)); echo "  ✗ 54: reschedule landing page did not render"; fi
+if [ -n "$TOKEN54" ] && curl -s "http://localhost:3015/appointment/$TOKEN54/confirm" | grep -q "Revzenta"; then PASS=$((PASS+1)); echo "  ✓ 54: public confirm landing page renders"; else FAIL=$((FAIL+1)); echo "  ✗ 54: confirm landing page did not render"; fi
+stop_crm "$MOCK54/srv.pid"; kill "$MOCK54_PID" 2>/dev/null; sleep 0.3
+rm -f "$J54" "$M54" "$O54"; rm -rf "$MOCK54"
+echo "  ✓ 54: Appointments production complete"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

@@ -431,18 +431,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_appointments_org_scheduled ON appointments(org_id, scheduled_at);
   CREATE INDEX IF NOT EXISTS idx_appointments_org_client    ON appointments(org_id, client_id);
   CREATE INDEX IF NOT EXISTS idx_appointments_org_status    ON appointments(org_id, status);
-  -- Appointments production (backlog 5a104eae): add the new columns to
-  -- databases created BEFORE this migration (the CREATE TABLE above only
-  -- covers fresh DBs). Idempotent -- safe on every boot.
-  {
-    const acols = db.query("PRAGMA table_info(appointments)").all() as { name: string }[];
-    const addACol = (name: string, ddl: string) => {
-      if (!acols.some((c) => c.name === name)) db.exec(`ALTER TABLE appointments ADD COLUMN ${ddl}`);
-    };
-    addACol("token", "token TEXT NOT NULL DEFAULT ''");
-    addACol("reminder_sent", "reminder_sent INTEGER NOT NULL DEFAULT 0");
-  }
-
   -- 3g-3: owner's dismissible "auto-provisioned from sold lead" notifications.
   CREATE TABLE IF NOT EXISTS provision_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1087,6 +1075,24 @@ db.exec(`
   // clients can only view/reschedule what the owner sets. Column is on `orgs`
   // (one flag for the whole account), not per-client.
   addOrgCol("allow_self_schedule", "allow_self_schedule INTEGER NOT NULL DEFAULT 0");
+}
+/**
+ * Appointments production (backlog 5a104eae): appointments gains the public
+ * token (minted on create so the emailed reminder's Confirm/Reschedule links
+ * can act on the row WITHOUT a session — the link is the credential, same as
+ * the agreement /sign token) and the once-only reminder_sent flag. Databases
+ * created BEFORE this migration get the columns idempotently here (the CREATE
+ * TABLE block above only covers fresh DBs).
+ */
+{
+  const apptCols = db.query("PRAGMA table_info(appointments)").all() as { name: string }[];
+  const addApptCol = (name: string, ddl: string) => {
+    if (!apptCols.some((c) => c.name === name)) {
+      db.exec(`ALTER TABLE appointments ADD COLUMN ${ddl}`);
+    }
+  };
+  addApptCol("token", "token TEXT NOT NULL DEFAULT ''");
+  addApptCol("reminder_sent", "reminder_sent INTEGER NOT NULL DEFAULT 0");
 }
 
 /**
