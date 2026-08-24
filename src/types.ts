@@ -276,6 +276,22 @@ export const TICKET_STATUS_TONE: Record<TicketStatus, string> = {
   CLOSED: "gray",
 };
 
+/** A support-ticket reply (owner direction, backlog 58435d2b). OWNER-only —
+ *  the "agent draft-reply review queue": a reviewer drafts a reply that stays
+ *  status="draft" (awaiting owner approval) and it is ONLY emailed to the
+ *  submitting account after the owner confirms it ("sent"). Tenants never
+ *  receive any reply — this type is only ever present in the owner's view. */
+export interface TicketReply {
+  id: number;
+  ticketId: number;
+  author: string;
+  body: string;
+  status: "draft" | "sent";
+  sentAt: string;
+  createdAt: string;
+}
+export const ticketReplyLabel = (s: "draft" | "sent"): string =>
+  s === "draft" ? "Draft · awaiting approval" : "Sent";
 /** Stored ticket priority → badge tone. HIGH is red so urgent tickets pop. */
 export const TICKET_PRIORITY_TONE: Record<TicketPriority, string> = {
   LOW: "gray",

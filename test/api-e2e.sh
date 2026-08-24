@@ -7398,6 +7398,145 @@ rm -f "$J55" "$JT55"; rm -rf "$MOCK55"
 echo "  ✓ 55: Owner workflow views complete"
 
 echo "  ✓ 54: Appointments production complete"
+echo "== 56. Ticket owner-email + agent draft-reply review queue (backlog 58435d2b) =="
+# Hermetic battery (throwaway server + mock Resend, mirroring the section-50
+# pattern). Covers (a) tenant ticket -> owner alert email (account + subject +
+# snippet), (b) owner drafts a reply -> NOT emailed yet, (c) owner "Approve &
+# send" -> client email + reply flips to sent, (d) tenant cannot see reply
+# machinery or other orgs' tickets, (e) owner-org ticket does NOT self-email.
+MOCK56=$(mktemp -d)
+cat > "$MOCK56/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock56-emails.jsonl";
+const server = Bun.serve({
+  port: 3215,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+TS
+MOCK_OUT="$MOCK56/emails.jsonl" nohup bun "$MOCK56/resend.ts" > "$MOCK56/resend.log" 2>&1 &
+MOCK56_PID=$!
+sleep 1
+if curl -s -o /dev/null http://127.0.0.1:3215/health; then
+  PASS=$((PASS+1)); echo "  ✓ 56: mock Resend up on :3215"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 56: mock Resend failed to start"
+fi
+start_crm 3024 "$MOCK56/db" "$MOCK56/srv.log" "$MOCK56/srv.pid" -u STRIPE_SECRET_KEY RESEND_API_KEY=test-key-56 RESEND_URL=http://127.0.0.1:3215 TEST_EMAIL_TO=owner-test@gmail.com
+B56=http://localhost:3024
+JO56=$(mktemp)
+JA56=$(mktemp)
+JB56=$(mktemp)
+code -c "$JO56" -b "$JO56" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B56/api/auth/login" > /dev/null
+S=$(code -b "$JO56" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Reply Co A","email":"replya56@example.com","password":"replya56pass"}' "$B56/api/admin/orgs")
+check "56a: provision tenant A -> 201" 201 "$S"
+TICKET56A_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$JO56" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Reply Co B","email":"replyb56@example.com","password":"replyb56pass"}' "$B56/api/admin/orgs")
+check "56a: provision tenant B -> 201" 201 "$S"
+code -c "$JA56" -b "$JA56" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"replya56@example.com","password":"replya56pass"}' "$B56/api/auth/login" > /dev/null
+code -c "$JB56" -b "$JB56" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"replyb56@example.com","password":"replyb56pass"}' "$B56/api/auth/login" > /dev/null
+echo "-- 56a. Tenant ticket -> owner alert email (account + subject + snippet) --"
+S=$(code -b "$JA56" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"Login broken","message":"I cannot log into my workspace at all today.","priority":"HIGH"}' "$B56/api/tickets")
+check "56a: tenant A creates ticket -> 201" 201 "$S"
+T56A=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['ticket']['id'])")
+sleep 1.2
+if python3 - "$MOCK56/emails.jsonl" <<'PY'
+import sys, json
+emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+owner=[e for e in emails if e.get("subject","").startswith("New support ticket from Reply Co A")]
+assert owner, "no owner alert email"
+e=owner[0]
+assert "Reply Co A" in e.get("subject",""), e
+assert "Login broken" in e.get("subject",""), e
+assert "Reply Co A" in e.get("text",""), e
+assert "cannot log into my workspace" in e.get("text","").lower(), e
+assert e.get("to")==["owner-test@gmail.com"], e  # TEST_EMAIL_TO redirect
+print("  ✓ 56a: owner alert email has Reply Co A + subject + message snippet")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56a: owner alert email wrong"; fi
+echo "-- 56b. Owner drafts a reply -> stays draft, NOT emailed yet --"
+S=$(code -b "$JO56" -X POST -H 'Content-Type: application/json' \
+  -d '{"author":"PM Reviewer","body":"Thanks for the report — our team is on it."}' "$B56/api/tickets/$T56A/replies")
+check "56b: owner drafts reply -> 201" 201 "$S"
+grep -q '"status":"draft"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 56b: reply created as draft"; } || { FAIL=$((FAIL+1)); echo "  ✗ 56b: draft status wrong: $(cat /tmp/body.json)"; }
+R56A=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['reply']['id'])")
+sleep 1
+if python3 - "$MOCK56/emails.jsonl" <<'PY'
+import sys, json
+emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+assert not any(e.get("subject","").startswith("Re: Login broken") for e in emails), "draft was emailed!"
+print("  ✓ 56b: draft reply was NOT emailed to the client")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56b: draft was emailed prematurely"; fi
+echo "-- 56d. Tenant cannot see reply machinery or other orgs' tickets --"
+check "56d: tenant A GET replies -> 403" 403 "$(code -b "$JA56" "$B56/api/tickets/$T56A/replies")"
+check "56d: tenant A POST reply -> 403" 403 "$(code -b "$JA56" -X POST -H 'Content-Type: application/json' -d '{"body":"hi"}' "$B56/api/tickets/$T56A/replies")"
+check "56d: tenant A send reply -> 403" 403 "$(code -b "$JA56" -X POST "$B56/api/tickets/$T56A/replies/$R56A/send")"
+S=$(code -b "$JA56" "$B56/api/tickets")
+if python3 - <<'PY'
+import json
+t=json.load(open('/tmp/body.json'))['tickets']
+assert len(t)==1 and all(x['subject']=='Login broken' for x in t), t
+assert all('orgName' not in x for x in t), t
+print("  ✓ 56d: tenant A sees only its own ticket, no orgName")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56d: tenant A isolation broken"; fi
+echo "-- 56c. Owner Approve & send -> client email + reply flips to sent --"
+S=$(code -b "$JO56" -X POST "$B56/api/tickets/$T56A/replies/$R56A/send")
+check "56c: owner sends reply -> 200" 200 "$S"
+grep -q '"status":"sent"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 56c: reply flipped to sent"; } || { FAIL=$((FAIL+1)); echo "  ✗ 56c: send status: $(cat /tmp/body.json)"; }
+sleep 1
+if python3 - "$MOCK56/emails.jsonl" <<'PY'
+import sys, json
+emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+reply=[e for e in emails if e.get("subject","").startswith("Re: Login broken")]
+assert reply, "no client reply email"
+e=reply[0]
+assert "our team is on it" in e.get("text",""), e
+assert e.get("to")==["owner-test@gmail.com"], e
+print("  ✓ 56c: client reply email received (subject Re: Login broken + reply body)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56c: reply email missing"; fi
+echo "-- 56e. Owner-org ticket creation triggers NO owner self-email --"
+# Snapshot how many emails exist before the owner-org ticket so we only assert
+# over emails that arrive AFTER this point (the earlier tenant-A owner alert
+# from 56a legitimately remains in the log and must not trip this check).
+PRE56=$(python3 - "$MOCK56/emails.jsonl" <<'PREPY'
+import sys, json
+emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+print(len(emails))
+PREPY
+)
+code -b "$JO56" -X POST -H 'Content-Type: application/json' \
+  -d '{"subject":"Owner side note","message":"Filed on the owner org."}' "$B56/api/tickets" > /dev/null
+sleep 1
+if python3 - "$MOCK56/emails.jsonl" "$PRE56" <<'PY'
+import sys, json
+emails=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+pre=int(sys.argv[2])
+new=emails[pre:]
+assert not any(e.get("subject","").startswith("New support ticket from") for e in new), [e.get("subject") for e in new]
+print("  ✓ 56e: owner-org ticket fired no owner self-email")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56e: owner self-email fired"; fi
+stop_crm "$MOCK56/srv.pid"; kill "$MOCK56_PID" 2>/dev/null; sleep 0.3
+rm -f "$JO56" "$JA56" "$JB56"; rm -rf "$MOCK56"
+echo "  ✓ 56: ticket owner-email + agent draft-reply review queue verified"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

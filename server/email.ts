@@ -428,3 +428,61 @@ export function sendInvoiceEmail(opts: {
     ],
   });
 }
+/** Owner direction (backlog 58435d2b) — when a CLIENT account submits a
+ *  support ticket, alert the owner by email with the account name, the
+ *  subject, a short message snippet, and a link into the app (where the owner
+ *  opens the ticket and can draft a reply). Fired for tenant-org tickets only
+ *  (never the owner's own org — the owner doesn't email themselves). */
+export function sendTicketOwnerAlertEmail(opts: {
+  to: string;
+  clientName: string;
+  subject: string;
+  messageSnippet: string;
+  appUrl: string;
+}): Promise<SendEmailResult> {
+  const text = [
+    `New support ticket from ${opts.clientName}:`,
+    "",
+    `Subject: ${opts.subject}`,
+    "",
+    `Message:`,
+    opts.messageSnippet,
+    "",
+    `Open the ticket: ${opts.appUrl}/`,
+    "",
+    "Reply to the ticket in the app — drafts are only mailed to the client",
+    "after you approve them.",
+    "",
+    "— Revzenta",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: `New support ticket from ${opts.clientName}: ${opts.subject}`,
+    text,
+  });
+}
+/** Owner direction (backlog 58435d2b) — after the owner confirms ("Approve &
+ *  send") a ticket reply in the app, email the reply body to the submitting
+ *  account's contact. Only ever called at the explicit send step — a draft is
+ *  never emailed. */
+export function sendTicketReplyEmail(opts: {
+  to: string;
+  ticketSubject: string;
+  replyBody: string;
+}): Promise<SendEmailResult> {
+  const text = [
+    `Re: ${opts.ticketSubject}`,
+    "",
+    opts.replyBody,
+    "",
+    "If you have more questions, just reply to this email or submit another",
+    "ticket in your Revzenta workspace.",
+    "",
+    "— Revzenta",
+  ].join("\n");
+  return sendEmail({
+    to: opts.to,
+    subject: `Re: ${opts.ticketSubject}`,
+    text,
+  });
+}

@@ -476,6 +476,23 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_tickets_org_status ON tickets(org_id, status);
+  -- Support-ticket replies (owner direction; backlog 58435d2b). A reply is
+  -- OWNER-authored: the reviewer (team agent/PM acting on the owner's behalf)
+  -- drafts it, but it stays status='draft' (awaiting owner approval) and is
+  -- ONLY emailed to the submitting account after the owner confirms it in the
+  -- app (status flips to 'sent'). Multi-reply-capable (one row per reply).
+  -- author is free text (the reviewer's name) for display in the owner view;
+  -- tenants never see this table or any reply. Never auto-sent.
+  CREATE TABLE IF NOT EXISTS ticket_replies (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id  INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    author     TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'draft',
+    sent_at    TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ticket_replies_ticket ON ticket_replies(ticket_id);
   -- Native in-app e-signature (owner direction 2026-08-15; backlog dd37c973) —
   -- replaces the manual agreement-status tracker with a real internal signer.
   -- One row per sent agreement (re-sending REPLACES the client's envelope).
@@ -1518,4 +1535,24 @@ export interface TicketRow {
   priority: TicketPriority;
   created_at: string;
   updated_at: string;
+}
+/* ── Support-ticket replies (owner direction; backlog 58435d2b) ─────────
+ * A reply's lifecycle: 'draft' (reviewer wrote it, awaiting the owner's
+ * explicit "Approve & send" action) → 'sent' (the owner confirmed it in the
+ * app and it was emailed to the submitting account). A draft is NEVER emailed
+ * automatically. Tenants never read/write this table — every reply route is
+ * owner-only (requireAdmin). */
+export const TICKET_REPLY_STATUSES = ["draft", "sent"] as const;
+export type TicketReplyStatus = (typeof TICKET_REPLY_STATUSES)[number];
+export function isTicketReplyStatus(v: unknown): v is TicketReplyStatus {
+  return typeof v === "string" && (TICKET_REPLY_STATUSES as readonly string[]).includes(v);
+}
+export interface TicketReplyRow {
+  id: number;
+  ticket_id: number;
+  author: string;
+  body: string;
+  status: TicketReplyStatus;
+  sent_at: string | null;
+  created_at: string;
 }
