@@ -7536,6 +7536,132 @@ then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 56e: owner self-email 
 stop_crm "$MOCK56/srv.pid"; kill "$MOCK56_PID" 2>/dev/null; sleep 0.3
 rm -f "$JO56" "$JA56" "$JB56"; rm -rf "$MOCK56"
 echo "  ✓ 56: ticket owner-email + agent draft-reply review queue verified"
+echo "== 57. Finance cockpit / reporting (backlog a8241fea): MRR + revenue-by-client + lost/churned, owner-only =="
+# Throwaway server + own DB. The cockpit is computed client-side on the owner's
+# Finance tab from /api/invoices + /api/clients(includeArchived), so this
+# section verifies the real product data those figures derive from (invoices,
+# client monthlyAmount/lost/demoOutcome) and that a tenant cannot see any of it.
+MOCK57=$(mktemp -d)
+start_crm 3223 "$MOCK57/db" "$MOCK57/srv.log" "$MOCK57/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET RESEND_API_KEY=test-key-57 RESEND_URL=http://127.0.0.1:3224 TEST_EMAIL_TO=owner-test@gmail.com
+B57=http://localhost:3223
+J57=$(mktemp); JT57=$(mktemp)
+S=$(code -c "$J57" -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B57/api/auth/login")
+check "57: owner login → 200" 200 "$S"
+code -b "$J57" "$B57/api/settings" > /dev/null
+F57=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
+echo "     (owner first stage=\"$F57\")"
+echo "-- 57a. Revenue summary: invoices recorded back the Total invoiced / Paid / Outstanding split --"
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cockpit Co A\",\"contactName\":\"A\",\"email\":\"a@cockpit.example\",\"clientType\":\"commercial\",\"monthlyAmount\":200,\"stage\":\"$F57\"}" "$B57/api/clients")
+check "57a: owner creates client A (monthlyAmount 200) → 201" 201 "$S"
+CA57=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cockpit Co B\",\"contactName\":\"B\",\"email\":\"b@cockpit.example\",\"clientType\":\"commercial\",\"monthlyAmount\":300,\"stage\":\"$F57\"}" "$B57/api/clients")
+check "57a: owner creates client B (monthlyAmount 300) → 201" 201 "$S"
+CB57=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$CA57,\"amount\":500,\"status\":\"paid\",\"dueDate\":\"2026-09-01\"}" "$B57/api/invoices")
+check "57a: add paid invoice 500 for A → 201" 201 "$S"
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$CA57,\"amount\":250,\"status\":\"sent\",\"dueDate\":\"2026-10-01\"}" "$B57/api/invoices")
+check "57a: add sent invoice 250 for A → 201" 201 "$S"
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$CB57,\"amount\":125,\"status\":\"draft\"}" "$B57/api/invoices")
+check "57a: add draft invoice 125 for B → 201" 201 "$S"
+S=$(code -b "$J57" "$B57/api/invoices")
+check "57a: owner lists invoices → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+invs = json.load(open('/tmp/body.json'))['invoices']
+invoiced = sum(i['amount'] for i in invs)
+paid = sum(i['amount'] for i in invs if i['status'] == 'paid')
+outstanding = sum(i['amount'] for i in invs if i['status'] == 'sent')
+assert invoiced == 875, invoiced
+assert paid == 500, paid
+assert outstanding == 250, outstanding
+assert len(invs) == 3, len(invs)
+print("  ✓ 57a: invoiced 875 (500+250+125), paid 500, outstanding 250 — matches the cockpit revenue summary from invoices recorded")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 57a: revenue totals wrong"; cat "$PASS_TMP"; fi
+echo "-- 57b. Subscription MRR = sum of ACTIVE clients' monthlyAmount (lost/archived excluded) --"
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Lost Cockpit Co\",\"contactName\":\"L\",\"email\":\"l@cockpit.example\",\"clientType\":\"commercial\",\"monthlyAmount\":999,\"stage\":\"$F57\",\"lost\":true,\"lostReason\":\"Chose a competitor\"}" "$B57/api/clients")
+check "57b: owner creates lost client (monthlyAmount 999, lost) → 201" 201 "$S"
+S=$(code -b "$J57" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cockpit Co B\",\"clientType\":\"commercial\",\"demoOutcome\":\"not_sold\"}" "$B57/api/clients/$CB57")
+check "57b: owner marks client B demoOutcome=not_sold → 200" 200 "$S"
+S=$(code -b "$J57" "$B57/api/clients?archived=1")
+check "57b: owner lists clients (incl archived) → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+clients = json.load(open('/tmp/body.json'))['clients']
+by_name = {c['companyName']: c for c in clients}
+active = [c for c in clients if not c['lost'] and not c['archived']]
+mrr = sum((c.get('monthlyAmount') or 0) for c in active)
+assert mrr == 500, ("expected 500 active MRR, got", mrr, [(c['companyName'], c.get('monthlyAmount'), c.get('lost')) for c in active])
+assert by_name['Lost Cockpit Co']['lost'] is True
+assert by_name['Lost Cockpit Co']['lostReason'] == 'Chose a competitor'
+assert by_name['Cockpit Co B']['demoOutcome'] == 'not_sold'
+assert by_name['Cockpit Co B']['monthlyAmount'] == 300
+print("  ✓ 57b: Subscription MRR = 500 (A 200 + B 300); lost client's 999 excluded; reason + not_sold surface")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 57b: MRR / lost / not_sold data wrong"; cat "$PASS_TMP"; fi
+echo "-- 57c. Revenue by client grouping (per client invoiced / paid / outstanding + monthlyAmount) --"
+S=$(code -b "$J57" "$B57/api/invoices")
+if CA57="$CA57" CB57="$CB57" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+invs = json.load(open('/tmp/body.json'))['invoices']
+groups = {}
+for i in invs:
+    g = groups.setdefault(i.get('clientId'), {'invoiced':0,'paid':0,'outstanding':0})
+    g['invoiced'] += i['amount']
+    if i['status']=='paid': g['paid'] += i['amount']
+    if i['status']=='sent': g['outstanding'] += i['amount']
+a = groups.get(int(os.environ['CA57']))
+b = groups.get(int(os.environ['CB57']))
+assert a is not None and a['invoiced']==750 and a['paid']==500 and a['outstanding']==250, a
+assert b is not None and b['invoiced']==125 and b['paid']==0 and b['outstanding']==0, b
+assert groups.get(int(os.environ['CB57'])) == b
+print("  ✓ 57c: revenue by client — A (invoiced 750, paid 500, outstanding 250), B (invoiced 125)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 57c: revenue-by-client grouping wrong"; cat "$PASS_TMP"; fi
+echo "-- 57d. Lost / churned surfaces with reason (lost flag + lostReason + not_sold) --"
+S=$(code -b "$J57" "$B57/api/clients?archived=1")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+clients = json.load(open('/tmp/body.json'))['clients']
+lost = [c for c in clients if c['lost']]
+notsold = [c for c in clients if (c.get('demoOutcome') or '') == 'not_sold']
+assert len(lost) == 1 and lost[0]['lostReason'] == 'Chose a competitor', lost
+assert any(c['companyName'] == 'Cockpit Co B' for c in notsold), notsold
+print("  ✓ 57d: owner sees Lost Cockpit Co (reason 'Chose a competitor') and Cockpit Co B (demo not_sold)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 57d: lost/churned data wrong"; cat "$PASS_TMP"; fi
+echo "-- 57e. Owner-only: a tenant cannot see any owner cockpit data (no leak) --"
+S=$(code -b "$J57" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Cockpit Tenant Co","email":"ckt57@demo.example","password":"ckt57pass123"}' "$B57/api/admin/orgs")
+check "57e: owner provisions tenant → 201" 201 "$S"
+S=$(code -c "$JT57" -b "$JT57" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"ckt57@demo.example","password":"ckt57pass123"}' "$B57/api/auth/login")
+check "57e: tenant login → 200" 200 "$S"
+S=$(code -b "$JT57" "$B57/api/clients?archived=1")
+check "57e: tenant lists its clients → 200" 200 "$S"
+if grep -qv 'Cockpit Co\|Lost Cockpit' /tmp/body.json && grep -q '"clients":\[\]' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ 57e: tenant client list empty — no owner clients leaked"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 57e: tenant sees owner clients (LEAK): $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JT57" "$B57/api/invoices")
+check "57e: tenant lists invoices → 200" 200 "$S"
+if grep -qv '"amount":500\|"amount":250\|"amount":125' /tmp/body.json && grep -q '"invoices":\[\]' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ 57e: tenant invoice list empty — no owner invoices leaked"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 57e: tenant sees owner invoices (LEAK): $(cat /tmp/body.json)"
+fi
+stop_crm "$MOCK57/srv.pid"; sleep 0.3
+rm -f "$J57" "$JT57"; rm -rf "$MOCK57"
+echo "  ✓ 57: Finance cockpit / reporting (MRR + revenue-by-client + lost/churned) verified owner-only"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 
