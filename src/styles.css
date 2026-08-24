@@ -1180,6 +1180,54 @@ legend.field-label {
   grid-template-columns: repeat(4, 1fr);
   gap: 14px;
 }
+/* Two-up KPI row (Finance cockpit MRR) */
+.kpi-row-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+/* ── Finance cockpit / reporting (owner-only, backlog a8241fea) ────────── */
+.cockpit {
+  padding: 20px 22px;
+  margin-top: 22px;
+}
+.cockpit .page-head {
+  margin-left: 0;
+}
+.cockpit-sub {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cockpit-sub-note {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted-2);
+  margin-left: 6px;
+}
+.cockpit .kpi-row {
+  margin-bottom: 6px;
+}
+.cockpit-paid {
+  color: var(--green);
+}
+.cockpit-empty {
+  font-size: 13px;
+  color: var(--muted-2);
+  padding: 8px 0;
+}
+.cockpit .table-wrap {
+  margin-bottom: 6px;
+}
+.cockpit-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
 
 .kpi-value.green {
   color: var(--green);
