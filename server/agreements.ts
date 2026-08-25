@@ -23,7 +23,7 @@
 
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { dataDir, db, getOrg, getOwnerOrgId, parseStages, LEGACY_ORG_NAME } from "./db";
@@ -241,6 +241,16 @@ export function readAgreementPdf(pdfId: string): Uint8Array | null {
   const file = join(agreementsDir(), `${pdfId}.pdf`);
   if (!existsSync(file)) return null;
   return readFileSync(file);
+}
+/** Delete a stored agreement PDF from disk. Best-effort: a missing file is
+ *  tolerated (the envelope row is already gone or never wrote a file). */
+export function deleteAgreementPdf(pdfId: string): void {
+  try {
+    const file = join(agreementsDir(), `${pdfId}.pdf`);
+    if (existsSync(file)) unlinkSync(file);
+  } catch {
+    /* best-effort — never let a stray file block the envelope deletion */
+  }
 }
 
 /** Unsignable sign token: 32 random bytes → 64 hex chars. */

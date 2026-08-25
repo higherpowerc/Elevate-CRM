@@ -251,7 +251,7 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
   ));
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>
@@ -346,6 +346,15 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
             <span className="kpi-label">Sold</span>
             <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
             <span className="kpi-note">{lastStageNote}</span>
+            {lastStage && (
+              <button
+                className="link-btn"
+                onClick={() => onGoToStage(lastStage)}
+                aria-label={`View ${lastStage} in the clients view`}
+              >
+                View →
+              </button>
+            )}
           </div>
         </div>
       ) : (

@@ -975,7 +975,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     : ownerOrg ? "Add your first lead" : "Add your first client";
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>{heading}</h1>

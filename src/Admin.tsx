@@ -55,7 +55,7 @@ export default function Admin() {
   }
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>

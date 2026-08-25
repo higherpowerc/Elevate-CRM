@@ -81,17 +81,12 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
 
-  /* Owner workflow views (2026-08-21) — "Paid but unbuilt clients": those who
-     paid (paymentStatus === 'paid') but have no provisioned workspace yet
-     (provisioned_org_id 0) — the owner still needs to build their account. The
-     "Build account" action reuses the shared sold-lead provisioning path. */
-  const paidUnbuilt = useMemo(
-    () =>
-      ownerOrg && clients
-        ? clients.filter((c) => c.paymentStatus === "paid" && (c.provisionedOrgId ?? 0) === 0)
-        : [],
-    [ownerOrg, clients],
-  );
+  /* Owner workflow views (2026-08-25) — "Sold · no account yet": every SOLD
+     (terminal-stage) client who has no provisioned workspace yet
+     (provisioned_org_id 0) — sold regardless of whether they've paid — still
+     needs the owner to build their account. The "Build account" action reuses
+     the shared sold-lead provisioning path. Computed lazily below (needs
+     terminalStage). */
   const [buildingId, setBuildingId] = useState<number | null>(null);
   const [buildNotice, setBuildNotice] = useState<string | null>(null);
   async function handleBuildAccount(c: Client) {
@@ -254,9 +249,21 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
      by the Onboarding → terminal flow; this tab no longer renders a sold
      directory. Client ACCOUNTS (role=member) keep the original sold-customer
      directory below — that is *their* widgets. */
+  /* Sold-but-unbuilt (owner direction 2026-08-25): every CLIENT who reached
+     the terminal ("sold") stage yet has no provisioned workspace
+     (provisioned_org_id 0) — sold regardless of payment status. These still
+     need the owner to build their account. */
+  const soldUnbuilt = useMemo(
+    () =>
+      ownerOrg && clients
+        ? clients.filter((c) => c.stage === terminalStage && (c.provisionedOrgId ?? 0) === 0)
+        : [],
+    [ownerOrg, clients, terminalStage],
+  );
+
   if (ownerOrg) {
     return (
-      <div className="page">
+      <div className="page page-stack">
         <div className="page-head">
           <div>
             <h1>
@@ -264,29 +271,33 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
               <em className="serif">— the client list</em>
             </h1>
             <p className="page-sub">
-              Every client workspace. Create a new one, open a client's CRM, reset a password, or delete an account.
+              Every sold client in your book — account built or not — plus the account workspace list
+              below. Create one, open a client's CRM, or reset/delete. Build an account for any sold
+              client that doesn't have one yet.
             </p>
           </div>
         </div>
-        {ownerOrg && paidUnbuilt.length > 0 && (
+        {ownerOrg && soldUnbuilt.length > 0 && (
           <div className="card paid-unbuilt">
-            <div className="page-head" style={{ marginBottom: ".5rem" }}>
-              <div>
-                <h2 className="h3">
-                  <em className="serif">Paid</em> but unbuilt clients
-                </h2>
-                <p className="page-sub">
-                  These clients paid but don't have a CRM workspace yet — build their account below.
-                </p>
-              </div>
+            <div className="admin-card-head">
+              <h2 className="h3 admin-card-title">
+                <em className="serif">Sold</em> · no account yet
+              </h2>
+              <p className="admin-card-sub">
+                These sold clients don't have a CRM workspace yet — build their account below.
+              </p>
             </div>
             <ul className="inv-list" style={{ margin: 0 }}>
-              {paidUnbuilt.map((c) => (
+              {soldUnbuilt.map((c) => (
                 <li key={c.id} className="inv">
                   <div className="inv-body">
                     <div className="inv-client">
                       <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
-                      <span className="inv-notes">Paid · no account built yet</span>
+                      {c.paymentStatus === "paid" ? (
+                        <span className="inv-notes">Paid · no account yet</span>
+                      ) : (
+                        <span className="inv-notes">Sold · no account yet</span>
+                      )}
                     </div>
                   </div>
                   <div className="row-actions">
@@ -304,7 +315,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
           </div>
         )}
         {buildNotice && (
-          <div className="alert alert-success" role="status" style={{ margin: ".5rem 0" }}>
+          <div className="alert alert-success" role="status">
             {buildNotice}
           </div>
         )}
@@ -321,7 +332,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   const bookValue = sold.reduce((sum, c) => sum + (c.dealValue || 0), 0);
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>Clients</h1>

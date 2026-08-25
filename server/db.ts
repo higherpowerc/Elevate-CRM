@@ -525,6 +525,43 @@ db.exec(`
 `);
 
 /**
+ * Ticket numbers migration (owner direction 2026-08-25). Idempotent — safe on
+ * every boot.
+ *
+ * tickets gains a human-readable ticket number shown to users:
+ *   ticket_no TEXT NOT NULL DEFAULT '' — e.g. "TKT-1001".
+ * Existing rows are backfilled from their autoincrement id (TKT-(1000+id) →
+ * id 1 becomes TKT-1001) so every pre-existing ticket gets a stable number
+ * without renumbering. The backfill ONLY touches rows still at the '' default,
+ * so a re-run never clobbers an assigned number.
+ */
+{
+  const cols = db.query("PRAGMA table_info(tickets)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "ticket_no")) {
+    db.exec("ALTER TABLE tickets ADD COLUMN ticket_no TEXT NOT NULL DEFAULT ''");
+  }
+  db.query("UPDATE tickets SET ticket_no = 'TKT-' || (1000 + id) WHERE ticket_no = ''").run();
+}
+
+/**
+ * Agreements PIN migration (owner direction 2026-08-25). Idempotent — safe on
+ * every boot.
+ *
+ * orgs gains the OWNER's agreements-editor PIN hash (sha-256 of the PIN, never
+ * the plaintext):
+ *   agreements_pin_hash TEXT NOT NULL DEFAULT '' — '' means "no PIN set yet".
+ * Stored on the OWNER org row (like agreement_template); exposed/updated ONLY
+ * for the owner session (requireAdmin / isOwnerSession semantics) — tenant
+ * settings/dashboards never carry this field.
+ */
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "agreements_pin_hash")) {
+    db.exec("ALTER TABLE orgs ADD COLUMN agreements_pin_hash TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+/**
  * Team-users migration (owner request 2026-08-14). Idempotent — safe on every
  * boot.
  *
@@ -1328,6 +1365,10 @@ export interface OrgRow {
    *  {{date}}, {{price}}). '' = use the built-in default. Owner-only in the
    *  API; tenants never see or write it. */
   agreement_template: string;
+  /** Agreements-editor PIN (owner direction 2026-08-25) — sha-256 of the PIN
+   *  gating the Documents tab's Agreements editor, on the OWNER org row
+   *  ('' = no PIN set yet). Owner-only in the API; tenants never see it. */
+  agreements_pin_hash: string;
   /** Phase 5 prep — account lifecycle: 'active' | 'canceled' (a canceled
    *  account's users are blocked from login + every authed route; data is
    *  retained, not deleted). '' = never canceled. */
@@ -1343,7 +1384,7 @@ export interface OrgRow {
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, status, canceled_at, retention_until, allow_self_schedule, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, agreements_pin_hash, status, canceled_at, retention_until, allow_self_schedule, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }
@@ -1537,6 +1578,9 @@ export interface TicketRow {
   message: string;
   status: TicketStatus;
   priority: TicketPriority;
+  /** Human-readable ticket number (owner direction 2026-08-25), e.g. TKT-1001.
+   *  Stable — derived from id at create/backfill, never renumbered. */
+  ticket_no: string;
   created_at: string;
   updated_at: string;
 }

@@ -111,7 +111,7 @@ export default function Appointments({ ownerOrg }: { ownerOrg: boolean }) {
     return [...map.entries()].sort((x, y) => x[0].localeCompare(y[0]));
   }, [appointments]);
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>
@@ -130,7 +130,7 @@ export default function Appointments({ ownerOrg }: { ownerOrg: boolean }) {
           {error}
         </div>
       )}
-      <div className="card" style={{ marginBottom: "1rem" }}>
+      <div className="card">
         <h3>Schedule an appointment</h3>
         {!ownerOrg && !allowSelf && (
           <p className="cell-muted">Self-scheduling is disabled for this account. Contact the owner to book a time.</p>

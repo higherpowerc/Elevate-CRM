@@ -154,7 +154,7 @@ export default function Tasks({ canEdit = true }: { canEdit?: boolean }) {
   }
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>

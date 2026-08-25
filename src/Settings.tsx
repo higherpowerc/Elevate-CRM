@@ -902,7 +902,7 @@ export default function Settings({
   if (!settings) return <div className="skeleton-block" aria-label="Loading settings" />;
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>
