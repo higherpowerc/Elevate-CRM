@@ -432,6 +432,28 @@ export default function App() {
                 Tasks
               </button>
             )}
+            {/* Owner direction 2026-08-15 — support tickets: the OWNER's tab
+                reads "Tickets" (every account's tickets, worked to
+                resolution); client accounts read "Support" (their own org's
+                tickets + submit form). Same view, role-based rendering
+                inside Tickets.tsx. Team-users: restricted members only see
+                the Support tab when they hold the "support" grant. */}
+            {isOwnerOrg ? (
+              <button
+                className={effectiveView === "tickets" ? "tab active" : "tab"}
+                onClick={() => setView("tickets")}
+              >
+                Tickets
+              </button>
+            ) : canSeeTab("support") ? (
+              <button
+                className={effectiveView === "tickets" ? "tab active" : "tab"}
+                onClick={() => setView("tickets")}
+              >
+                Support
+              </button>
+            ) : null}
+
             {canSeeTab("finance") && (
               <button
                 className={effectiveView === "finance" ? "tab active" : "tab"}
@@ -468,27 +490,6 @@ export default function App() {
                 Documents
               </button>
             )}
-            {/* Owner direction 2026-08-15 — support tickets: the OWNER's tab
-                reads "Tickets" (every account's tickets, worked to
-                resolution); client accounts read "Support" (their own org's
-                tickets + submit form). Same view, role-based rendering
-                inside Tickets.tsx. Team-users: restricted members only see
-                the Support tab when they hold the "support" grant. */}
-            {isOwnerOrg ? (
-              <button
-                className={effectiveView === "tickets" ? "tab active" : "tab"}
-                onClick={() => setView("tickets")}
-              >
-                Tickets
-              </button>
-            ) : canSeeTab("support") ? (
-              <button
-                className={effectiveView === "tickets" ? "tab active" : "tab"}
-                onClick={() => setView("tickets")}
-              >
-                Support
-              </button>
-            ) : null}
             {canSeeTab("settings") && (
               <button
                 className={effectiveView === "settings" ? "tab active" : "tab"}

@@ -300,6 +300,9 @@ export const api = {
     /** Native e-signature — the OWNER org's agreement template (owner-only;
      *  tenant writes are ignored server-side). */
     agreementTemplate?: string;
+    /** Agreements-editor PIN (owner direction 2026-08-25) — set/change from
+     *  Settings; stored hashed, owner-only (tenant writes are ignored). */
+    agreementsPin?: string;
     /** Appointments production (backlog 5a104eae): per-account toggle — 1 lets
      *  this account's clients schedule appointments for themselves. */
     allowSelfSchedule?: boolean;
@@ -326,6 +329,16 @@ export const api = {
       token: string;
     }>("/api/agreements/send", { method: "POST", body: JSON.stringify({ clientId }) }),
   agreements: () => request<{ agreements: AgreementEnvelope[] }>("/api/agreements"),
+  /** Owner-only: hard-delete an agreement envelope (row + PDF on disk). */
+  deleteAgreement: (id: number) =>
+    request<{ ok: true }>(`/api/agreements/${id}`, { method: "DELETE" }),
+  /** Owner-only: verify the PIN entered to unlock the Documents Agreements
+   *  editor against the stored sha-256 hash. */
+  checkAgreementsPin: (pin: string) =>
+    request<{ ok: boolean; error?: string }>("/api/agreements/pin-check", {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    }),
   /* Phase 5 — Stripe billing (owner direction 2026-08-18). Owner-only. The
      owner enters the amount at bill time (no hard-coded rates) and picks the
      interval; the server creates the Stripe customer + price + payment link,

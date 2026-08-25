@@ -469,10 +469,11 @@ legend.field-label {
    prev/next header. Matches the app's dark field styling (bg-soft line-strong
    inset; lime accent for the selected day + focus ring to match inputs). */
 .mini-cal {
+  width: 320px;
   background: var(--bg-soft);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  padding: 10px 12px 12px;
+  padding: 14px 16px 16px;
 }
 .mini-cal-head {
   display: flex;
@@ -516,10 +517,10 @@ legend.field-label {
 .mini-cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 3px;
+  gap: 6px;
 }
 .mini-cal-dow {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
   text-align: center;
   color: var(--muted-2);
@@ -531,7 +532,7 @@ legend.field-label {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 16px;
   line-height: 1;
   aspect-ratio: 1;
   min-width: 0;
@@ -4118,3 +4119,65 @@ legend.field-label {
 .billing-cycle-cell .icon-btn {
   padding: 2px 6px;
 }
+
+/* Appointments "Schedule" box (owner direction 2026-08-25): white background,
+   black text so the form reads clearly in BOTH owner and tenant contexts. */
+.schedule-box {
+  background: #ffffff;
+  color: #000000;
+}
+.schedule-box h3 {
+  color: #000000;
+}
+.schedule-box .cell-muted {
+  color: #333;
+}
+.schedule-box input {
+  background: #ffffff;
+  color: #000000;
+  border-color: rgba(0, 0, 0, 0.25);
+}
+.schedule-box input::placeholder {
+  color: #666;
+}
+
+/* Agreements editor dropdown on Documents (owner direction 2026-08-25) */
+.agreements-editor {
+  overflow: hidden;
+}
+.agreements-dropdown-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: var(--bg-soft);
+  border: 0;
+  padding: 14px 18px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.agreements-dropdown-bar:hover {
+  background: var(--panel-2);
+}
+.agreements-dropdown-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+.agreements-dropdown-title em {
+  color: var(--lime);
+}
+.agreements-dropdown-chevron {
+  color: var(--muted);
+  font-size: 14px;
+  transition: transform 0.15s ease;
+}
+.agreements-pin-box,
+.agreements-editor-body {
+  padding: 0 18px 18px;
+  border-top: 1px solid var(--line);
+}
+.agreements-pin-box {
+  padding-top: 14px;
+}
+

@@ -130,7 +130,7 @@ export default function Appointments({ ownerOrg }: { ownerOrg: boolean }) {
           {error}
         </div>
       )}
-      <div className="card">
+      <div className="card schedule-box">
         <h3>Schedule an appointment</h3>
         {!ownerOrg && !allowSelf && (
           <p className="cell-muted">Self-scheduling is disabled for this account. Contact the owner to book a time.</p>
