@@ -6484,6 +6484,18 @@ if grep -Fq 'Bill this account' src/Finance.tsx && grep -Fq 'ownerOrg' src/Finan
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Finance.tsx billing panel markers missing"
 fi
+# Owner 2026-08-25: the payment-status tracker is its OWN independent
+# "Stripe status" window (signed+unpaid "Pending payment" rows + billed-status
+# list), completely detached from the "Bill a client account" window. Assert the
+# NEW structure: the "Stripe status" heading exists and the old "Pending
+# payment" window-title is gone (now a sub-section inside the Stripe status
+# card).
+if grep -Fq 'Stripe <em className="serif">status</em>' src/Finance.tsx \
+   && ! grep -Fq '<em className="serif">Pending</em> payment' src/Finance.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Finance tab has independent 'Stripe status' window (pending tracker detached from Bill window)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Finance 'Stripe status' window marker missing/old heading still present"
+fi
 if grep -Fq 'window.prompt' src/Clients.tsx && grep -Fq 'api.clientPaymentLink(c.id, { amount' src/Clients.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: Onboarding Payment-link action now prompts the owner for the amount"
 else

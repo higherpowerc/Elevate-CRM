@@ -322,7 +322,8 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
     setError(null);
     try {
       await api.clientPaymentPaid(c.id);
-      setBillNotice({ kind: "success", text: `Payment recorded for ${c.companyName} — column shows Paid.` });
+      /* Notice lands in the Stripe status window (where the action lives). */
+      setPendingNotice({ kind: "success", text: `Payment recorded for ${c.companyName} — column shows Paid.` });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not mark the payment as received.");
@@ -559,11 +560,12 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
           <div className="page-head" style={{ marginBottom: "var(--stack-gap)" }}>
             <div>
               <h2 className="h3">
-                <em className="serif">Pending</em> payment
+                Stripe <em className="serif">status</em>
               </h2>
               <p className="page-sub">
-                Agreement signed, not yet paid — still needs a Stripe payment link. Set the amount and click
-                "Send payment link" to email the client the Stripe portal.
+                Payment tracker across your client accounts — who's signed but unpaid, and the live payment
+                status of every billed account. Set an amount and click "Send payment link" to email the
+                client the Stripe portal.
               </p>
             </div>
           </div>
@@ -576,6 +578,9 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
               {pendingNotice.text}
             </div>
           )}
+          <h3 className="cockpit-sub">
+            Pending payment <span className="cockpit-sub-note">agreement signed, not yet paid</span>
+          </h3>
           {pendingPayment.length === 0 ? (
             <p className="cockpit-empty">No pending payments — every signed client has paid.</p>
           ) : (
@@ -615,6 +620,61 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
                 </li>
               ))}
             </ul>
+          )}
+          {bills.length > 0 && (
+            <>
+              <h3 className="cockpit-sub" style={{ marginTop: "var(--stack-gap)" }}>
+                Billed accounts <span className="cockpit-sub-note">payment status</span>
+              </h3>
+              <ul className="inv-list" style={{ margin: 0 }}>
+                {bills.map((c) => (
+                  <li key={c.id} className="inv">
+                    <div className="inv-body">
+                      <div className="inv-client">
+                        <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
+                        <span className="inv-notes">
+                          {c.paymentAmountCents ? money(c.paymentAmountCents / 100) : "—"}
+                          {c.paymentStatus === "paid" && c.paidAt
+                            ? ` · paid ${new Date(c.paidAt).toLocaleString()}`
+                            : ""}
+                        </span>
+                      </div>
+                      <div className="inv-meta">
+                        <span
+                          className={
+                            c.paymentStatus === "paid" ? "badge tone-green" : "badge tone-amber"
+                          }
+                        >
+                          {c.paymentStatus === "paid"
+                            ? "Paid"
+                            : c.paymentStatus === "sent"
+                              ? "Sent"
+                              : c.paymentStatus}
+                        </span>
+                        {c.paymentLinkUrl && (
+                          <a
+                            className="inv-due"
+                            href={c.paymentLinkUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Stripe checkout link"
+                          >
+                            checkout ↗
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      {c.paymentStatus === "sent" && (
+                        <button className="icon-btn" onClick={() => handleMarkPaid(c)} disabled={busy}>
+                          Mark paid
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}
@@ -746,56 +806,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
             >
               {billNotice.text}
             </div>
-          )}
-          {bills.length > 0 && (
-            <ul className="inv-list" style={{ marginTop: ".75rem" }}>
-              {bills.map((c) => (
-                <li key={c.id} className="inv">
-                  <div className="inv-body">
-                    <div className="inv-client">
-                      <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
-                      <span className="inv-notes">
-                        {c.paymentAmountCents ? money(c.paymentAmountCents / 100) : "—"}
-                        {c.paymentStatus === "paid" && c.paidAt
-                          ? ` · paid ${new Date(c.paidAt).toLocaleString()}`
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="inv-meta">
-                      <span
-                        className={
-                          c.paymentStatus === "paid" ? "badge tone-green" : "badge tone-amber"
-                        }
-                      >
-                        {c.paymentStatus === "paid"
-                          ? "Paid"
-                          : c.paymentStatus === "sent"
-                            ? "Sent"
-                            : c.paymentStatus}
-                      </span>
-                      {c.paymentLinkUrl && (
-                        <a
-                          className="inv-due"
-                          href={c.paymentLinkUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Stripe checkout link"
-                        >
-                          checkout ↗
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  <div className="row-actions">
-                    {c.paymentStatus === "sent" && (
-                      <button className="icon-btn" onClick={() => handleMarkPaid(c)} disabled={busy}>
-                        Mark paid
-                      </button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
       )}
