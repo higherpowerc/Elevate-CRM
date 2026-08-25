@@ -384,6 +384,14 @@ export default function App() {
                 Leads
               </button>
             )}
+            {canSeeTab("clients") && (
+              <button
+                className={effectiveView === "clients" ? "tab active" : "tab"}
+                onClick={() => setView("clients")}
+              >
+                Clients
+              </button>
+            )}
             {isOwnerOrg && (
               <button
                 className={effectiveView === "onboarding" ? "tab active" : "tab"}
@@ -416,14 +424,6 @@ export default function App() {
             >
               Appointments
             </button>
-            {canSeeTab("clients") && (
-              <button
-                className={effectiveView === "clients" ? "tab active" : "tab"}
-                onClick={() => setView("clients")}
-              >
-                Clients
-              </button>
-            )}
             {canSeeTab("tasks") && (
               <button
                 className={effectiveView === "tasks" ? "tab active" : "tab"}
