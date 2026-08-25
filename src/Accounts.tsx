@@ -79,6 +79,11 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
 
   /* Delete-tenant confirm */
   const [deleting, setDeleting] = useState<Org | null>(null);
+  /* Owner request 2026-08-25 — billing cycle date per client account: an
+     inline-editable "Billing cycle" column on the Client accounts table. */
+  const [editingBillingOrgId, setEditingBillingOrgId] = useState<number | null>(null);
+  const [savingBillingOrgId, setSavingBillingOrgId] = useState<number | null>(null);
+  const [billingDraft, setBillingDraft] = useState("");
 
   const load = useCallback(async () => {
     setError(null);
@@ -93,6 +98,23 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   useEffect(() => {
     load();
   }, [load]);
+  /* Owner request 2026-08-25 — save the inline "Billing cycle" date for a
+     client account via the owner-only admin PATCH (extended to accept
+     billingCycleDate) and reload so the table shows the persisted value. An
+     empty value clears the date back to unset. */
+  async function handleSaveBillingCycle(o: Org, value: string) {
+    setSavingBillingOrgId(o.id);
+    try {
+      await api.adminUpdateOrg(o.id, { billingCycleDate: value });
+      setEditingBillingOrgId(null);
+      setBillingDraft("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save billing cycle date.");
+    } finally {
+      setSavingBillingOrgId(null);
+    }
+  }
 
   /* Owner direction 2026-08-15 — the client-account list is for CLIENT
      workspaces: the owner's OWN workspace is filtered out of the table rows,
@@ -359,30 +381,29 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
             </div>
           ) : (
             <table className="table">
-              {/* Owner live-test reorg 2026-08-18 — the accounts table is
-                  exactly FIVE columns (Clients | Members | Client records |
-                  Created | Actions); the per-account billing column is
-                  removed (the old revenue-model selector was dropped in PR #52
-                  and account billing amounts are Phase 5 prep only — no
-                  longer surfaced). Explicit fixed-layout widths so nothing
-                  truncates: Clients (26%) comfortably fits the business name
-                  + meta lines, numeric/badge columns compact (9/12), Created
-                  15%, and Actions (38%) is wide enough for View account /
-                  Reset password / Delete without clipping (flex-wrap
-                  guards). */}
-              <colgroup>
-                <col style={{ width: "26%" }} />
-                <col style={{ width: "9%" }} />
-                <col style={{ width: "12%" }} />
-                <col style={{ width: "15%" }} />
-                <col style={{ width: "38%" }} />
-              </colgroup>
+              {/* Owner live-test reorg 2026-08-18 + billing cycle (owner request
+    2026-08-25) — the accounts table has SIX columns (Clients | Members |
+    Client records | Created | Billing cycle | Actions). Explicit fixed-layout
+    widths so nothing truncates: Clients (24%) fits the business name + meta
+    lines, numeric/badge columns compact (8/10), Created (12%), Billing cycle
+    (14%) fits the inline editable date input, and Actions (30%) is wide enough
+    for View account / Reset password / Delete without clipping (flex-wrap
+    guards). */}
+<colgroup>
+  <col style={{ width: "24%" }} />
+  <col style={{ width: "8%" }} />
+  <col style={{ width: "10%" }} />
+  <col style={{ width: "12%" }} />
+  <col style={{ width: "15%" }} />
+  <col style={{ width: "31%" }} />
+</colgroup>
               <thead>
                 <tr>
                   <th>Clients</th>
                   <th className="num">Members</th>
                   <th className="num">Client records</th>
                   <th>Created</th>
+                  <th>Billing cycle</th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
@@ -453,6 +474,44 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
+                      <td data-label="Billing cycle">
+                        {editingBillingOrgId === o.id ? (
+                          <input
+                            type="date"
+                            className="billing-date-input"
+                            value={billingDraft}
+                            onChange={(e) => setBillingDraft(e.target.value)}
+                            onBlur={() => handleSaveBillingCycle(o, billingDraft)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveBillingCycle(o, billingDraft);
+                              if (e.key === "Escape") setEditingBillingOrgId(null);
+                            }}
+                            disabled={savingBillingOrgId === o.id}
+                            aria-label={`Billing cycle date for ${o.name}`}
+                          />
+                        ) : (
+                          <span className="billing-cycle-cell">
+                            {o.billingCycleDate ? (
+                              fmtDate(o.billingCycleDate)
+                            ) : (
+                              <span className="cell-muted">&mdash;</span>
+                            )}{" "}
+                            <button
+                              type="button"
+                              className="icon-btn btn-sm"
+                              title="Set billing cycle date"
+                              aria-label={`Set billing cycle date for ${o.name}`}
+                              onClick={() => {
+                                setEditingBillingOrgId(o.id);
+                                setBillingDraft(o.billingCycleDate || "");
+                              }}
+                              disabled={savingBillingOrgId !== null}
+                            >
+                              &#9998;
+                            </button>
+                          </span>
+                        )}
+                      </td>
                       <td data-label="Actions">
                         <div className="row-actions">
                           <button

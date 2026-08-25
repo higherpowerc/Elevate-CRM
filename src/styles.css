@@ -1132,13 +1132,6 @@ legend.field-label {
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
-/* Owner workflow windows (Clients tab) — "Ready for creation" (signed,
-   not yet built, owner 2026-08-25 rename) shares the card look and gets a
-   subtle accent bar so the owner can spot it among the account-management
-   cards below. */
-.ready-for-creation {
-  border-left: 3px solid var(--accent);
-}
 
 .kpi-row {
   display: grid;
@@ -2564,7 +2557,7 @@ legend.field-label {
   left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--muted-2);
+  color: #555;
   font-size: 14px;
   pointer-events: none;
 }
@@ -2572,6 +2565,21 @@ legend.field-label {
 .inv-add-amount input {
   width: 100%;
   padding-left: 26px;
+  /* Owner 2026-08-25 — "i cant see the numbers — white background black
+     lettering". The theme's `input { color: var(--ink) }` (near-white) applies
+     to EVERY input, but .inv-add-amount inputs sit OUTSIDE .field (which is
+     what normally supplies the dark background), so they rendered near-white
+     text on the browser's default white background → invisible. Force an
+     explicit white background + black text for these amount boxes (the
+     Pending-payment per-row boxes and the quick-add/"Bill a client account"
+     forms all share .inv-add-amount). .field input / .combobox-input keep
+     their dark styling untouched. */
+  background: #fff;
+  color: #000;
+  color-scheme: light;
+}
+.inv-add-amount input::placeholder {
+  color: #777;
 }
 
 .inv-add select[aria-label="Invoice status"] {
@@ -4055,3 +4063,27 @@ legend.field-label {
   font-size: 13px;
 }
 .demo-sched-line { font-size: 12.5px; margin: 0 0 10px; line-height: 1.5; }
+
+/* Owner request 2026-08-25 — inline "Billing cycle" column on the Client
+   accounts table. The date input is compact and stays readable (white
+   background + black text, like every date picker) so the owner can set an
+   account's billing cycle date without the table overflowing. */
+.billing-cycle-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.billing-date-input {
+  width: 150px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: #000;
+  color-scheme: light;
+}
+.billing-cycle-cell .icon-btn {
+  padding: 2px 6px;
+}

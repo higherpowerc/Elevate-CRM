@@ -861,6 +861,10 @@ db.exec(`
   };
   addOrgCol("monthly_subscription_amount", "monthly_subscription_amount REAL NOT NULL DEFAULT 0");
   addOrgCol("revenue_model", "revenue_model TEXT NOT NULL DEFAULT 'sales'");
+  // Billing cycle date (owner request 2026-08-25): the day of the month this
+  // client account is billed ('' = not set). Owner-set in the Clients >
+  // Client accounts table; owner-only data. Idempotent — safe on every boot.
+  addOrgCol("billing_cycle_date", "billing_cycle_date TEXT NOT NULL DEFAULT ''");
   // Backfill the subscription model for existing Med Spa orgs (the only
   // vertical the catalog seeds as subscription). Idempotent — a re-run only
   // touches orgs still at the 'sales' default.

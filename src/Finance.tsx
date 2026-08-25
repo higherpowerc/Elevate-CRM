@@ -343,7 +343,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
      of whether a workspace has been built. This replaces the old "Signed ·
      account pending" card (that one wrongly required an account to exist).
      Per the owner's sales flow a signed agreement lands here immediately; the
-     Clients-tab "Ready for creation" window handles account building. Lost
+     Clients-tab "Paid but unbuilt" window handles account building. Lost
      clients are excluded. Each row sends the client a Stripe payment link via
      POST /api/clients/:id/payment-link (which returns 503 "Stripe not
      configured" until the owner wires the Stripe keys). */
