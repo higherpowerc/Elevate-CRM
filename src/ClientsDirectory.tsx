@@ -92,8 +92,9 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
         : [],
     [ownerOrg, clients],
   );
-  /* Owner workflow views (2026-08-21) — "Pending creation accounts": client
-     records whose agreement is SIGNED but whose client workspace has NOT been
+  /* Owner workflow views (2026-08-25) — "Ready for creation" window (owner
+     2026-08-25 rename, PLACED under the Client accounts view): client records
+     whose agreement is SIGNED but whose client workspace has NOT been
      built yet (provisioned_org_id 0). This is deliberately distinct from the
      "Paid but unbuilt" window (paymentStatus === 'paid') and from the Finance
      'Signed · account pending' bucket (signed AND provisioned AND unbilled):
@@ -102,7 +103,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
      client account" task — but does NOT provision. So the signed-but-unbuilt
      set is exactly signed AND provisioned_org_id 0. The "Build account"
      action reuses the shared sold-lead provisioning path. */
-  const pendingCreation = useMemo(
+  const readyForCreation = useMemo(
     () =>
       ownerOrg && clients
         ? clients.filter((c) => c.agreementStatus === "signed" && (c.provisionedOrgId ?? 0) === 0)
@@ -285,18 +286,18 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
             </p>
           </div>
         </div>
-        {ownerOrg && pendingCreation.length > 0 && (
-          <div className="card pending-creation">
+        {ownerOrg && readyForCreation.length > 0 && (
+          <div className="card ready-for-creation">
             <div className="page-head" style={{ marginBottom: ".5rem" }}>
               <div>
-                <h2 className="h3">Pending creation accounts</h2>
+                <h2 className="h3">Ready for creation</h2>
                 <p className="page-sub">
                   These clients signed their agreement but don't have a CRM workspace built yet — build their account below.
                 </p>
               </div>
             </div>
             <ul className="inv-list" style={{ margin: 0 }}>
-              {pendingCreation.map((c) => (
+              {readyForCreation.map((c) => (
                 <li key={c.id} className="inv">
                   <div className="inv-body">
                     <div className="inv-client">

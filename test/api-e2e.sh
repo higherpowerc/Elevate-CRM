@@ -7663,7 +7663,7 @@ stop_crm "$MOCK57/srv.pid"; sleep 0.3
 rm -f "$J57" "$JT57"; rm -rf "$MOCK57"
 echo "  ✓ 57: Finance cockpit / reporting (MRR + revenue-by-client + lost/churned) verified owner-only"
 
-echo "== 58. Pending creation accounts (owner 2026-08-21): signed-but-not-yet-built clients + Build account (sibling to 'Paid but unbuilt') =="
+echo "== 58. Ready for creation (owner 2026-08-25): signed-but-not-yet-built clients + Build account (sibling to 'Paid but unbuilt') =="
 MOCK58=$(mktemp -d)
 MOCK58_EMAILS="$MOCK58/emails.jsonl"
 : > "$MOCK58_EMAILS"
@@ -7704,7 +7704,7 @@ code -b "$J58" "$B58/api/settings" > /dev/null
 F58=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
 SOLD58=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
 echo "     (owner buckets: first=\"$F58\", final/sold=\"$SOLD58\")"
-# The 'Pending creation accounts' window shows exactly: agreement_status='signed'
+# The 'Ready for creation' window shows exactly: agreement_status='signed'
 # AND provisioned_org_id=0. advanceSignedClient (server/agreements.ts) sets the
 # status, advances to the terminal stage and raises the 'Create client account'
 # task but does NOT provision — so a freshly signed client (a) belongs to the
@@ -7739,7 +7739,7 @@ assert me['agreementStatus'] == 'signed', me                  # (a) predicate ha
 assert (me.get('provisionedOrgId') or 0) == 0, me             # (a) predicate half 2 → IN the set
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58a: signed client with NO provisioned org — appears in 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: signed-unbuilt assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+then PASS=$((PASS+1)); echo "  ✓ 58a: signed client with NO provisioned org — appears in 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: signed-unbuilt assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
 S=$(code -b "$J58" -X POST "$B58/api/admin/clients/$PC_ID/provision")
 check "58a: owner Build account → 200" 200 "$S"
 PB_ORG=$(grep -o '"orgId":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -7753,7 +7753,7 @@ me = [c for c in clients if c['id'] == int(os.environ['PC_ID'])][0]
 assert (me.get('provisionedOrgId') or 0) > 0, me
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58a: after Build the client is provisioned — cleared from 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: provisioned-org check failed"; cat "$PASS_TMP" 2>/dev/null; fi
+then PASS=$((PASS+1)); echo "  ✓ 58a: after Build the client is provisioned — cleared from 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: provisioned-org check failed"; cat "$PASS_TMP" 2>/dev/null; fi
 echo "-- 58b. A signed client that ALREADY has a workspace is NOT in the set --"
 # Build the workspace FIRST, then mark signed (auto-provision only fires while
 # unprovisioned + final-stage, so the signed PUT does not re-provision).
@@ -7779,7 +7779,7 @@ assert (me.get('provisionedOrgId') or 0) > 0, me                   # ... AND alr
 assert me['id'] not in set_ids, me                                 # therefore NOT in the set
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58b: signed client that ALREADY has a workspace — NOT in 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58b: already-built-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+then PASS=$((PASS+1)); echo "  ✓ 58b: signed client that ALREADY has a workspace — NOT in 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58b: already-built-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
 echo "-- 58c. A client with a different agreement_status is NOT in the set --"
 # A paid-UNSIGNED sold client belongs to the 'Paid but unbuilt' window, not this one.
 S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
@@ -7803,12 +7803,12 @@ for c in clients:
         assert c['agreementStatus'] == 'signed' and (c.get('provisionedOrgId') or 0) == 0, c
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58c: a client with a different agreement_status (paid, unsigned) is NOT in 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58c: not-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+then PASS=$((PASS+1)); echo "  ✓ 58c: a client with a different agreement_status (paid, unsigned) is NOT in 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58c: not-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
 # Source markers: the window is wired into the owner Clients tab only.
-if grep -Fq 'pendingCreation' src/ClientsDirectory.tsx && grep -Fq 'agreementStatus === "signed"' src/ClientsDirectory.tsx && grep -Fq '(c.provisionedOrgId ?? 0) === 0' src/ClientsDirectory.tsx && grep -Fq 'Pending creation accounts' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 58: 'Pending creation accounts' window + Build-account action wired (owner Clients tab)"; else FAIL=$((FAIL+1)); echo "  ✗ 58: pending-creation source marker missing"; fi
+if grep -Fq 'readyForCreation' src/ClientsDirectory.tsx && grep -Fq 'agreementStatus === "signed"' src/ClientsDirectory.tsx && grep -Fq '(c.provisionedOrgId ?? 0) === 0' src/ClientsDirectory.tsx && grep -Fq 'Ready for creation' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 58: 'Ready for creation' window + Build-account action wired (owner Clients tab)"; else FAIL=$((FAIL+1)); echo "  ✗ 58: ready-for-creation source marker missing"; fi
 stop_crm "$MOCK58/srv.pid"; kill "$MOCK58_PID" 2>/dev/null; sleep 0.3
 rm -f "$J58"; rm -rf "$MOCK58"
-echo "  ✓ 58: Pending creation accounts verified owner-only"
+echo "  ✓ 58: Ready for creation verified owner-only"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 
