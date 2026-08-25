@@ -7663,6 +7663,153 @@ stop_crm "$MOCK57/srv.pid"; sleep 0.3
 rm -f "$J57" "$JT57"; rm -rf "$MOCK57"
 echo "  ✓ 57: Finance cockpit / reporting (MRR + revenue-by-client + lost/churned) verified owner-only"
 
+echo "== 58. Pending creation accounts (owner 2026-08-21): signed-but-not-yet-built clients + Build account (sibling to 'Paid but unbuilt') =="
+MOCK58=$(mktemp -d)
+MOCK58_EMAILS="$MOCK58/emails.jsonl"
+: > "$MOCK58_EMAILS"
+cat > "$MOCK58/resend.ts" <<'TS58'
+import { appendFileSync } from "node:fs";
+const PORT = 3225;
+const OUT = process.env.MOCK_OUT ?? "/tmp/mock58-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock resend on " + PORT);
+TS58
+MOCK_OUT="$MOCK58_EMAILS" nohup bun "$MOCK58/resend.ts" > "$MOCK58/resend.log" 2>&1 &
+MOCK58_PID=$!
+i=0; until curl -sf http://127.0.0.1:3225/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+if curl -sf http://127.0.0.1:3225/health >/dev/null 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ 58: mock Resend endpoint up on :3225"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 58: mock Resend endpoint failed to start"
+fi
+start_crm 3025 "$MOCK58/db" "$MOCK58/srv.log" "$MOCK58/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET RESEND_API_KEY=test-key-58 RESEND_URL=http://127.0.0.1:3225 TEST_EMAIL_TO=owner-test@gmail.com
+B58=http://localhost:3025
+J58=$(mktemp)
+S=$(code -c "$J58" -b "$J58" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B58/api/auth/login")
+check "58: owner login → 200" 200 "$S"
+code -b "$J58" "$B58/api/settings" > /dev/null
+F58=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
+SOLD58=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+echo "     (owner buckets: first=\"$F58\", final/sold=\"$SOLD58\")"
+# The 'Pending creation accounts' window shows exactly: agreement_status='signed'
+# AND provisioned_org_id=0. advanceSignedClient (server/agreements.ts) sets the
+# status, advances to the terminal stage and raises the 'Create client account'
+# task but does NOT provision — so a freshly signed client (a) belongs to the
+# set, a signed client that was already built (b) does not, and a client with a
+# different agreement_status (c) does not.
+echo "-- 58a. A signed, unbuilt client is IN the set; Build account builds it and clears it --"
+# Create a lead, then sign its agreement via the REAL e-sign flow (public sign).
+S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Pending Seal Co\",\"contactName\":\"Pat B\",\"email\":\"patb58@pendseal.example\",\"clientType\":\"commercial\",\"dealValue\":2000,\"stage\":\"$F58\"}" "$B58/api/clients")
+check "58a: owner creates a lead in the first stage → 201" 201 "$S"
+PC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$PC_ID}" "$B58/api/agreements/send")
+check "58a: owner sends agreement → 200" 200 "$S"
+sleep 1
+TOKEN58=$(grep -o 'sign/[a-f0-9]\{64\}' "$MOCK58_EMAILS" | tail -1 | cut -d/ -f2)
+if [ -n "$TOKEN58" ] && [ ${#TOKEN58} -eq 64 ]; then
+  PASS=$((PASS+1)); echo "  ✓ 58a: unique sign token extracted from email (${#TOKEN58} chars)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 58a: no sign token: $(cat "$MOCK58_EMAILS")"
+fi
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"action":"sign","name":"Pat B","consent":true}' "$B58/api/sign/$TOKEN58")
+check "58a: client signs agreement (public) → 200" 200 "$S"
+grep -q '"status":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 58a: sign returns status signed"; } || { FAIL=$((FAIL+1)); echo "  ✗ 58a: sign response: $(cat /tmp/body.json)"; }
+S=$(code -b "$J58" "$B58/api/clients?archived=1")
+check "58a: owner GET clients → 200" 200 "$S"
+if PC_ID="$PC_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['PC_ID'])][0]
+assert me['agreementStatus'] == 'signed', me                  # (a) predicate half 1
+assert (me.get('provisionedOrgId') or 0) == 0, me             # (a) predicate half 2 → IN the set
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 58a: signed client with NO provisioned org — appears in 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: signed-unbuilt assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+S=$(code -b "$J58" -X POST "$B58/api/admin/clients/$PC_ID/provision")
+check "58a: owner Build account → 200" 200 "$S"
+PB_ORG=$(grep -o '"orgId":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+if [ -n "$PB_ORG" ] && [ "$PB_ORG" != "0" ]; then PASS=$((PASS+1)); echo "  ✓ 58a: Build account returned new workspace org $PB_ORG"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: no orgId: $(cat /tmp/body.json)"; fi
+S=$(code -b "$J58" "$B58/api/clients?archived=1")
+check "58a: owner GET clients after build → 200" 200 "$S"
+if PC_ID="$PC_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['PC_ID'])][0]
+assert (me.get('provisionedOrgId') or 0) > 0, me
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 58a: after Build the client is provisioned — cleared from 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: provisioned-org check failed"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 58b. A signed client that ALREADY has a workspace is NOT in the set --"
+# Build the workspace FIRST, then mark signed (auto-provision only fires while
+# unprovisioned + final-stage, so the signed PUT does not re-provision).
+S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Signed Built Co\",\"contactName\":\"Sid B\",\"email\":\"sidb58@signedbuilt.example\",\"clientType\":\"commercial\",\"dealValue\":3000,\"stage\":\"$SOLD58\"}" "$B58/api/clients")
+check "58b: owner creates a sold-stage client (POST, no auto-provision) → 201" 201 "$S"
+SB_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J58" -X POST "$B58/api/admin/clients/$SB_ID/provision")
+check "58b: owner Build account (provisions it) → 200" 200 "$S"
+S=$(code -b "$J58" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Signed Built Co\",\"clientType\":\"commercial\",\"stage\":\"$SOLD58\",\"agreementStatus\":\"signed\"}" "$B58/api/clients/$SB_ID")
+check "58b: owner marks it signed (already provisioned) → 200" 200 "$S"
+grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 58b: agreement signed on the already-built client"; } || { FAIL=$((FAIL+1)); echo "  ✗ 58b: no signed: $(cat /tmp/body.json)"; }
+S=$(code -b "$J58" "$B58/api/clients?archived=1")
+check "58b: owner GET clients → 200" 200 "$S"
+if SB_ID="$SB_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['SB_ID'])][0]
+set_ids = [c['id'] for c in clients if (c.get('agreementStatus') or '') == 'signed' and (c.get('provisionedOrgId') or 0) == 0]
+assert me['agreementStatus'] == 'signed', me                       # it IS signed ...
+assert (me.get('provisionedOrgId') or 0) > 0, me                   # ... AND already provisioned
+assert me['id'] not in set_ids, me                                 # therefore NOT in the set
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 58b: signed client that ALREADY has a workspace — NOT in 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58b: already-built-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 58c. A client with a different agreement_status is NOT in the set --"
+# A paid-UNSIGNED sold client belongs to the 'Paid but unbuilt' window, not this one.
+S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Paid Unsigned Co\",\"contactName\":\"Pam U\",\"email\":\"pamu58@paidunsigned.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$SOLD58\"}" "$B58/api/clients")
+check "58c: owner creates a sold-stage client → 201" 201 "$S"
+PU_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J58" -X POST "$B58/api/clients/$PU_ID/payment-paid")
+check "58c: owner marks it paid (NOT signed) → 200" 200 "$S"
+S=$(code -b "$J58" "$B58/api/clients?archived=1")
+check "58c: owner GET clients → 200" 200 "$S"
+if PU_ID="$PU_ID" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['PU_ID'])][0]
+set_ids = [c['id'] for c in clients if (c.get('agreementStatus') or '') == 'signed' and (c.get('provisionedOrgId') or 0) == 0]
+assert me['agreementStatus'] != 'signed', me                        # not signed
+assert me['id'] not in set_ids, me                                  # therefore NOT in the set
+# The set only ever contains signed + unprovisioned rows (predicate soundness).
+for c in clients:
+    if c['id'] in set_ids:
+        assert c['agreementStatus'] == 'signed' and (c.get('provisionedOrgId') or 0) == 0, c
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 58c: a client with a different agreement_status (paid, unsigned) is NOT in 'Pending creation accounts'"; else FAIL=$((FAIL+1)); echo "  ✗ 58c: not-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+# Source markers: the window is wired into the owner Clients tab only.
+if grep -Fq 'pendingCreation' src/ClientsDirectory.tsx && grep -Fq 'agreementStatus === "signed"' src/ClientsDirectory.tsx && grep -Fq '(c.provisionedOrgId ?? 0) === 0' src/ClientsDirectory.tsx && grep -Fq 'Pending creation accounts' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 58: 'Pending creation accounts' window + Build-account action wired (owner Clients tab)"; else FAIL=$((FAIL+1)); echo "  ✗ 58: pending-creation source marker missing"; fi
+stop_crm "$MOCK58/srv.pid"; kill "$MOCK58_PID" 2>/dev/null; sleep 0.3
+rm -f "$J58"; rm -rf "$MOCK58"
+echo "  ✓ 58: Pending creation accounts verified owner-only"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

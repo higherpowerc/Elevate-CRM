@@ -1132,6 +1132,12 @@ legend.field-label {
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
+/* Owner workflow windows (Clients tab) — "Pending creation accounts" (signed,
+   not yet built) shares the card look and gets a subtle accent bar so the
+   owner can spot it among the account-management cards below. */
+.pending-creation {
+  border-left: 3px solid var(--accent);
+}
 
 .kpi-row {
   display: grid;
