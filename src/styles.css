@@ -1935,6 +1935,17 @@ legend.field-label {
   white-space: nowrap;
   min-width: 0;
 }
+/* $ amount field + "Send payment link" button inside the Finance "Pending
+   payment" rows: keep the pair centered and the input from sprawling. */
+.row-actions.pending-pay-actions {
+  align-items: center;
+}
+.row-actions.pending-pay-actions .inv-add-amount {
+  flex: 0 1 150px;
+}
+.row-actions.pending-pay-actions .btn {
+  flex: none;
+}
 /* Compact action buttons inside tables so the Actions column never forces
    horizontal overflow (owner request: everything viewable without scroll). */
 .table .icon-btn {

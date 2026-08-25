@@ -7390,7 +7390,7 @@ PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 55c: tenant isolation field leak:"; cat "$PASS_TMP" 2>/dev/null; fi
 
 # Source markers: the two views + build action are wired into the owner tabs.
-if grep -Fq 'signedPending' src/Finance.tsx && grep -Fq 'agreementStatus === "signed"' src/Finance.tsx && grep -Fq 'provisionedOrgId' src/Finance.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Finance 'Signed · account pending' bucket wired (signedPending filter)"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Finance pending bucket source marker missing"; fi
+if grep -Fq 'pendingPayment' src/Finance.tsx && grep -Fq 'agreementStatus === "signed"' src/Finance.tsx && grep -Fq 'paymentStatus !== "paid"' src/Finance.tsx && grep -Fq 'Send payment link' src/Finance.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Finance 'Pending payment' window wired (pendingPayment filter — replaces signedPending)"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Finance pending window source marker missing"; fi
 if grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx && grep -Fq 'paymentStatus === "paid"' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Clients 'Paid but unbuilt' window + Build-account action wired"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Clients paid-unbuilt source marker missing"; fi
 
 stop_crm "$MOCK55/srv.pid"; kill "$MOCK55_PID" 2>/dev/null; sleep 0.3
@@ -7809,6 +7809,121 @@ if grep -Fq 'readyForCreation' src/ClientsDirectory.tsx && grep -Fq 'agreementSt
 stop_crm "$MOCK58/srv.pid"; kill "$MOCK58_PID" 2>/dev/null; sleep 0.3
 rm -f "$J58"; rm -rf "$MOCK58"
 echo "  ✓ 58: Ready for creation verified owner-only"
+
+
+echo "== 59. Pending payment (owner 2026-08-25): Finance window = signed + unpaid (+ not lost), per-row Send payment link = 503-until-Stripe-wired =="
+# The "Pending payment" window replaces the earlier 'Signed · account pending'
+# card: predicate is agreementStatus === 'signed' && paymentStatus !== 'paid'
+# (provisioning does NOT matter — a signed agreement lands here immediately per
+# the owner's sales flow; the Clients-tab 'Ready for creation' window handles
+# account building). Lost clients are excluded. The per-row "Send payment link"
+# button calls POST /api/clients/:id/payment-link which, in this key-stripped
+# suite, returns 503 { error: "Stripe not configured" } (surfaced gracefully).
+MOCK59=$(mktemp -d)
+start_crm 3026 "$MOCK59/db" "$MOCK59/srv.log" "$MOCK59/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET -u RESEND_API_KEY -u RESEND_URL
+B59=http://localhost:3026
+J59=$(mktemp)
+JT59=$(mktemp)
+S=$(code -c "$J59" -b "$J59" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B59/api/auth/login")
+check "59: owner login → 200" 200 "$S"
+code -b "$J59" "$B59/api/settings" > /dev/null
+SOLD59=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+echo "-- 59a. Predicate: signed+unpaid IN the set; signed+paid / unsigned / signed+lost NOT --"
+# (a) signed + unpaid (not lost) → IN (create first-stage lead, then sold+signed PUT)
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Signed Unpaid\",\"contactName\":\"PPA\",\"email\":\"ppa59@ppsignedunpaid.example\",\"clientType\":\"commercial\",\"dealValue\":2000}" "$B59/api/clients")
+check "59a: owner creates a lead → 201" 201 "$S"
+PPA_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J59" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Signed Unpaid\",\"clientType\":\"commercial\",\"stage\":\"$SOLD59\",\"agreementStatus\":\"signed\"}" "$B59/api/clients/$PPA_ID")
+check "59a: owner marks it sold + signed → 200" 200 "$S"
+grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 59a: signed-unpaid record is signed"; } || { FAIL=$((FAIL+1)); echo "  ✗ 59a: not signed: $(cat /tmp/body.json)"; }
+# (b) signed + PAID → NOT in set
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Signed Paid\",\"contactName\":\"PPB\",\"email\":\"ppb59@ppsignedpaid.example\",\"clientType\":\"commercial\",\"dealValue\":2000}" "$B59/api/clients")
+check "59b: owner creates a lead → 201" 201 "$S"
+PPB_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J59" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Signed Paid\",\"clientType\":\"commercial\",\"stage\":\"$SOLD59\",\"agreementStatus\":\"signed\"}" "$B59/api/clients/$PPB_ID")
+check "59b: owner marks it sold + signed → 200" 200 "$S"
+S=$(code -b "$J59" -X POST "$B59/api/clients/$PPB_ID/payment-paid")
+check "59b: owner marks it paid → 200" 200 "$S"
+# (c) unsigned (no agreement) → NOT in set
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Unsigned Co\",\"contactName\":\"PPC\",\"email\":\"ppc59@ppunsigned.example\",\"clientType\":\"commercial\",\"dealValue\":2000}" "$B59/api/clients")
+check "59c: owner creates a lead → 201" 201 "$S"
+PPC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J59" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Unsigned Co\",\"clientType\":\"commercial\",\"stage\":\"$SOLD59\"}" "$B59/api/clients/$PPC_ID")
+check "59c: move it to sold WITHOUT signing → 200" 200 "$S"
+# (d) signed + LOST → NOT in set (exclude lost)
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Signed Lost\",\"contactName\":\"PPD\",\"email\":\"ppd59@ppsignedlost.example\",\"clientType\":\"commercial\",\"dealValue\":2000}" "$B59/api/clients")
+check "59d: owner creates a lead → 201" 201 "$S"
+PPD_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J59" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"PP Signed Lost\",\"clientType\":\"commercial\",\"stage\":\"$SOLD59\",\"agreementStatus\":\"signed\",\"lost\":true,\"lostReason\":\"Test lost\"}" "$B59/api/clients/$PPD_ID")
+check "59d: mark it sold + signed + lost → 200" 200 "$S"
+S=$(code -b "$J59" "$B59/api/clients?archived=1")
+check "59e: owner GET clients → 200" 200 "$S"
+if PPA_ID=$PPA_ID PPB_ID=$PPB_ID PPC_ID=$PPC_ID PPD_ID=$PPD_ID python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+set_ids = [c['id'] for c in clients
+           if c.get('agreementStatus') == 'signed'
+           and (c.get('paymentStatus') or 'none') != 'paid'
+           and not c['lost']]
+ids = {k: int(os.environ[k]) for k in ('PPA_ID','PPB_ID','PPC_ID','PPD_ID')}
+assert ids['PPA_ID'] in set_ids, (ids['PPA_ID'], set_ids)
+assert ids['PPB_ID'] not in set_ids, ("signed+paid should not be pending", set_ids)
+assert ids['PPC_ID'] not in set_ids, ("unsigned should not be pending", set_ids)
+assert ids['PPD_ID'] not in set_ids, ("signed+lost should not be pending", set_ids)
+for c in clients:
+    if c['id'] in set_ids:
+        assert c['agreementStatus'] == 'signed' and (c.get('paymentStatus') or 'none') != 'paid' and not c['lost'], c
+print("  ✓ 59a: predicate — signed+unpaid IN; signed+paid, unsigned, signed+lost NOT; every listed row signed+unpaid+not-lost")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 59a: pending-payment predicate wrong"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 59b. Send-payment-link route behavior (key-stripped → 503) + client still renders pending --"
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' -d '{"amount":200}' "$B59/api/clients/$PPA_ID/payment-link")
+check "59b: payment-link for signed client, no STRIPE_SECRET_KEY → 503 (Stripe not configured)" 503 "$S"
+grep -q '{"error":"Stripe not configured"}' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 59b: 503 body exact — the button surfaces this gracefully"; } || { FAIL=$((FAIL+1)); echo "  ✗ 59b: 503 body: $(cat /tmp/body.json)"; }
+S=$(code -b "$J59" "$B59/api/clients?archived=1")
+check "59b: owner GET clients after 503 → 200" 200 "$S"
+if PPA_ID=$PPA_ID python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+clients = json.load(open('/tmp/body.json'))['clients']
+me = [c for c in clients if c['id'] == int(os.environ['PPA_ID'])][0]
+assert me['agreementStatus'] == 'signed', me
+assert (me.get('paymentStatus') or 'none') != 'paid', me
+set_ids = [c['id'] for c in clients if c.get('agreementStatus') == 'signed' and (c.get('paymentStatus') or 'none') != 'paid' and not c['lost']]
+assert me['id'] in set_ids, me
+print("  ✓ 59b: after the 503 the signed client is still in the pending-payment list (renders)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 59b: client dropped out of pending after 503"; cat "$PASS_TMP" 2>/dev/null; fi
+# 409 path: the signed-agreement gate on a record that is NOT signed.
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' -d '{"amount":200}' "$B59/api/clients/$PPC_ID/payment-link")
+check "59b: payment-link for an UNSIGNED client → 409 (signed-agreement gate)" 409 "$S"
+echo "-- 59c. Owner-only: tenant never sees the pending-payment clients; window is owner-gated --"
+S=$(code -b "$J59" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"PP Tenant Co","email":"ppt59@demo.example","password":"ppt59pass123"}' "$B59/api/admin/orgs")
+check "59c: owner provisions tenant → 201" 201 "$S"
+S=$(code -c "$JT59" -b "$JT59" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"ppt59@demo.example","password":"ppt59pass123"}' "$B59/api/auth/login")
+check "59c: tenant login → 200" 200 "$S"
+S=$(code -b "$JT59" "$B59/api/clients?archived=1")
+check "59c: tenant lists its clients → 200" 200 "$S"
+if grep -qv 'Signed Unpaid\|Signed Paid\|Unsigned Co\|Signed Lost' /tmp/body.json && grep -q '"clients":\[\]' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ 59c: tenant client list empty — no owner pending-payment clients leaked"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 59c: tenant sees owner clients (LEAK): $(cat /tmp/body.json)"
+fi
+# Source markers: the window is wired into the owner Finance tab only (guard on ownerOrg).
+if grep -Fq 'pendingPayment' src/Finance.tsx && grep -Fq 'agreementStatus === "signed"' src/Finance.tsx && grep -Fq 'paymentStatus !== "paid"' src/Finance.tsx && grep -Fq 'Send payment link' src/Finance.tsx && grep -Fq 'api.clientPaymentLink(c.id' src/Finance.tsx && grep -Fq 'ownerOrg' src/Finance.tsx; then PASS=$((PASS+1)); echo "  ✓ 59: 'Pending payment' window + Send payment link wired (owner Finance tab, owner-only)"; else FAIL=$((FAIL+1)); echo "  ✗ 59: pending-payment source markers missing"; fi
+stop_crm "$MOCK59/srv.pid"; sleep 0.3
+rm -f "$J59" "$JT59"; rm -rf "$MOCK59"
+echo "  ✓ 59: Pending payment verified owner-only"
 
 echo "RESULT: $PASS passed, $FAIL failed"
 
