@@ -92,6 +92,24 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
         : [],
     [ownerOrg, clients],
   );
+  /* Owner workflow views (2026-08-25) — "Ready for creation" window (owner
+     2026-08-25 rename, PLACED under the Client accounts view): client records
+     whose agreement is SIGNED but whose client workspace has NOT been
+     built yet (provisioned_org_id 0). This is deliberately distinct from the
+     "Paid but unbuilt" window (paymentStatus === 'paid') and from the Finance
+     'Signed · account pending' bucket (signed AND provisioned AND unbilled):
+     signing (server/agreements.ts advanceSignedClient) sets agreement_status
+     'signed', advances the record to the terminal stage and raises a "Create
+     client account" task — but does NOT provision. So the signed-but-unbuilt
+     set is exactly signed AND provisioned_org_id 0. The "Build account"
+     action reuses the shared sold-lead provisioning path. */
+  const readyForCreation = useMemo(
+    () =>
+      ownerOrg && clients
+        ? clients.filter((c) => c.agreementStatus === "signed" && (c.provisionedOrgId ?? 0) === 0)
+        : [],
+    [ownerOrg, clients],
+  );
   const [buildingId, setBuildingId] = useState<number | null>(null);
   const [buildNotice, setBuildNotice] = useState<string | null>(null);
   async function handleBuildAccount(c: Client) {
@@ -268,6 +286,39 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
             </p>
           </div>
         </div>
+        {ownerOrg && readyForCreation.length > 0 && (
+          <div className="card ready-for-creation">
+            <div className="page-head" style={{ marginBottom: ".5rem" }}>
+              <div>
+                <h2 className="h3">Ready for creation</h2>
+                <p className="page-sub">
+                  These clients signed their agreement but don't have a CRM workspace built yet — build their account below.
+                </p>
+              </div>
+            </div>
+            <ul className="inv-list" style={{ margin: 0 }}>
+              {readyForCreation.map((c) => (
+                <li key={c.id} className="inv">
+                  <div className="inv-body">
+                    <div className="inv-client">
+                      <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
+                      <span className="inv-notes">Agreement signed · no account built yet</span>
+                    </div>
+                  </div>
+                  <div className="row-actions">
+                    <button
+                      className="icon-btn"
+                      onClick={() => handleBuildAccount(c)}
+                      disabled={buildingId !== null}
+                    >
+                      {buildingId === c.id ? "Building…" : "Build account"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {ownerOrg && paidUnbuilt.length > 0 && (
           <div className="card paid-unbuilt">
             <div className="page-head" style={{ marginBottom: ".5rem" }}>
