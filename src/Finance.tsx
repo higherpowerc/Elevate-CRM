@@ -410,7 +410,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
   const totalCount = invoices.length;
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>
@@ -458,7 +458,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
           these figures). Tenants never render this section. */}
       {ownerOrg && (
         <section className="card cockpit" aria-label="Finance cockpit / reporting">
-          <div className="page-head" style={{ marginBottom: ".5rem" }}>
+          <div className="page-head" style={{ marginBottom: "var(--stack-gap)" }}>
             <div>
               <h2 className="h3">
                 Finance <em className="serif">cockpit</em>
@@ -556,7 +556,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
 
       {ownerOrg && (
         <div className="card pending-bills">
-          <div className="page-head" style={{ marginBottom: ".5rem" }}>
+          <div className="page-head" style={{ marginBottom: "var(--stack-gap)" }}>
             <div>
               <h2 className="h3">
                 <em className="serif">Pending</em> payment
@@ -571,7 +571,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
             <div
               className={pendingNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
               role={pendingNotice.kind === "success" ? "status" : "alert"}
-              style={{ marginBottom: ".75rem" }}
+              style={{ marginBottom: "var(--stack-gap)" }}
             >
               {pendingNotice.text}
             </div>
@@ -675,7 +675,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
 
       {ownerOrg && canEdit && (
         <div className="card inv-add stripe-bill" ref={billFormRef}>
-          <div className="page-head" style={{ marginBottom: ".5rem" }}>
+          <div className="page-head" style={{ marginBottom: "var(--stack-gap)" }}>
             <div>
               <h2 className="h3">
                 <em className="serif">Bill</em> a client account

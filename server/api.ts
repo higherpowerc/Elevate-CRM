@@ -79,6 +79,7 @@ import {
   getEnvelopeByTokenHash,
   sendAgreement,
   resolveAgreement,
+  deleteAgreementPdf,
 } from "./agreements";
 import { randomBytes } from "node:crypto";
 
@@ -1366,6 +1367,7 @@ function toTicket(row: TicketRowJoined, ownerOrg = false) {
     id: row.id,
     orgId: row.org_id,
     ...(ownerOrg ? { orgName: row.org_name ?? "" } : {}),
+    ticketNo: row.ticket_no ?? "",
     subject: row.subject,
     message: row.message,
     status: row.status,
@@ -2503,6 +2505,40 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     });
   }
 
+  /* Owner-only document deletion (owner direction 2026-08-25). Hard-deletes
+     an agreement envelope row AND its PDF file on disk. Owner-only (like the
+     other agreement routes); tenants get 403. Best-effort file deletion —
+     a missing file never blocks the row deletion. */
+  const agreementDelMatch = pathname.match(/^\/api\/agreements\/(\d+)$/);
+  if (agreementDelMatch && method === "DELETE") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(agreementDelMatch[1]);
+    const env = db.query("SELECT pdf_id FROM agreement_envelopes WHERE id = ? AND org_id = ?").get(id, orgId) as { pdf_id: string } | null;
+    if (!env) return err("Agreement not found.", 404);
+    db.query("DELETE FROM agreement_envelopes WHERE id = ? AND org_id = ?").run(id, orgId);
+    deleteAgreementPdf(env.pdf_id);
+    return json({ ok: true });
+  }
+
+  /* Agreements-editor PIN check (owner direction 2026-08-25) — verifies the
+     PIN entered in the Documents dropdown against the OWNER org's stored
+     sha-256 hash. The client never holds the hash. Owner-only (requireAdmin);
+     tenants get 403. */
+  if (pathname === "/api/agreements/pin-check" && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const pin = typeof body.pin === "string" ? body.pin.trim() : "";
+    const owner = getOrg(getOwnerOrgId());
+    const hash = owner?.agreements_pin_hash ?? "";
+    if (!hash) return json({ ok: false, error: "No agreements PIN set yet — set one in Settings first." });
+    const candidate = new Bun.CryptoHasher("sha256").update("agpin::" + pin).digest("hex");
+    if (candidate !== hash) return json({ ok: false, error: "Incorrect PIN." });
+    return json({ ok: true });
+  }
+
   /* Admin (owner-only): tenant provisioning */
   if (pathname === "/api/admin/orgs" && method === "GET") {
     const admin = requireAdmin(req);
@@ -3068,9 +3104,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         revenueModel: isRevenueModel(org.revenue_model) ? org.revenue_model : "sales",
         monthlySubscriptionAmount: org.monthly_subscription_amount ?? 0,
         allowSelfSchedule: org.allow_self_schedule === 1,
-        // Native e-signature — the OWNER org's editable agreement template.
-        // Deliberately absent from tenant responses (owner-workspace only).
-        ...(isOwnerSession(auth) ? { agreementTemplate: org.agreement_template ?? "" } : {}),
+        // Native e-signature + agreements PIN (owner direction 2026-08-25) —
+        // BOTH owner-only: the editable template and the boolean "is the
+        // editor PIN set?" (never the hash itself). Deliberately absent from
+        // tenant responses so a client account cannot see the field exists.
+        ...(isOwnerSession(auth)
+          ? {
+              agreementTemplate: org.agreement_template ?? "",
+              agreementsPinSet: (org.agreements_pin_hash ?? "") !== "",
+            }
+          : {}),
       },
     });
   }
@@ -3303,6 +3346,19 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       sets.push("agreement_template = ?");
       params.push(body.agreementTemplate);
     }
+    /* Agreements-editor PIN (owner direction 2026-08-25) — set/change the PIN
+       from Settings. Stored HASHED (sha-256), never plaintext. Owner-session
+       only: a tenant body key is ignored entirely, so there is no cross-org
+       write path (same discipline as agreementTemplate). A body key of "" is
+       allowed but means "unset" (kept simple: Settings always sends a PIN). */
+    if (isOwnerSession(auth) && body.agreementsPin !== undefined) {
+      const pin = typeof body.agreementsPin === "string" ? body.agreementsPin.trim() : "";
+      if (!/^\d{4,10}$/.test(pin)) {
+        return err("Agreements PIN must be 4–10 digits.", 400);
+      }
+      sets.push("agreements_pin_hash = ?");
+      params.push(new Bun.CryptoHasher("sha256").update("agpin::" + pin).digest("hex"));
+    }
     if (body.allowSelfSchedule !== undefined) {
       if (typeof body.allowSelfSchedule !== "boolean") return err("allowSelfSchedule must be a boolean.", 400);
       sets.push("allow_self_schedule = ?");
@@ -3328,6 +3384,12 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         verticalKey: updated.vertical_key ?? "",
         revenueModel: isRevenueModel(updated.revenue_model) ? updated.revenue_model : "sales",
         monthlySubscriptionAmount: updated.monthly_subscription_amount ?? 0,
+        ...(isOwnerSession(auth)
+          ? {
+              agreementTemplate: updated.agreement_template ?? "",
+              agreementsPinSet: (updated.agreements_pin_hash ?? "") !== "",
+            }
+          : {}),
       },
     });
   }
@@ -4406,9 +4468,18 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         v.value.message,
         v.value.priority ?? "NORMAL",
       );
+    /* Owner direction 2026-08-25 — every ticket gets a human-readable number
+       (TKT-1001, TKT-1002, …). Deterministic + collision-free: derived from the
+       fresh autoincrement id. The guarded update (only rows still '') makes it
+       idempotent. */
+    const newTicketId = Number(info.lastInsertRowid);
+    db.query("UPDATE tickets SET ticket_no = ? WHERE id = ? AND ticket_no = ''").run(
+      `TKT-${1000 + newTicketId}`,
+      newTicketId,
+    );
     const row = db
       .query(`${TICKET_SELECT} WHERE t.id = ? AND t.org_id = ?`)
-      .get(Number(info.lastInsertRowid), orgId) as TicketRowJoined;
+      .get(newTicketId, orgId) as TicketRowJoined;
     /* Owner direction (backlog 58435d2b) — a CLIENT-submitted ticket alerts
        the owner by email (account name, subject, message snippet, deep link).
        Skipped for the owner's OWN org (don't email yourself) and never blocks

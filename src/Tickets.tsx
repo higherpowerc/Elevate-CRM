@@ -42,6 +42,10 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Search box (owner direction 2026-08-25) — client-side filter over the
+   *  rendered rows (ticket number, subject, status label, and owner-view
+   *  account/org name). */
+  const [query, setQuery] = useState("");
   /** Owner view: the ticket whose full message is expanded (subject click). */
   const [expandedId, setExpandedId] = useState<number | null>(null);
   /** Owner view: ticket id whose status change is in flight (row spinner). */
@@ -172,8 +176,21 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
 
   const c = counts();
 
+  /* Client-side search (owner direction 2026-08-25): narrows the rendered
+     rows by ticket number, subject, status label, and (owner) account name —
+     case-insensitive. Grouping/order of the full set is preserved. */
+  const q = query.trim().toLowerCase();
+  const visibleTickets = q
+    ? tickets.filter((t) =>
+        [t.ticketNo, t.subject, ticketStatusLabel(t.status), ownerOrg ? (t.orgName ?? "") : ""]
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+    : tickets;
+
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>
@@ -215,6 +232,19 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
         </div>
       )}
 
+      {tickets.length > 0 && (
+        <div className="toolbar">
+          <input
+            className="search"
+            type="search"
+            placeholder="Search ticket number, subject, status, account…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search tickets"
+          />
+        </div>
+      )}
+
       {tickets.length === 0 ? (
         <div className="card empty">
           <p className="empty-title">
@@ -230,6 +260,11 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
               {ownerOrg ? "New ticket" : "Submit a ticket"}
             </button>
           )}
+        </div>
+      ) : visibleTickets.length === 0 ? (
+        <div className="card empty">
+          <p className="empty-title">No tickets match</p>
+          <p className="empty-sub">Try a different search — no tickets match "{query.trim()}".</p>
         </div>
       ) : (
         <div className="card table-wrap">
@@ -275,7 +310,7 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
               </tr>
             </thead>
             <tbody>
-              {tickets.map((t) => {
+              {visibleTickets.map((t) => {
                 const expanded = expandedId === t.id;
                 return (
                   <tr key={t.id} className={expanded ? "ticket-row open" : "ticket-row"}>
@@ -287,15 +322,18 @@ export default function Tickets({ ownerOrg, canEdit = true }: Props) {
                       </td>
                     )}
                     <td data-label="Subject">
-                      <button
-                        type="button"
-                        className="ticket-subject"
-                        onClick={() => toggleExpand(t)}
-                        aria-expanded={expanded}
-                        aria-label={expanded ? `Collapse ${t.subject}` : `Expand ${t.subject}`}
-                      >
-                        {t.subject}
-                      </button>
+                      <div className="ticket-subject-cell">
+                        {t.ticketNo && <span className="badge tone-gray ticket-no">{t.ticketNo}</span>}
+                        <button
+                          type="button"
+                          className="ticket-subject"
+                          onClick={() => toggleExpand(t)}
+                          aria-expanded={expanded}
+                          aria-label={expanded ? `Collapse ${t.subject}` : `Expand ${t.subject}`}
+                        >
+                          {t.subject}
+                        </button>
+                      </div>
                       {expanded && (
                         <>
                           <p className={`ticket-message${blurPii(pii)}`}>{t.message}</p>

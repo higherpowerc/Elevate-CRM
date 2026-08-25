@@ -6021,10 +6021,12 @@ if grep -Fq '[YOUR LLC NAME]' server/agreements.ts && grep -Fq '[CLIENT LEGAL NA
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: bracket placeholders missing from server/agreements.ts"
 fi
-if grep -Fq '[YOUR LLC NAME]' src/Admin.tsx && grep -Fq 'Both styles work in the same template' src/Admin.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: Administration -> Agreements help text lists both placeholder styles"
+# Owner 2026-08-25 — the agreement template editor MOVED from Administration to
+# the Documents tab as a PIN-gated dropdown; Administration now points there.
+if grep -Fq 'agreements-dropdown-title' src/Documents.tsx && grep -Fq 'checkAgreementsPin' src/Documents.tsx && grep -Fq 'agreements-pin-box' src/Documents.tsx && grep -Fq 'moved to the Documents tab' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Agreements template editor moved to Documents (PIN-gated dropdown); Administration points there"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: Agreements help text missing bracket-style placeholders"
+  FAIL=$((FAIL+1)); echo "  ✗ source: Agreements editor-move/PIN markers missing from src/Documents.tsx / src/Admin.tsx"
 fi
 if grep -Fq 'stripeClient' server/api.ts && grep -Fq 'Stripe not configured' server/api.ts && grep -Fq 'requireAdmin' server/api.ts && grep -Fq 'sendPaymentLinkEmail' server/api.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: payment-link route (owner-only, guarded Stripe client, Resend email)"
@@ -7392,7 +7394,7 @@ then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 55c: tenant isolation 
 
 # Source markers: the two views + build action are wired into the owner tabs.
 if grep -Fq 'pendingPayment' src/Finance.tsx && grep -Fq 'agreementStatus === "signed"' src/Finance.tsx && grep -Fq 'paymentStatus !== "paid"' src/Finance.tsx && grep -Fq 'Send payment link' src/Finance.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Finance 'Pending payment' window wired (pendingPayment filter — replaces signedPending)"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Finance pending window source marker missing"; fi
-if grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx && grep -Fq 'paymentStatus === "paid"' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Clients 'Paid but unbuilt' window + Build-account action wired"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Clients paid-unbuilt source marker missing"; fi
+if grep -Fq 'soldUnbuilt' src/ClientsDirectory.tsx && grep -Fq 'provisionedOrgId ?? 0) === 0' src/ClientsDirectory.tsx && grep -Fq 'adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 55: Clients 'Sold · no account yet' window + Build-account action wired"; else FAIL=$((FAIL+1)); echo "  ✗ 55: Clients sold-unbuilt source marker missing"; fi
 
 stop_crm "$MOCK55/srv.pid"; kill "$MOCK55_PID" 2>/dev/null; sleep 0.3
 rm -f "$J55" "$JT55"; rm -rf "$MOCK55"
@@ -7761,11 +7763,11 @@ echo "-- 58b. The 'Ready for creation' window is REMOVED from source, and the ow
 if ! grep -Fq 'readyForCreation' src/ClientsDirectory.tsx \
    && ! grep -Fq 'Ready for creation' src/ClientsDirectory.tsx \
    && ! grep -Fq 'ready-for-creation' src/styles.css \
-   && grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx \
-   && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ 58b: 'Ready for creation' gone from source; 'Paid but unbuilt' window + shared build path still present"
+   && grep -Fq 'soldUnbuilt' src/ClientsDirectory.tsx \
+   && grep -Fq 'adminProvisionClient(c.id' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ 58b: 'Ready for creation' gone from source; 'Sold · no account yet' window + shared build path still present"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ 58b: ready-for-creation source marker still present (or paid-unbuilt/build path missing)"
+  FAIL=$((FAIL+1)); echo "  ✗ 58b: ready-for-creation source marker still present (or sold-unbuilt/build path missing)"
 fi
 S=$(code -b "$J58" "$B58/api/clients?archived=1")
 check "58b: owner GET clients → 200" 200 "$S"
@@ -7840,7 +7842,7 @@ fi
 rm -f "$JBC"
 echo "-- 58d. Source markers: all four 2026-08-25 changes — window gone, amount-input fix, deal-value intake removed, billing-cycle column wired --"
 if ! grep -Fq 'readyForCreation' src/ClientsDirectory.tsx \
-   && grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx \
+   && grep -Fq 'soldUnbuilt' src/ClientsDirectory.tsx \
    && grep -Fq 'background: #fff' src/styles.css \
    && grep -Fq '.inv-add-amount input' src/styles.css \
    && ! grep -Fq 'Deal value ($)' src/intakeRules.ts \

@@ -55,7 +55,7 @@ export default function Admin() {
   }
 
   return (
-    <div className="page">
+    <div className="page page-stack">
       <div className="page-head">
         <div>
           <h1>
@@ -74,50 +74,14 @@ export default function Admin() {
         </div>
       )}
 
-      {/* Agreements section under Administration. The agreement template
-          editor MOVED here from Settings (one home, no duplicate). The
-          textarea is a fixed-height scroll box (see .agree-template-input in
-          styles.css) so the long legal template (~20 000 chars) scrolls
-          instead of stretching the page. Owner workspace only. */}
       <div className="card admin-form">
         <div className="admin-card-head">
           <h2 className="admin-card-title">Agreements</h2>
           <p className="admin-card-sub">
-            The agreement sent to a client when you use the native e-signature (Onboarding tab
-            → Send Agreements). Placeholders: {"{{company}}"} / {"[YOUR LLC NAME]"} (business
-            name), {"{{client_name}}"} / {"[CLIENT LEGAL NAME]"} (business name for a business
-            client, full name for an individual), {"{{date}}"} / {"[EFFECTIVE DATE]"},{" "}
-            {"{{price}}"} / {"{{deal_value}}"} / {"[PRICE]"} / {"[DEAL_VALUE]"} (deal value).
-            Both styles work in the same template. Leave blank to use the built-in default.
+            The agreement template editor moved to the Documents tab (2026-08-25) — open
+            the "Agreements" dropdown there (PIN-protected) to edit the agreement sent to
+            every client. Set or change the PIN in Settings.
           </p>
-        </div>
-        <div className="form">
-          <label className="field">
-            <span className="field-label">Template</span>
-            <textarea
-              className="agree-template-input"
-              value={agreementTemplate}
-              onChange={(e) => setAgreementTemplate(e.target.value)}
-              rows={12}
-              maxLength={20000}
-              placeholder={
-                "CLIENT SERVICES AGREEMENT\n\nThis agreement is between {{company}} and {{client_name}}.\nDate: {{date}}\nMonthly price: {{price}} / {{deal_value}}"
-              }
-            />
-            <span className="field-hint">
-              {settingsLoaded
-                ? "Owner workspace only — client accounts never see this. Saved wording applies to new sends."
-                : "Loading the saved template…"}
-            </span>
-          </label>
-          <button className="btn btn-primary" disabled={tplBusy} type="button" onClick={saveAgreementTemplate}>
-            {tplBusy ? "Saving…" : "Save agreement template"}
-          </button>
-          {tplSaved && (
-            <div className="alert alert-success" role="status" style={{ marginTop: 12 }}>
-              {tplSaved}
-            </div>
-          )}
         </div>
       </div>
     </div>

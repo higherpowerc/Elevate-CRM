@@ -264,6 +264,9 @@ export interface Ticket {
   message: string;
   status: TicketStatus;
   priority: TicketPriority;
+  /** Human-readable ticket number (owner direction 2026-08-25), e.g. TKT-1001 —
+   *  stable, derived from id. Present for owner and tenant responses. */
+  ticketNo: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -515,6 +518,8 @@ export interface OrgSettings {
   /** Native e-signature (owner direction 2026-08-15) — the OWNER org's
    *  editable agreement template. Absent from tenant settings responses. */
   agreementTemplate?: string;
+  /** Owner-only: is the Agreements-editor PIN set? (never the hash) */
+  agreementsPinSet?: boolean;
 }
 /** Native e-signature — one agreement envelope (audit record) per sent
  *  agreement, owner-workspace only. status flows sent → delivered →
