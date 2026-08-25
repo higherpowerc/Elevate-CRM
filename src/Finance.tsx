@@ -338,33 +338,66 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
     [ownerOrg, clients],
   );
 
-  /* Owner workflow views (2026-08-21) — "Signed · account pending": clients who
-     signed the agreement AND had a workspace provisioned (account built) but
-     have NOT been billed yet (paymentStatus none/absent). These are the ones
-     ready to bill — a distinct pending list from the billed `bills` above. The
-     row action reuses the existing owner "Bill this account" flow: it pre-selects
-     the client in the top bill form and focuses the amount so the owner can
-     bill from right there. */
-  const signedPending = useMemo(
+  /* Owner workflow views (2026-08-25) — "Pending payment": clients who signed
+     the agreement but have NOT paid yet (paymentStatus !== 'paid'), regardless
+     of whether a workspace has been built. This replaces the old "Signed ·
+     account pending" card (that one wrongly required an account to exist).
+     Per the owner's sales flow a signed agreement lands here immediately; the
+     Clients-tab "Ready for creation" window handles account building. Lost
+     clients are excluded. Each row sends the client a Stripe payment link via
+     POST /api/clients/:id/payment-link (which returns 503 "Stripe not
+     configured" until the owner wires the Stripe keys). */
+  const pendingPayment = useMemo(
     () =>
       ownerOrg
-        ? clients.filter(
-            (c) =>
-              c.agreementStatus === "signed" &&
-              (c.provisionedOrgId ?? 0) > 0 &&
-              (!c.paymentStatus || c.paymentStatus === "none"),
-          )
+        ? clients.filter((c) => c.agreementStatus === "signed" && c.paymentStatus !== "paid" && !c.lost)
         : [],
     [ownerOrg, clients],
   );
+  /* Per-row amount inputs for the "Pending payment" window. Default each to the
+     client's monthlyAmount when set; the row input is its own live value. */
+  const [pendingAmounts, setPendingAmounts] = useState<Record<number, string>>({});
+  const [sendingId, setSendingId] = useState<number | null>(null);
+  const [pendingNotice, setPendingNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+  async function handleSendPaymentLink(c: Client) {
+    const raw = (pendingAmounts[c.id] ?? "").trim();
+    const a = Number(raw);
+    if (!raw || !Number.isFinite(a) || a <= 0) {
+      setPendingNotice({
+        kind: "warn",
+        text: `Enter an amount for ${c.companyName} before sending the payment link.`,
+      });
+      return;
+    }
+    setSendingId(c.id);
+    setPendingNotice(null);
+    try {
+      await api.clientPaymentLink(c.id, { amount: a, interval: "month" });
+      setPendingNotice({
+        kind: "success",
+        text: `Payment link sent to ${c.companyName} — Stripe portal emailed.`,
+      });
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setPendingNotice({
+          kind: "warn",
+          text: "This client's agreement must be signed before sending a payment link.",
+        });
+      } else if (err instanceof ApiError && err.status === 503) {
+        setPendingNotice({
+          kind: "warn",
+          text: "Stripe is not connected yet. Once Stripe keys are added, this will email the client the payment link.",
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "Could not send the payment link.");
+      }
+    } finally {
+      setSendingId(null);
+    }
+  }
   const billFormRef = useRef<HTMLDivElement>(null);
   const billAmountRef = useRef<HTMLInputElement>(null);
-  function focusBillForClient(c: Client) {
-    setBillClientId(String(c.id));
-    setBillInterval("month");
-    billFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    billAmountRef.current?.focus();
-  }
 
   if (!invoices) {
     return error ? (
@@ -521,36 +554,68 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
         </section>
       )}
 
-      {ownerOrg && signedPending.length > 0 && (
+      {ownerOrg && (
         <div className="card pending-bills">
           <div className="page-head" style={{ marginBottom: ".5rem" }}>
             <div>
               <h2 className="h3">
-                <em className="serif">Signed</em> · account pending
+                <em className="serif">Pending</em> payment
               </h2>
               <p className="page-sub">
-                Agreement signed, account built, not billed yet — ready to bill. Pick a client, then set the
-                amount and click "Bill this account" above.
+                Agreement signed, not yet paid — still needs a Stripe payment link. Set the amount and click
+                "Send payment link" to email the client the Stripe portal.
               </p>
             </div>
           </div>
-          <ul className="inv-list" style={{ margin: 0 }}>
-            {signedPending.map((c) => (
-              <li key={c.id} className="inv">
-                <div className="inv-body">
-                  <div className="inv-client">
-                    <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
-                    <span className="inv-notes">Signed · account ready — not billed yet</span>
+          {pendingNotice && (
+            <div
+              className={pendingNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+              role={pendingNotice.kind === "success" ? "status" : "alert"}
+              style={{ marginBottom: ".75rem" }}
+            >
+              {pendingNotice.text}
+            </div>
+          )}
+          {pendingPayment.length === 0 ? (
+            <p className="cockpit-empty">No pending payments — every signed client has paid.</p>
+          ) : (
+            <ul className="inv-list" style={{ margin: 0 }}>
+              {pendingPayment.map((c) => (
+                <li key={c.id} className="inv">
+                  <div className="inv-body">
+                    <div className="inv-client">
+                      <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
+                      <span className="inv-notes">Signed · awaiting payment</span>
+                    </div>
                   </div>
-                </div>
-                <div className="row-actions">
-                  <button className="icon-btn" onClick={() => focusBillForClient(c)} disabled={busy}>
-                    Bill this account
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                  <div className="row-actions pending-pay-actions">
+                    <div className="inv-add-amount">
+                      <span className="inv-dollar" aria-hidden="true">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        inputMode="decimal"
+                        aria-label={`Payment amount for ${c.companyName}`}
+                        placeholder="0.00"
+                        value={pendingAmounts[c.id] ?? (c.monthlyAmount ? String(c.monthlyAmount) : "")}
+                        onChange={(e) => setPendingAmounts((m) => ({ ...m, [c.id]: e.target.value }))}
+                      />
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleSendPaymentLink(c)}
+                      disabled={sendingId === c.id}
+                    >
+                      {sendingId === c.id ? "Sending…" : "Send payment link"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
