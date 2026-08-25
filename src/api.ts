@@ -220,7 +220,7 @@ export const api = {
      2026-08-15 — the per-account revenue-model selector is REMOVED (one
      product, subscription-based): adminUpdateOrg sends only the billing
      amount. Owner-only; members get 403. */
-  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number }) =>
+  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string }) =>
     request<{ ok: true; org: { id: number; name: string } }>(`/api/admin/orgs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

@@ -1542,6 +1542,9 @@ interface OrgRow {
    *  in Admin) + how their own business makes money ("sales" | "subscription"). */
   monthly_subscription_amount: number;
   revenue_model: string;
+  /** Owner request 2026-08-25 — the day of the month this client account is
+   *  billed ('' = not set). Owner-set inline on the Client accounts table. */
+  billing_cycle_date: string;
 }
 
 function toOrg(row: OrgRow) {
@@ -1566,6 +1569,8 @@ function toOrg(row: OrgRow) {
     // makes money ("sales" | "subscription").
     monthlySubscriptionAmount: row.monthly_subscription_amount ?? 0,
     revenueModel: row.revenue_model ?? "sales",
+    // Owner request 2026-08-25 — billing cycle date ('' = not set).
+    billingCycleDate: row.billing_cycle_date ?? "",
     // Phase 5 prep — account lifecycle ('' = never canceled / active).
     status: row.status ?? "active",
     canceledAt: row.canceled_at ?? "",
@@ -2507,6 +2512,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         `SELECT o.id, o.name, o.created_at,
                 o.monthly_subscription_amount,
                 o.revenue_model,
+                o.billing_cycle_date,
                 o.status,
                 o.canceled_at,
                 o.retention_until,
@@ -2718,6 +2724,14 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       }
       sets.push("revenue_model = ?");
       params.push(body.revenueModel);
+    }
+    if (body.billingCycleDate !== undefined && body.billingCycleDate !== null) {
+      const b = String(body.billingCycleDate);
+      if (b !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(b)) {
+        return err("Billing cycle date must be empty or a YYYY-MM-DD date.", 400);
+      }
+      sets.push("billing_cycle_date = ?");
+      params.push(b);
     }
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(id);

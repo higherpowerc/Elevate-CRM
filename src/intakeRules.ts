@@ -158,7 +158,6 @@ export function getIntakeLayout(
         : []),
       { key: "email", label: "Email", kind: "text", placeholder: "jordan@acme.com", maxLength: 200 },
       { key: "phone", label: "Phone", kind: "text", placeholder: "+1 555 000 1234", maxLength: 50 },
-      { key: "dealValue", label: "Deal value ($)", kind: "text", placeholder: "9500.50" },
       /* Owner request 2026-08-14 — the per-client monthly amount shows ONLY
          for "subscription"-model orgs (their customers on recurring billing);
          sales-model orgs keep the form exactly as before. */

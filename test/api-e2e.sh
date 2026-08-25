@@ -4040,9 +4040,10 @@ echo "-- 37a. Accounts panel (owner Clients tab): form above, table full width, 
 # action buttons into overlap at ~1280px. The fix is CSS-only (single-column
 # restack + explicit widths + wrap guards). Owner live-test reorg 2026-08-18:
 # the panel moved from Administration to the owner's Clients tab — same
-# classes, same guards; and the "Billing $" column is GONE (accounts table is
-# exactly 5 columns now: Clients | Members | Client records | Created |
-# Actions).
+# classes, same guards; and (owner request 2026-08-25) a "Billing cycle"
+# column was added, so the accounts table is now SIX columns: Clients |
+# Members | Client records | Created | Billing cycle | Actions (the old
+# per-account "Billing $" subscription-amount column stays GONE).
 NEWEST_JS37=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 NEWEST_CSS37=$(ls -t dist/index-*.css 2>/dev/null | head -1)
 if [ -n "$NEWEST_CSS37" ]; then
@@ -4065,15 +4066,15 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 37 admin-layout check"
 fi
 if [ -n "$NEWEST_JS37" ]; then
-  if grep -Eq 'width:"26%"}},void 0,!1,void 0,this),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"9%"}}' "$NEWEST_JS37" && grep -Eq 'width:"15%"}},void 0,!1,void 0,this),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"38%"}}' "$NEWEST_JS37" && ! grep -Fq 'width:"7%"' "$NEWEST_JS37" && ! grep -Fq 'Billing $' "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table is 5 columns (Clients 26 | Members 9 | Records 12 | Created 15 | Actions 38) — Billing $ gone"
+  if grep -Fq 'width:"24%"' "$NEWEST_JS37" && grep -Fq 'width:"8%"' "$NEWEST_JS37" && grep -Fq 'width:"10%"' "$NEWEST_JS37" && grep -Fq 'width:"12%"' "$NEWEST_JS37" && grep -Fq 'width:"15%"' "$NEWEST_JS37" && grep -Fq 'width:"31%"' "$NEWEST_JS37" && ! grep -Fq 'width:"7%"' "$NEWEST_JS37" && ! grep -Fq 'Billing $' "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table is 6 columns (Clients 24 | Members 8 | Records 10 | Created 12 | Billing 15 | Actions 31) — old Billing $ gone"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 5-col colgroup widths missing or Billing remnants in $NEWEST_JS37"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 6-col colgroup widths missing or Billing remnants in $NEWEST_JS37"
   fi
-  if grep -Fq 'width: "26%"' src/Accounts.tsx && grep -Fq 'width: "9%"' src/Accounts.tsx && grep -Fq 'width: "12%"' src/Accounts.tsx && grep -Fq 'width: "15%"' src/Accounts.tsx && grep -Fq 'width: "38%"' src/Accounts.tsx; then
-    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup sums to 100% (26/9/12/15/38)"
+  if grep -Fq 'width: "24%"' src/Accounts.tsx && grep -Fq 'width: "8%"' src/Accounts.tsx && grep -Fq 'width: "10%"' src/Accounts.tsx && grep -Fq 'width: "12%"' src/Accounts.tsx && grep -Fq 'width: "15%"' src/Accounts.tsx && grep -Fq 'width: "31%"' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup is the 6-col layout (24/8/10/12/15/31)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 5-col colgroup missing from src/Accounts.tsx"
+    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 6-col colgroup missing from src/Accounts.tsx"
   fi
   # PR #78 (Sales-Flow UI) re-shaped the OWNER's client tables: the owner Leads
   # tab is now 4 columns (30/27/20/23) and Onboarding is 6 columns — so "23%" is
@@ -7663,7 +7664,7 @@ stop_crm "$MOCK57/srv.pid"; sleep 0.3
 rm -f "$J57" "$JT57"; rm -rf "$MOCK57"
 echo "  ✓ 57: Finance cockpit / reporting (MRR + revenue-by-client + lost/churned) verified owner-only"
 
-echo "== 58. Ready for creation (owner 2026-08-25): signed-but-not-yet-built clients + Build account (sibling to 'Paid but unbuilt') =="
+echo "== 58. 'Ready for creation' window REMOVED (owner 2026-08-25, reverses PR #90): signed deals are tracked in Finance 'Pending payment' instead. Signing still advances the record + raises the task; the Build-account path stays (shared with 'Paid but unbuilt'). =="
 MOCK58=$(mktemp -d)
 MOCK58_EMAILS="$MOCK58/emails.jsonl"
 : > "$MOCK58_EMAILS"
@@ -7704,14 +7705,16 @@ code -b "$J58" "$B58/api/settings" > /dev/null
 F58=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
 SOLD58=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
 echo "     (owner buckets: first=\"$F58\", final/sold=\"$SOLD58\")"
-# The 'Ready for creation' window shows exactly: agreement_status='signed'
-# AND provisioned_org_id=0. advanceSignedClient (server/agreements.ts) sets the
-# status, advances to the terminal stage and raises the 'Create client account'
-# task but does NOT provision — so a freshly signed client (a) belongs to the
-# set, a signed client that was already built (b) does not, and a client with a
-# different agreement_status (c) does not.
-echo "-- 58a. A signed, unbuilt client is IN the set; Build account builds it and clears it --"
-# Create a lead, then sign its agreement via the REAL e-sign flow (public sign).
+# The 'Ready for creation' window was REMOVED on 2026-08-25 (Pr #93 reverses
+# PR #90): a signed-but-unbuilt client is no longer surfaced in a dedicated
+# window on the owner Clients tab — signed deals are instead tracked in the
+# Finance 'Pending payment' window. What REMAINS and is tested here: signing
+# (server/agreements.ts advanceSignedClient) still sets agreement_status
+# 'signed', advances to the terminal stage and raises the 'Create client
+# account' task, and the shared Build-account path (handleBuildAccount /
+# api.adminProvisionClient, still used by the 'Paid but unbuilt' window)
+# still provisions the workspace.
+echo "-- 58a. Signing still advances the record; Build account (shared path) still builds it --"
 S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Pending Seal Co\",\"contactName\":\"Pat B\",\"email\":\"patb58@pendseal.example\",\"clientType\":\"commercial\",\"dealValue\":2000,\"stage\":\"$F58\"}" "$B58/api/clients")
 check "58a: owner creates a lead in the first stage → 201" 201 "$S"
@@ -7735,11 +7738,11 @@ if PC_ID="$PC_ID" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['PC_ID'])][0]
-assert me['agreementStatus'] == 'signed', me                  # (a) predicate half 1
-assert (me.get('provisionedOrgId') or 0) == 0, me             # (a) predicate half 2 → IN the set
+assert me['agreementStatus'] == 'signed', me                  # signing still sets signed
+assert (me.get('provisionedOrgId') or 0) == 0, me             # still unbuilt (no auto-provision)
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58a: signed client with NO provisioned org — appears in 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: signed-unbuilt assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
+then PASS=$((PASS+1)); echo "  ✓ 58a: signing advanced the record to signed (still unprovisioned)"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: signed-unbuilt assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
 S=$(code -b "$J58" -X POST "$B58/api/admin/clients/$PC_ID/provision")
 check "58a: owner Build account → 200" 200 "$S"
 PB_ORG=$(grep -o '"orgId":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
@@ -7753,64 +7756,105 @@ me = [c for c in clients if c['id'] == int(os.environ['PC_ID'])][0]
 assert (me.get('provisionedOrgId') or 0) > 0, me
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58a: after Build the client is provisioned — cleared from 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: provisioned-org check failed"; cat "$PASS_TMP" 2>/dev/null; fi
-echo "-- 58b. A signed client that ALREADY has a workspace is NOT in the set --"
-# Build the workspace FIRST, then mark signed (auto-provision only fires while
-# unprovisioned + final-stage, so the signed PUT does not re-provision).
-S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Signed Built Co\",\"contactName\":\"Sid B\",\"email\":\"sidb58@signedbuilt.example\",\"clientType\":\"commercial\",\"dealValue\":3000,\"stage\":\"$SOLD58\"}" "$B58/api/clients")
-check "58b: owner creates a sold-stage client (POST, no auto-provision) → 201" 201 "$S"
-SB_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
-S=$(code -b "$J58" -X POST "$B58/api/admin/clients/$SB_ID/provision")
-check "58b: owner Build account (provisions it) → 200" 200 "$S"
-S=$(code -b "$J58" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Signed Built Co\",\"clientType\":\"commercial\",\"stage\":\"$SOLD58\",\"agreementStatus\":\"signed\"}" "$B58/api/clients/$SB_ID")
-check "58b: owner marks it signed (already provisioned) → 200" 200 "$S"
-grep -q '"agreementStatus":"signed"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 58b: agreement signed on the already-built client"; } || { FAIL=$((FAIL+1)); echo "  ✗ 58b: no signed: $(cat /tmp/body.json)"; }
+then PASS=$((PASS+1)); echo "  ✓ 58a: after Build the client is provisioned (shared build path works)"; else FAIL=$((FAIL+1)); echo "  ✗ 58a: provisioned-org check failed"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 58b. The 'Ready for creation' window is REMOVED from source, and the owner clients list carries no window marker --"
+if ! grep -Fq 'readyForCreation' src/ClientsDirectory.tsx \
+   && ! grep -Fq 'Ready for creation' src/ClientsDirectory.tsx \
+   && ! grep -Fq 'ready-for-creation' src/styles.css \
+   && grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx \
+   && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ 58b: 'Ready for creation' gone from source; 'Paid but unbuilt' window + shared build path still present"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 58b: ready-for-creation source marker still present (or paid-unbuilt/build path missing)"
+fi
 S=$(code -b "$J58" "$B58/api/clients?archived=1")
 check "58b: owner GET clients → 200" 200 "$S"
-if SB_ID="$SB_ID" python3 - <<'PY' 2>"$PASS_TMP"
-import json, os
-clients = json.load(open('/tmp/body.json'))['clients']
-me = [c for c in clients if c['id'] == int(os.environ['SB_ID'])][0]
-set_ids = [c['id'] for c in clients if (c.get('agreementStatus') or '') == 'signed' and (c.get('provisionedOrgId') or 0) == 0]
-assert me['agreementStatus'] == 'signed', me                       # it IS signed ...
-assert (me.get('provisionedOrgId') or 0) > 0, me                   # ... AND already provisioned
-assert me['id'] not in set_ids, me                                 # therefore NOT in the set
-print("ok")
+if grep -Fq 'readyForCreation' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ 58b: owner clients list still carries a readyForCreation marker"
+else
+  PASS=$((PASS+1)); echo "  ✓ 58b: owner clients list has no readyForCreation field/window marker"
+fi
+echo "-- 58c. Billing cycle date (owner 2026-08-25): admin orgs listing carries the field, PATCH persists it, tenant never sees it (isolation unchanged) --"
+S=$(code -b "$J58" "$B58/api/admin/orgs")
+check "58c: owner GET /api/admin/orgs → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+orgs = json.load(open('/tmp/body.json'))['orgs']
+assert orgs, "no orgs"
+for o in orgs:
+    assert 'billingCycleDate' in o, o          # the new column appears on the owner listing ...
+    assert o.get('billingCycleDate', '') == '' or isinstance(o['billingCycleDate'], str), o
+print("  ✓ 58c: every admin-listed org carries billingCycleDate (default empty)")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 58b: signed client that ALREADY has a workspace — NOT in 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58b: already-built-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
-echo "-- 58c. A client with a different agreement_status is NOT in the set --"
-# A paid-UNSIGNED sold client belongs to the 'Paid but unbuilt' window, not this one.
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 58c: admin orgs listing missing billingCycleDate"; cat "$PASS_TMP" 2>/dev/null; fi
+S=$(code -b "$J58" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"billingCycleDate":"2026-09-05"}' "$B58/api/admin/orgs/$PB_ORG")
+check "58c: owner PATCH billingCycleDate → 200" 200 "$S"
+S=$(code -b "$J58" "$B58/api/admin/orgs")
+check "58c: owner GET /api/admin/orgs after PATCH → 200" 200 "$S"
+if PB_ORG="$PB_ORG" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+orgs = json.load(open('/tmp/body.json'))['orgs']
+me = [o for o in orgs if o['id'] == int(os.environ['PB_ORG'])][0]
+assert me['billingCycleDate'] == '2026-09-05', me     # persisted, read back
+print("  ✓ 58c: billingCycleDate set + read back (persisted)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 58c: billingCycleDate did not persist"; cat "$PASS_TMP" 2>/dev/null; fi
+check "58c: owner PATCH bad billingCycleDate → 400" 400 $(code -b "$J58" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"billingCycleDate":"not-a-date"}' "$B58/api/admin/orgs/$PB_ORG")
+check "58c: owner PATCH empty billingCycleDate clears → 200" 200 $(code -b "$J58" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"billingCycleDate":""}' "$B58/api/admin/orgs/$PB_ORG")
+S=$(code -b "$J58" "$B58/api/admin/orgs")
+if PB_ORG="$PB_ORG" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+orgs = json.load(open('/tmp/body.json'))['orgs']
+me = [o for o in orgs if o['id'] == int(os.environ['PB_ORG'])][0]
+assert me['billingCycleDate'] == '', me             # cleared back to unset
+print("  ✓ 58c: empty PATCH clears billingCycleDate back to ''")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 58c: clear failed"; cat "$PASS_TMP" 2>/dev/null; fi
+# Tenant isolation: the freshly provisioned account (member login via its temp
+# credential is not hand-held here, so use a NEW admin-created org) must NOT
+# receive billingCycleDate anywhere in its tenant-scoped responses.
 S=$(code -b "$J58" -X POST -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Paid Unsigned Co\",\"contactName\":\"Pam U\",\"email\":\"pamu58@paidunsigned.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$SOLD58\"}" "$B58/api/clients")
-check "58c: owner creates a sold-stage client → 201" 201 "$S"
-PU_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
-S=$(code -b "$J58" -X POST "$B58/api/clients/$PU_ID/payment-paid")
-check "58c: owner marks it paid (NOT signed) → 200" 200 "$S"
-S=$(code -b "$J58" "$B58/api/clients?archived=1")
-check "58c: owner GET clients → 200" 200 "$S"
-if PU_ID="$PU_ID" python3 - <<'PY' 2>"$PASS_TMP"
-import json, os
-clients = json.load(open('/tmp/body.json'))['clients']
-me = [c for c in clients if c['id'] == int(os.environ['PU_ID'])][0]
-set_ids = [c['id'] for c in clients if (c.get('agreementStatus') or '') == 'signed' and (c.get('provisionedOrgId') or 0) == 0]
-assert me['agreementStatus'] != 'signed', me                        # not signed
-assert me['id'] not in set_ids, me                                  # therefore NOT in the set
-# The set only ever contains signed + unprovisioned rows (predicate soundness).
-for c in clients:
-    if c['id'] in set_ids:
-        assert c['agreementStatus'] == 'signed' and (c.get('provisionedOrgId') or 0) == 0, c
-print("ok")
-PY
-then PASS=$((PASS+1)); echo "  ✓ 58c: a client with a different agreement_status (paid, unsigned) is NOT in 'Ready for creation'"; else FAIL=$((FAIL+1)); echo "  ✗ 58c: not-signed assertion failed"; cat "$PASS_TMP" 2>/dev/null; fi
-# Source markers: the window is wired into the owner Clients tab only.
-if grep -Fq 'readyForCreation' src/ClientsDirectory.tsx && grep -Fq 'agreementStatus === "signed"' src/ClientsDirectory.tsx && grep -Fq '(c.provisionedOrgId ?? 0) === 0' src/ClientsDirectory.tsx && grep -Fq 'Ready for creation' src/ClientsDirectory.tsx && grep -Fq 'api.adminProvisionClient(c.id' src/ClientsDirectory.tsx; then PASS=$((PASS+1)); echo "  ✓ 58: 'Ready for creation' window + Build-account action wired (owner Clients tab)"; else FAIL=$((FAIL+1)); echo "  ✗ 58: ready-for-creation source marker missing"; fi
+  -d '{"name":"BC Tenant Co","email":"bc58@demo.example","password":"bc58pass123"}' "$B58/api/admin/orgs")
+check "58c: owner provisions tenant → 201" 201 "$S"
+JBC=$(mktemp)
+S=$(code -c "$JBC" -b "$JBC" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bc58@demo.example","password":"bc58pass123"}' "$B58/api/auth/login")
+check "58c: tenant login → 200" 200 "$S"
+S=$(code -b "$JBC" "$B58/api/settings")
+check "58c: tenant GET settings → 200" 200 "$S"
+if grep -Fq 'billingCycleDate' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ 58c: TENANT settings leak billingCycleDate (isolation broken)"
+else
+  PASS=$((PASS+1)); echo "  ✓ 58c: tenant settings carry NO billingCycleDate (owner-only, isolation unchanged)"
+fi
+S=$(code -b "$JBC" "$B58/api/dashboard")
+check "58c: tenant GET dashboard → 200" 200 "$S"
+if grep -Fq 'billingCycleDate' /tmp/body.json; then
+  FAIL=$((FAIL+1)); echo "  ✗ 58c: TENANT dashboard leaks billingCycleDate"
+else
+  PASS=$((PASS+1)); echo "  ✓ 58c: tenant dashboard carries NO billingCycleDate"
+fi
+rm -f "$JBC"
+echo "-- 58d. Source markers: all four 2026-08-25 changes — window gone, amount-input fix, deal-value intake removed, billing-cycle column wired --"
+if ! grep -Fq 'readyForCreation' src/ClientsDirectory.tsx \
+   && grep -Fq 'paidUnbuilt' src/ClientsDirectory.tsx \
+   && grep -Fq 'background: #fff' src/styles.css \
+   && grep -Fq '.inv-add-amount input' src/styles.css \
+   && ! grep -Fq 'Deal value ($)' src/intakeRules.ts \
+   && grep -Fq 'dealValue' src/Clients.tsx \
+   && grep -Fq 'Billing cycle' src/Accounts.tsx \
+   && grep -Fq 'billingCycleDate' src/api.ts; then
+  PASS=$((PASS+1)); echo "  ✓ 58d: source markers match all four changes"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 58d: one or more source markers not as expected"
+fi
 stop_crm "$MOCK58/srv.pid"; kill "$MOCK58_PID" 2>/dev/null; sleep 0.3
 rm -f "$J58"; rm -rf "$MOCK58"
-echo "  ✓ 58: Ready for creation verified owner-only"
-
-
+echo "  ✓ 58: signing + shared build path verified; 'Ready for creation' window removed"
+echo "  ✓ 58: signing + shared build path verified; 'Ready for creation' window removed"
 echo "== 59. Pending payment (owner 2026-08-25): Finance window = signed + unpaid (+ not lost), per-row Send payment link = 503-until-Stripe-wired =="
 # The "Pending payment" window replaces the earlier 'Signed · account pending'
 # card: predicate is agreementStatus === 'signed' && paymentStatus !== 'paid'

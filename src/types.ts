@@ -431,6 +431,10 @@ export interface Org {
    *  ("sales" | "subscription"). Seeded by vertical; tenant-editable in
    *  Settings, owner-overridable in Admin. */
   revenueModel?: RevenueModel;
+  /** Owner request 2026-08-25 — the day of the month this client account is
+   *  billed ('' = not set). Owner-set inline on the Client accounts table;
+   *  owner-only data (never in tenant responses). */
+  billingCycleDate?: string;
   /** Phase 5 prep — account lifecycle: 'active' | 'canceled' ('' when the
    *  server predates the migration). A canceled account's users are blocked;
    *  the data stays retained until retentionUntil. */
