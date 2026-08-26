@@ -8005,6 +8005,123 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ 60: a hook (line ${LAST_HOOK:-?}) appears at/after the first early return (line ${FIRST_RETURN:-?}) in src/ClientsDirectory.tsx — every hook must run before every early return"
 fi
 
+echo "== 61. Client lifecycle: Lost state + delete-account removes sold client (owner 2026-08-26) =="
+# --- 61a. DELETE account removes its linked SOLD client ENTIRELY ---
+# A sold client auto-provisions an org. Owner direction 2026-08-26: deleting
+# the account deletes the source Sold record too (hard delete) so it leaves
+# the owner's pipeline / Sold KPIs entirely.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","clientType":"commercial","dealValue":7777,"stage":"Leads","notes":"61a"}' "$BASE/api/clients")
+check "61a: create lifecycle lead → 201" 201 "$S"
+LC_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","clientType":"commercial","dealValue":7777,"stage":"Sold","notes":"61a"}' "$BASE/api/clients/$LC_ID")
+check "61a: move into Sold → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+LC_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $LC_ID][0])")
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+SOLD_LIFECYCLE_BEFORE=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Sold',0))")
+MRR_LIFECYCLE_BEFORE=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['clientMrr'])")
+S=$(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$LC_ORG_ID")
+check "61a: DELETE the account → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/clients")
+if python3 - <<PY 2>/dev/null
+import json
+d = json.load(open('/tmp/body.json'))
+assert not any(c['id'] == $LC_ID for c in d['clients']), "sold client should be GONE after account delete"
+PY
+then PASS=$((PASS+1)); echo "  ✓ 61a: linked sold client removed from owner list after account delete"
+else FAIL=$((FAIL+1)); echo "  ✗ 61a: sold client still present after account delete: $(cat /tmp/body.json)"; fi
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+SOLD_LIFECYCLE_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Sold',0))")
+MRR_LIFECYCLE_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['clientMrr'])")
+[ "$SOLD_LIFECYCLE_BEFORE" -eq "$((SOLD_LIFECYCLE_AFTER + 1))" ] && echo "  ✓ 61a: Sold count dropped by 1 (${SOLD_LIFECYCLE_BEFORE} → ${SOLD_LIFECYCLE_AFTER})" || echo "  ✗ 61a: Sold count ${SOLD_LIFECYCLE_BEFORE} → ${SOLD_LIFECYCLE_AFTER}"
+[ "$MRR_LIFECYCLE_BEFORE" -eq "$((MRR_LIFECYCLE_AFTER + 7777))" ] && echo "  ✓ 61a: Client MRR dropped by deal value (${MRR_LIFECYCLE_BEFORE} → ${MRR_LIFECYCLE_AFTER})" || echo "  ✗ 61a: MRR ${MRR_LIFECYCLE_BEFORE} → ${MRR_LIFECYCLE_AFTER}"
+
+# --- 61b. Mark lost: moves client OUT of active pipeline into the Lost set ---
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Candidate Co","contactName":"Jane Doe","email":"jane@lost.example","clientType":"commercial","dealValue":3000,"stage":"Leads","notes":"61b"}' "$BASE/api/clients")
+check "61b: create lead → 201" 201 "$S"
+LCB=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+LEADS_BEFORE=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Leads',0))")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Candidate Co","clientType":"commercial","lost":true,"lostReason":"won with a competitor"}' "$BASE/api/clients/$LCB")
+check "61b: mark lost → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+if python3 - <<PY 2>/dev/null
+import json
+d = json.load(open('/tmp/body.json'))
+lost = d.get('lostClients', [])
+assert any(l['id'] == $LCB for l in lost), "lost client missing from lostClients"
+assert lost and lost[0]['companyName'] == 'Lost Candidate Co'
+PY
+then PASS=$((PASS+1)); echo "  ✓ 61b: lost client appears in dashboard lostClients with metadata"
+else FAIL=$((FAIL+1)); echo "  ✗ 61b: lostClients did not include the lost client: $(cat /tmp/body.json)"; fi
+LEADS_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Leads',0))")
+[ "$((LEADS_AFTER + 1))" -eq "$LEADS_BEFORE" ] && echo "  ✓ 61b: lost client left the Leads stage count (${LEADS_BEFORE} → ${LEADS_AFTER})" || echo "  ✗ 61b: Leads ${LEADS_BEFORE} → ${LEADS_AFTER}"
+# 61c. Restore (soft → back to its pipeline stage)
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Lost Candidate Co","clientType":"commercial","lost":false}' "$BASE/api/clients/$LCB")
+check "61c: restore → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+if python3 - <<PY 2>/dev/null
+import json
+d = json.load(open('/tmp/body.json'))
+assert not any(l['id'] == $LCB for l in d.get('lostClients', [])), "restored client should leave lostClients"
+assert d['stageCounts'].get('Leads',0) == $((LEADS_BEFORE))/1
+PY
+then PASS=$((PASS+1)); echo "  ✓ 61c: restore moves client out of Lost and back into the stage counts"
+else FAIL=$((FAIL+1)); echo "  ✗ 61c: restore did not reconcile: $(cat /tmp/body.json)"; fi
+# 61d. re-mark lost, then hard-Delete from the Lost window → removed entirely
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Lost Candidate Co","clientType":"commercial","lost":true}' "$BASE/api/clients/$LCB")
+check "61d: re-mark lost → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+if python3 - <<PY 2>/dev/null
+import json
+d = json.load(open('/tmp/body.json'))
+assert any(l['id'] == $LCB for l in d.get('lostClients', []))
+PY
+then echo "  ✓ 61d: again in lostClients"; else echo "  ✗ 61d: not lost again"; fi
+S=$(code -b "$JAR" -X DELETE "$BASE/api/clients/$LCB")
+check "61d: hard-Delete lost client → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/dashboard")
+if python3 - <<PY 2>/dev/null
+import json
+d = json.load(open('/tmp/body.json'))
+assert not any(l['id'] == $LCB for l in d.get('lostClients', [])), "deleted lost client still in lostClients"
+PY
+then PASS=$((PASS+1)); echo "  ✓ 61d: deleted lost client removed entirely (gone from Lost + counts)"
+else FAIL=$((FAIL+1)); echo "  ✗ 61d: deleted lost client still present: $(cat /tmp/body.json)"; fi
+
+# --- 61e. Tenant isolation: tenant cannot see or mark the OWNER's client ---
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Isolation Lost LLC","email":"isolation-lost@example.com","password":"isolation123"}' "$BASE/api/admin/orgs")
+check "61e: create tenant → 201" 201 "$S"
+JARISO=$(mktemp)
+S=$(code -c "$JARISO" -b "$JARISO" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"isolation-lost@example.com","password":"isolation123"}' "$BASE/api/auth/login")
+check "61e: tenant login → 200" 200 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Owner Protected Co","contactName":"Owner","clientType":"commercial","dealValue":999,"stage":"Leads","notes":"61e"}' "$BASE/api/clients")
+IPC=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
+check "61e: tenant cannot mark owner client lost → 404" 404 $(code -b "$JARISO" -X PUT -H 'Content-Type: application/json' -d '{"lost":true}' "$BASE/api/clients/$IPC")
+check "61e: tenant cannot read owner client → 404" 404 $(code -b "$JARISO" "$BASE/api/clients/$IPC")
+S=$(code -b "$JARISO" "$BASE/api/dashboard")
+if python3 - <<PY 2>/dev/null
+import json
+d = json.load(open('/tmp/body.json'))
+assert not any(l['companyName'] == 'Owner Protected Co' for l in d.get('lostClients', []))
+assert 'clientMrr' not in d
+PY
+then PASS=$((PASS+1)); echo "  ✓ 61e: tenant dashboard never exposes owner's lost clients or MRR"
+else FAIL=$((FAIL+1)); echo "  ✗ 61e: tenant isolation broken: $(cat /tmp/body.json)"; fi
+# cleanup: delete the owner's protected client + the tenant org
+code -b "$JAR" -X DELETE "$BASE/api/clients/$IPC" > /dev/null
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+ISO_ORG=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o['name']=='Isolation Lost LLC'][0])")
+check "61e: delete tenant org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$ISO_ORG")
+rm -f "$JARISO"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

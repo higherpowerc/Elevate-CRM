@@ -345,6 +345,19 @@ export interface DashboardData {
   revenueModel: RevenueModel;
   clientMrr?: number;
   orgCount?: number;
+  /** Owner direction 2026-08-26 — the new "Lost" window: LOST (soft) clients
+   *  in this org, restorable but excluded from every active pipeline KPI.
+   *  Org-scoped (isolation) — a tenant only ever sees their own lost rows. */
+  lostClients?: {
+    id: number;
+    companyName: string;
+    contactName: string;
+    email: string;
+    dealValue: number;
+    stage: string;
+    lostReason: string;
+    clientType: string;
+  }[];
 }
 
 export interface User {
