@@ -266,7 +266,7 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
      per-stage cards (count + View deep-link, positional/rename-safe) are now
      TENANT-ONLY: they feed the standalone "Stage breakdown" card that client
      accounts keep exactly as before. The OWNER no longer renders them at all
-     — the five-card "Pipeline overview" KPI row (below) carries every
+     — the six-card "Pipeline overview" KPI row (below) carries every
      pipeline figure the owner sees. */
   const stageCards = stages.map((stage, i) => (
     <div className="card stage-card" key={`${i}-${stage}`}>
@@ -308,10 +308,11 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       {ownerOrg && <ProvisionNotices />}
 
       {/* Owner direction 2026-08-15 (refined again during live test) — the
-          OWNER's Dashboard shows the pipeline exactly ONCE: a five-card KPI
+          OWNER's Dashboard shows the pipeline exactly ONCE: a six-card KPI
           row (Projected pipeline + Sold MRR money figures with the
           privacy-eye toggle, then the three bucket counts — Active leads with
-          a Leads deep-link, Onboarding with an Onboarding deep-link, Sold).
+          a Leads deep-link, Onboarding with an Onboarding deep-link, Sold,
+          Lost).
           The old duplicate KPI cards, the five-row single card, and the
           per-stage grid are GONE — no pipeline figure appears twice anywhere
           on the owner's page. TENANT dashboards keep their KPI row (own money
@@ -395,6 +396,44 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
               </button>
             )}
           </div>
+          {/* Owner direction 2026-08-26 — the "Lost" window became a KPI card
+              in this row, placed immediately after Sold (owner asked it "look
+              just like the others" and sit next to Sold). It always renders as
+              a count like the other cards; when lost clients exist, compact
+              Restore/Delete rows appear inside the card. Owner-only — tenants
+              never render it, and lostClients is org-scoped server-side. */}
+          <div className="card kpi">
+            <span className="kpi-label">Lost</span>
+            <span className="kpi-value">{(data.lostClients ?? []).length}</span>
+            <span className="kpi-note">kept on record · restorable</span>
+            {(data.lostClients ?? []).length > 0 && (
+              <ul className="lost-kpi-list">
+                {(data.lostClients ?? []).map((l) => (
+                  <li key={l.id} className="lost-kpi-item">
+                    <span className={`chip${blurPii(pii)}`}>{l.companyName}</span>
+                    <span className="lost-kpi-actions">
+                      <button
+                        className="icon-btn"
+                        title="Restore — back to its pipeline stage"
+                        onClick={() => restoreLost(l)}
+                        disabled={lostBusy === l.id}
+                      >
+                        {lostBusy === l.id ? "Restoring…" : "Restore"}
+                      </button>
+                      <button
+                        className="icon-btn danger"
+                        title="Delete permanently — cannot be undone"
+                        onClick={() => deleteLost(l.id)}
+                        disabled={lostBusy === l.id}
+                      >
+                        {lostBusy === l.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       ) : (
         <div className="kpi-row">
@@ -448,7 +487,7 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
       )}
 
       {/* Owner direction 2026-08-15 (refined during live test) — the OWNER
-          renders no standalone stage grid: the five-card KPI row above
+          renders no standalone stage grid: the six-card KPI row above
           carries every pipeline figure (it replaces the per-stage cards).
           TENANT dashboards keep the standalone "Stage breakdown" card
           exactly as before (same heading, same grid). */}
@@ -457,55 +496,6 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
           <h2 className="section-title">Stage breakdown</h2>
           <div className="stage-grid">{stageCards}</div>
         </>
-      )}
-
-      {/* Owner direction 2026-08-26 — the new Dashboard "Lost" window: every
-          LOST (soft) client record, still on the book but out of the active
-          pipeline. Restore un-losts it straight back to its pipeline stage
-          (unchanged on the record); Delete removes it entirely (hard delete,
-          cannot be undone). Owner dashboard only — lost rows are org-scoped
-          in the endpoint, and the Sold / Active / MRR KPIs above all exclude
-          them. Rendered only while at least one lost client exists. */}
-      {ownerOrg && (data.lostClients ?? []).length > 0 && (
-        <section aria-label="Lost clients">
-          <h2 className="section-title">Lost</h2>
-          <div className="card">
-            <ul className="inv-list" style={{ margin: 0 }}>
-              {(data.lostClients ?? []).map((l) => (
-                <li key={l.id} className="inv">
-                  <div className="inv-body">
-                    <div className="inv-client">
-                      <span className={`chip${blurPii(pii)}`}>{l.companyName}</span>
-                      <span className="inv-notes">
-                        {l.stage}
-                        {l.lostReason ? ` · ${l.lostReason}` : ""}
-                        {l.dealValue > 0 ? ` · ${money(l.dealValue)}` : ""}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="row-actions">
-                    <button
-                      className="icon-btn"
-                      title="Restore — back to its pipeline stage"
-                      onClick={() => restoreLost(l)}
-                      disabled={lostBusy === l.id}
-                    >
-                      {lostBusy === l.id ? "Restoring…" : "Restore"}
-                    </button>
-                    <button
-                      className="icon-btn danger"
-                      title="Delete permanently — cannot be undone"
-                      onClick={() => deleteLost(l.id)}
-                      disabled={lostBusy === l.id}
-                    >
-                      {lostBusy === l.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
       )}
 
       {/* Owner revenue summary (owner 2026-08-20) — real invoice-based
