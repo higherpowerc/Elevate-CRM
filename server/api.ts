@@ -2713,6 +2713,14 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       db.query("DELETE FROM tickets WHERE org_id = ?").run(id);
       db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
       db.query("DELETE FROM clients WHERE org_id = ?").run(id);
+      // Owner direction 2026-08-26 — deleting an account deletes its linked
+      // SOLD client ENTIRELY. The owner's sold client record lives in the OWNER
+      // org (not this deleted org) and points at this workspace via
+      // clients.provisioned_org_id; without this the source Sold record would
+      // survive and keep counting under the owner's Sold KPIs. Hard delete
+      // (cannot be undone) — the same irreversible semantics as deleting the
+      // account itself.
+      db.query("DELETE FROM clients WHERE provisioned_org_id = ?").run(id);
       // 3g-3: provisioning events pointing at this org (plain columns, no FK —
       // cleaned so no orphaned event rows reference a deleted org).
       db.query("DELETE FROM provision_events WHERE new_org_id = ? OR source_org_id = ?").run(id, id);
@@ -3046,6 +3054,28 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       salesThisMonth,
       subscriptionsTotal,
       revenueModel,
+      // Owner direction 2026-08-26 — new "Lost" window on the Dashboard:
+      // every LOST (soft) client in THIS org, still on the record (restorable)
+      // but excluded from every active pipeline KPI above (stage counts,
+      // projected pipeline, Sold MRR and recentClients all filter lost out).
+      // Org-scoped exactly like every other dashboard key, so a tenant can
+      // only ever see their own lost clients (isolation). Rows that are also
+      // archived are hidden here — the Archived state is orthogonal.
+      lostClients: db
+        .query(
+          `SELECT id, company_name, contact_name, email, deal_value, stage, lost_reason
+           FROM clients WHERE org_id = ? AND lost = 1 AND archived = 0
+           ORDER BY updated_at DESC, id DESC`,
+        )
+        .all(orgId) as {
+        id: number;
+        company_name: string;
+        contact_name: string;
+        email: string;
+        deal_value: number;
+        stage: string;
+        lost_reason: string;
+      }[],
     };
     // Owner-only Client MRR + account count (members never receive these keys).
     // Owner direction 2026-08-15: Client MRR = SUM of deal values on the

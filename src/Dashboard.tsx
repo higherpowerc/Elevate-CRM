@@ -149,6 +149,43 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
     };
   }, [ownerOrg]);
 
+  /* Owner direction 2026-08-26 — the Dashboard Lost window actions. A client
+     id in flight (so the row's buttons disable while that one request runs).
+     Restore un-losts (soft → back to its previous/pipeline stage, which is
+     unchanged on the record); Delete is a hard delete (removed entirely).
+     Both then refetch the dashboard so the window + every KPI reconcile in
+     one shot. Org-scoped like the rest of this page (a member can only ever
+     touch their own rows). */
+  const [lostBusy, setLostBusy] = useState<number | null>(null);
+  async function restoreLost(cid: number) {
+    setLostBusy(cid);
+    setError(null);
+    try {
+      /* Partial PUT — the server persists a column only when present in the
+         body, so restoring with just { lost: false } keeps every other field. */
+      await api.updateClient(cid, { lost: false } as Parameters<typeof api.updateClient>[1]);
+      const d = await api.dashboard();
+      setData(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not restore this client.");
+    } finally {
+      setLostBusy(null);
+    }
+  }
+  async function deleteLost(cid: number) {
+    setLostBusy(cid);
+    setError(null);
+    try {
+      await api.deleteClient(cid);
+      const d = await api.dashboard();
+      setData(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete this lost client.");
+    } finally {
+      setLostBusy(null);
+    }
+  }
+
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return <div className="skeleton-block" aria-label="Loading dashboard" />;
 
@@ -418,6 +455,55 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
           <h2 className="section-title">Stage breakdown</h2>
           <div className="stage-grid">{stageCards}</div>
         </>
+      )}
+
+      {/* Owner direction 2026-08-26 — the new Dashboard "Lost" window: every
+          LOST (soft) client record, still on the book but out of the active
+          pipeline. Restore un-losts it straight back to its pipeline stage
+          (unchanged on the record); Delete removes it entirely (hard delete,
+          cannot be undone). Owner dashboard only — lost rows are org-scoped
+          in the endpoint, and the Sold / Active / MRR KPIs above all exclude
+          them. Rendered only while at least one lost client exists. */}
+      {ownerOrg && (data.lostClients ?? []).length > 0 && (
+        <section aria-label="Lost clients">
+          <h2 className="section-title">Lost</h2>
+          <div className="card">
+            <ul className="inv-list" style={{ margin: 0 }}>
+              {(data.lostClients ?? []).map((l) => (
+                <li key={l.id} className="inv">
+                  <div className="inv-body">
+                    <div className="inv-client">
+                      <span className={`chip${blurPii(pii)}`}>{l.companyName}</span>
+                      <span className="inv-notes">
+                        {l.stage}
+                        {l.lostReason ? ` · ${l.lostReason}` : ""}
+                        {l.dealValue > 0 ? ` · ${money(l.dealValue)}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="row-actions">
+                    <button
+                      className="icon-btn"
+                      title="Restore — back to its pipeline stage"
+                      onClick={() => restoreLost(l.id)}
+                      disabled={lostBusy === l.id}
+                    >
+                      {lostBusy === l.id ? "Restoring…" : "Restore"}
+                    </button>
+                    <button
+                      className="icon-btn danger"
+                      title="Delete permanently — cannot be undone"
+                      onClick={() => deleteLost(l.id)}
+                      disabled={lostBusy === l.id}
+                    >
+                      {lostBusy === l.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
       )}
 
       {/* Owner revenue summary (owner 2026-08-20) — real invoice-based

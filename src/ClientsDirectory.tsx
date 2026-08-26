@@ -200,7 +200,9 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   const soldUnbuilt = useMemo(
     () =>
       ownerOrg && clients
-        ? clients.filter((c) => c.stage === terminalStage && (c.provisionedOrgId ?? 0) === 0)
+        ? clients.filter(
+            (c) => c.stage === terminalStage && (c.provisionedOrgId ?? 0) === 0 && !c.lost,
+          )
         : [],
     [ownerOrg, clients, terminalStage],
   );
@@ -243,6 +245,25 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Archive failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  /* Owner direction 2026-08-26 — "Mark lost": a SOFT terminal state. The
+     client stays in the system (restorable from the Dashboard Lost window)
+     but drops out of every active pipeline count (Sold stage, Sold MRR,
+     sold-unbuilt). Single-field partial PUT — never spread, so a stale
+     object cannot clobber fields the client copy doesn't know about. */
+  async function handleMarkLost(c: Client) {
+    setBusy(true);
+    setError(null);
+    try {
+      /* Partial PUT — the server persists a column only when present in
+         the body, so sending just { lost: true } cannot clobber anything. */
+      await api.updateClient(c.id, { lost: true } as Parameters<typeof api.updateClient>[1]);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not mark this client lost.");
     } finally {
       setBusy(false);
     }
@@ -310,6 +331,15 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
                       disabled={buildingId !== null}
                     >
                       {buildingId === c.id ? "Building…" : "Build account"}
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title="Mark lost — removes from the active pipeline (restorable from the Dashboard Lost window)"
+                      aria-label={`Mark ${c.companyName} lost`}
+                      onClick={() => handleMarkLost(c)}
+                      disabled={busy}
+                    >
+                      Mark lost
                     </button>
                   </div>
                 </li>
