@@ -4309,7 +4309,7 @@ bun run build >/dev/null 2>&1
 NEWEST_JS40=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS40" ]; then
   if ! grep -Fq 'owner-pipeline-stages' "$NEWEST_JS40" && ! grep -Fq 'pipeline-overview' "$NEWEST_JS40"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: owner per-stage grid GONE; single five-row pipeline-overview card GONE (five KPI cards instead)"
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner per-stage grid GONE; single five-row pipeline-overview card GONE (six KPI cards instead)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: owner-pipeline-stages or pipeline-overview still present in $NEWEST_JS40"
   fi
@@ -4358,11 +4358,11 @@ i = src.index('kpi-row', src.index('{ownerOrg ? ('))
 start = src.rindex('{ownerOrg ? (', 0, i)
 end = src.index(') : (', i)
 owner_branch = src[start:end]
-# The owner's five figures are FIVE individual .card.kpi cards in ONE
+# The owner's six figures are SIX individual .card.kpi cards in ONE
 # kpi-row — no more, no fewer; the old single pipeline-overview card and its
 # pipeline-row rows are gone.
-assert owner_branch.count('className="card kpi"') == 5, 'owner row must have exactly five KPI cards'
-assert owner_branch.count('kpi-row') == 1, 'owner branch must render exactly one kpi-row (five cards, no nested/duplicate rows)'
+assert owner_branch.count('className="card kpi"') == 6, 'owner row must have exactly six KPI cards'
+assert owner_branch.count('kpi-row') == 1, 'owner branch must render exactly one kpi-row (six cards, no nested/duplicate rows)'
 assert 'pipeline-overview' not in owner_branch, 'old single five-row card class must be gone'
 assert 'pipeline-row' not in owner_branch, 'old pipeline-row rows must be gone'
 # Five labels, each exactly once — no figure label repeats. 'Sold' and
@@ -4385,6 +4385,13 @@ assert 'blur(moneyHidden)' in owner_branch and 'money-blur' in src, 'money cards
 assert 'onGoToStage(firstStage)' in owner_branch and 'onGoToStage(midStage)' in owner_branch, 'count cards keep the View deep-links'
 assert 'View ${firstStage} in the pipeline' in owner_branch, 'Active Leads card keeps its first-stage deep-link aria-label'
 assert 'View ${midStage} in the Onboarding pipeline' in owner_branch, 'Onboarding card keeps its mid-stage deep-link aria-label'
+# Owner direction 2026-08-26 — the Lost window became a 6th KPI card in this
+# row, immediately after Sold, and must keep its Restore/Delete behaviour.
+assert owner_branch.count('>Lost<') == 1, 'Lost label must appear exactly once'
+assert owner_branch.index('>Lost<') > owner_branch.index('>Sold<'), 'Lost card must come after the Sold card'
+assert '>Lost<' in owner_branch and 'restoreLost(l)' in owner_branch and 'deleteLost(l.id)' in owner_branch, 'Lost card keeps the Restore/Delete handlers'
+assert 'lostBusy === l.id' in owner_branch, 'Lost card keeps the busy-state row disabling'
+assert 'kept on record' in owner_branch, 'Lost card keeps its caption'
 cards_start = src.index('const stageCards = stages.map')
 cards_end = src.index('\n  return (', cards_start)
 cards_block = src[cards_start:cards_end]
@@ -4396,8 +4403,8 @@ assert 'kpi-row' in tenant_branch, 'tenant branch must keep the KPI row'
 assert 'In final stage' in tenant_branch, 'tenant branch must keep the In-final-stage KPI'
 assert 'Stage breakdown' in tenant_branch, 'tenant branch must keep the standalone Stage breakdown heading'
 assert 'stage-grid' in tenant_branch
-assert 'pipeline-overview' not in tenant_branch, 'tenant branch must NOT get the owner five-card row'
-print('  ✓ source: owner branch = five-card kpi-row (each figure exactly once, no stage grid); tenant branch keeps KPI row + Stage breakdown card')
+assert 'pipeline-overview' not in tenant_branch, 'tenant branch must NOT get the owner six-card row'
+print('  ✓ source: owner branch = six-card kpi-row (each figure exactly once, no stage grid); tenant branch keeps KPI row + Stage breakdown card')
 PY
 then
   PASS=$((PASS+1)); echo "  ✓ 40a2: five-card KPI row structure correct (owner, no duplicates; tenant untouched)"
