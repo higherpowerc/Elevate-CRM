@@ -190,6 +190,21 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
     return [...rows].sort((a, b) => a.companyName.localeCompare(b.companyName, undefined, { sensitivity: "base" }));
   }, [clients, query, terminalStage]);
 
+  /* Sold-but-unbuilt (owner direction 2026-08-25): every CLIENT who reached
+     the terminal ("sold") stage yet has no provisioned workspace
+     (provisioned_org_id 0) — sold regardless of payment status. These still
+     need the owner to build their account. (Declared BEFORE the early
+     returns below so the hook order never changes between the loading and
+     loaded renders — a hook after the `if (!clients)` return crashed the
+     whole app with a Rules-of-Hooks violation on the owner Clients tab.) */
+  const soldUnbuilt = useMemo(
+    () =>
+      ownerOrg && clients
+        ? clients.filter((c) => c.stage === terminalStage && (c.provisionedOrgId ?? 0) === 0)
+        : [],
+    [ownerOrg, clients, terminalStage],
+  );
+
   async function handleSave(input: ClientInput, editing?: Client) {
     setBusy(true);
     setError(null);
@@ -249,18 +264,6 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
      by the Onboarding → terminal flow; this tab no longer renders a sold
      directory. Client ACCOUNTS (role=member) keep the original sold-customer
      directory below — that is *their* widgets. */
-  /* Sold-but-unbuilt (owner direction 2026-08-25): every CLIENT who reached
-     the terminal ("sold") stage yet has no provisioned workspace
-     (provisioned_org_id 0) — sold regardless of payment status. These still
-     need the owner to build their account. */
-  const soldUnbuilt = useMemo(
-    () =>
-      ownerOrg && clients
-        ? clients.filter((c) => c.stage === terminalStage && (c.provisionedOrgId ?? 0) === 0)
-        : [],
-    [ownerOrg, clients, terminalStage],
-  );
-
   if (ownerOrg) {
     return (
       <div className="page page-stack">

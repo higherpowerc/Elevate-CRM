@@ -7983,6 +7983,26 @@ stop_crm "$MOCK59/srv.pid"; sleep 0.3
 rm -f "$J59" "$JT59"; rm -rf "$MOCK59"
 echo "  ✓ 59: Pending payment verified owner-only"
 
+# 60. SOURCE GUARD — React Rules-of-Hooks (2026-08-26): the curl suite cannot
+# see SPA render crashes. PR #94 put the \`soldUnbuilt\` useMemo AFTER the
+# \`if (!clients)\` early return in src/ClientsDirectory.tsx, so the owner
+# Clients tab crashed the whole React tree on the loading-to-loaded transition
+# (blank black page) while every curl check stayed green. Guard: the LAST hook
+# call in the directory component must precede the FIRST top-level conditional
+# return. If a hook is ever added below an early return again, this fails CI.
+echo "== 60. Source guard: ClientsDirectory hooks precede every early return =="
+LAST_HOOK=$(grep -nE '\buse(State|Effect|Memo|Callback|Ref|Reducer|LayoutEffect|ImperativeHandle)\(' src/ClientsDirectory.tsx | cut -d: -f1 | sort -n | tail -1)
+FIRST_RETURN=$(awk '
+  /^  if \(/ { pending = NR; next }
+  pending && /^    return/ { print pending; exit }
+  { pending = 0 }
+' src/ClientsDirectory.tsx)
+if [ -n "$LAST_HOOK" ] && [ -n "$FIRST_RETURN" ] && [ "$LAST_HOOK" -lt "$FIRST_RETURN" ]; then
+  PASS=$((PASS+1)); echo "  ✓ 60: last hook at line $LAST_HOOK precedes first early return at line $FIRST_RETURN in src/ClientsDirectory.tsx"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 60: a hook (line ${LAST_HOOK:-?}) appears at/after the first early return (line ${FIRST_RETURN:-?}) in src/ClientsDirectory.tsx — every hook must run before every early return"
+fi
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
