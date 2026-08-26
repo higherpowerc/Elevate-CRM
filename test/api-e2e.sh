@@ -7852,9 +7852,11 @@ else
   PASS=$((PASS+1)); echo "  ✓ 58c: tenant dashboard carries NO billingCycleDate"
 fi
 rm -f "$JBC"
-echo "-- 58d. Source markers: all four 2026-08-25 changes — window gone, amount-input fix, deal-value intake removed, billing-cycle column wired --"
+echo "-- 58d. Source markers: all four 2026-08-25 changes — window gone, amount-input fix, deal-value intake removed, billing-cycle column wired (Schedule box dark per owner 2026-08-26) --"
 if ! grep -Fq 'readyForCreation' src/ClientsDirectory.tsx \
    && grep -Fq 'soldUnbuilt' src/ClientsDirectory.tsx \
+   && grep -Fq '.schedule-box {' src/styles.css \
+   && ! grep -Fq 'background: #ffffff' src/styles.css \
    && grep -Fq 'background: #fff' src/styles.css \
    && grep -Fq '.inv-add-amount input' src/styles.css \
    && ! grep -Fq 'Deal value ($)' src/intakeRules.ts \
