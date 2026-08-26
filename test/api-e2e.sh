@@ -8011,11 +8011,11 @@ echo "== 61. Client lifecycle: Lost state + delete-account removes sold client (
 # the account deletes the source Sold record too (hard delete) so it leaves
 # the owner's pipeline / Sold KPIs entirely.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","dealValue":7777,"stage":"Leads","notes":"61a"}' "$BASE/api/clients")
+  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","clientType":"commercial","dealValue":7777,"stage":"Leads","notes":"61a"}' "$BASE/api/clients")
 check "61a: create lifecycle lead → 201" 201 "$S"
 LC_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","dealValue":7777,"stage":"Sold","notes":"61a"}' "$BASE/api/clients/$LC_ID")
+  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","clientType":"commercial","dealValue":7777,"stage":"Sold","notes":"61a"}' "$BASE/api/clients/$LC_ID")
 check "61a: move into Sold → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/admin/orgs")
 LC_ORG_ID=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $LC_ID][0])")
@@ -8040,13 +8040,13 @@ MRR_LIFECYCLE_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json'
 
 # --- 61b. Mark lost: moves client OUT of active pipeline into the Lost set ---
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Lost Candidate Co","contactName":"Jane Doe","email":"jane@lost.example","dealValue":3000,"stage":"Leads","notes":"61b"}' "$BASE/api/clients")
+  -d '{"companyName":"Lost Candidate Co","contactName":"Jane Doe","email":"jane@lost.example","clientType":"commercial","dealValue":3000,"stage":"Leads","notes":"61b"}' "$BASE/api/clients")
 check "61b: create lead → 201" 201 "$S"
 LCB=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 LEADS_BEFORE=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Leads',0))")
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"lost":true,"lostReason":"won with a competitor"}' "$BASE/api/clients/$LCB")
+  -d '{"companyName":"Lost Candidate Co","clientType":"commercial","lost":true,"lostReason":"won with a competitor"}' "$BASE/api/clients/$LCB")
 check "61b: mark lost → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 if python3 - <<PY 2>/dev/null
@@ -8062,7 +8062,7 @@ LEADS_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); prin
 [ "$((LEADS_AFTER + 1))" -eq "$LEADS_BEFORE" ] && echo "  ✓ 61b: lost client left the Leads stage count (${LEADS_BEFORE} → ${LEADS_AFTER})" || echo "  ✗ 61b: Leads ${LEADS_BEFORE} → ${LEADS_AFTER}"
 # 61c. Restore (soft → back to its pipeline stage)
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"lost":false}' "$BASE/api/clients/$LCB")
+  -d '{"companyName":"Lost Candidate Co","clientType":"commercial","lost":false}' "$BASE/api/clients/$LCB")
 check "61c: restore → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 if python3 - <<PY 2>/dev/null
@@ -8074,7 +8074,7 @@ PY
 then PASS=$((PASS+1)); echo "  ✓ 61c: restore moves client out of Lost and back into the stage counts"
 else FAIL=$((FAIL+1)); echo "  ✗ 61c: restore did not reconcile: $(cat /tmp/body.json)"; fi
 # 61d. re-mark lost, then hard-Delete from the Lost window → removed entirely
-S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"lost":true}' "$BASE/api/clients/$LCB")
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' -d '{"companyName":"Lost Candidate Co","clientType":"commercial","lost":true}' "$BASE/api/clients/$LCB")
 check "61d: re-mark lost → 200" 200 "$S"
 S=$(code -b "$JAR" "$BASE/api/dashboard")
 if python3 - <<PY 2>/dev/null
@@ -8103,7 +8103,7 @@ S=$(code -c "$JARISO" -b "$JARISO" -X POST -H 'Content-Type: application/json' \
   -d '{"email":"isolation-lost@example.com","password":"isolation123"}' "$BASE/api/auth/login")
 check "61e: tenant login → 200" 200 "$S"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Owner Protected Co","stage":"Leads","notes":"61e"}' "$BASE/api/clients")
+  -d '{"companyName":"Owner Protected Co","contactName":"Owner","clientType":"commercial","dealValue":999,"stage":"Leads","notes":"61e"}' "$BASE/api/clients")
 IPC=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
 check "61e: tenant cannot mark owner client lost → 404" 404 $(code -b "$JARISO" -X PUT -H 'Content-Type: application/json' -d '{"lost":true}' "$BASE/api/clients/$IPC")
 check "61e: tenant cannot read owner client → 404" 404 $(code -b "$JARISO" "$BASE/api/clients/$IPC")

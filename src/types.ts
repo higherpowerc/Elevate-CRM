@@ -356,6 +356,7 @@ export interface DashboardData {
     dealValue: number;
     stage: string;
     lostReason: string;
+    clientType: string;
   }[];
 }
 

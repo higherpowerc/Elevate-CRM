@@ -157,13 +157,15 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
      one shot. Org-scoped like the rest of this page (a member can only ever
      touch their own rows). */
   const [lostBusy, setLostBusy] = useState<number | null>(null);
-  async function restoreLost(cid: number) {
-    setLostBusy(cid);
+  async function restoreLost(l: NonNullable<DashboardData["lostClients"]>[number]) {
+    setLostBusy(l.id);
     setError(null);
     try {
-      /* Partial PUT — the server persists a column only when present in the
-         body, so restoring with just { lost: false } keeps every other field. */
-      await api.updateClient(cid, { lost: false } as Parameters<typeof api.updateClient>[1]);
+      /* The server requires companyName + clientType on every PUT (it writes a
+         column only when present in the body), so Restore spreads the lost
+         record with lost flipped off — same payload shape the rest of the app
+         uses. Un-flagging also clears the lost reason server-side. */
+      await api.updateClient(l.id, { ...l, lost: false } as Parameters<typeof api.updateClient>[1]);
       const d = await api.dashboard();
       setData(d);
     } catch (e) {
@@ -485,7 +487,7 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
                     <button
                       className="icon-btn"
                       title="Restore — back to its pipeline stage"
-                      onClick={() => restoreLost(l.id)}
+                      onClick={() => restoreLost(l)}
                       disabled={lostBusy === l.id}
                     >
                       {lostBusy === l.id ? "Restoring…" : "Restore"}

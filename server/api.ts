@@ -3061,9 +3061,9 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       // Org-scoped exactly like every other dashboard key, so a tenant can
       // only ever see their own lost clients (isolation). Rows that are also
       // archived are hidden here — the Archived state is orthogonal.
-      lostClients: db
+      lostClients: (db
         .query(
-          `SELECT id, company_name, contact_name, email, deal_value, stage, lost_reason
+          `SELECT id, company_name, contact_name, email, deal_value, stage, lost_reason, client_type
            FROM clients WHERE org_id = ? AND lost = 1 AND archived = 0
            ORDER BY updated_at DESC, id DESC`,
         )
@@ -3075,7 +3075,20 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         deal_value: number;
         stage: string;
         lost_reason: string;
-      }[],
+        client_type: string;
+      }[]).map((r) => ({
+        // camelCase keys — the exact shape the rest of the API uses for
+        // client records (and the Dashboard Lost window reads). The raw
+        // snake_case columns are REST-internal only.
+        id: r.id,
+        companyName: r.company_name,
+        contactName: r.contact_name,
+        email: r.email,
+        dealValue: r.deal_value,
+        stage: r.stage,
+        lostReason: r.lost_reason,
+        clientType: r.client_type,
+      })),
     };
     // Owner-only Client MRR + account count (members never receive these keys).
     // Owner direction 2026-08-15: Client MRR = SUM of deal values on the

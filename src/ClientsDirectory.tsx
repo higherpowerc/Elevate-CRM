@@ -252,15 +252,15 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   /* Owner direction 2026-08-26 — "Mark lost": a SOFT terminal state. The
      client stays in the system (restorable from the Dashboard Lost window)
      but drops out of every active pipeline count (Sold stage, Sold MRR,
-     sold-unbuilt). Single-field partial PUT — never spread, so a stale
-     object cannot clobber fields the client copy doesn't know about. */
+     sold-unbuilt). Spreads the freshly-loaded record with lost flipped on —
+     the same payload shape the rest of the app uses for edits (the server
+     requires companyName + clientType on every PUT and writes a column only
+     when present in the body). */
   async function handleMarkLost(c: Client) {
     setBusy(true);
     setError(null);
     try {
-      /* Partial PUT — the server persists a column only when present in
-         the body, so sending just { lost: true } cannot clobber anything. */
-      await api.updateClient(c.id, { lost: true } as Parameters<typeof api.updateClient>[1]);
+      await api.updateClient(c.id, { ...c, lost: true } as Parameters<typeof api.updateClient>[1]);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not mark this client lost.");
