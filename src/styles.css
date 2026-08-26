@@ -4120,25 +4120,31 @@ legend.field-label {
   padding: 2px 6px;
 }
 
-/* Appointments "Schedule" box (owner direction 2026-08-25): white background,
-   black text so the form reads clearly in BOTH owner and tenant contexts. */
+/* Appointments "Schedule" box (owner direction 2026-08-26): dark card matching
+   the rest of the app — the earlier white background is REVERSED. The box is
+   .card.schedule-box in both owner and tenant contexts; keep its heading,
+   muted cells and inputs readable on the dark background. */
 .schedule-box {
-  background: #ffffff;
-  color: #000000;
+  background: var(--panel);
+  color: var(--ink);
 }
 .schedule-box h3 {
-  color: #000000;
+  color: var(--ink);
 }
 .schedule-box .cell-muted {
-  color: #333;
+  color: var(--muted);
 }
 .schedule-box input {
-  background: #ffffff;
-  color: #000000;
-  border-color: rgba(0, 0, 0, 0.25);
+  background: var(--bg-soft);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  font-size: 14.5px;
+  color-scheme: dark;
 }
 .schedule-box input::placeholder {
-  color: #666;
+  color: var(--muted-2);
 }
 
 /* Agreements editor dropdown on Documents (owner direction 2026-08-25) */
