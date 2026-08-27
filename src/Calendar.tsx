@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 import { api } from "./api";
 import type { Appointment } from "./types";
 import { fmtDemoTime, DEMO_TZ_SHORT } from "./demoTime";
+import { mstToClientLocal, timezoneShort, OWNER_TIMEZONE } from "./timezone";
 
 /** Owner 2026-08-20 sales rework — the owner's Calendar view. Lists all
  *  demo-call appointments (every org's, with the linked client name) sorted by
@@ -38,6 +39,18 @@ function fmtTime(dt: string): string {
   // would shift into the viewer's local timezone) as 12-hour AM/PM + MST.
   const t = (dt ?? "").slice(11);
   return /^\d{1,2}:\d{2}$/.test(t) ? `${fmtDemoTime(t)} ${DEMO_TZ_SHORT}` : dt;
+}
+/** Owner 2026-08-27 — the linked lead/client's LOCAL time for a stored MST
+ *  demo call, DST-aware ('' when unset/unknown or identical to the owner's
+ *  Arizona/MST — the MST line already says it all). */
+function fmtClientLocal(mstDt: string, clientTz: string): string {
+  if (!clientTz || clientTz === OWNER_TIMEZONE) return "";
+  const local = mstToClientLocal(mstDt, clientTz);
+  const t = (local ?? "").slice(11);
+  if (!/^\d{1,2}:\d{2}$/.test(t)) return "";
+  const dateDiffers = (local || "").slice(0, 10) !== (mstDt || "").slice(0, 10);
+  const when = dateDiffers ? `${fmtDay(local)} · ` : "";
+  return `${when}${fmtDemoTime(t)} ${timezoneShort(clientTz)} local`;
 }
 
 export default function Calendar() {
@@ -123,7 +136,14 @@ export default function Calendar() {
                   const meta = STATUS_META[a.status] ?? STATUS_META.scheduled;
                   return (
                     <div className="card calendar-row" key={a.id}>
-                      <div className="calendar-time">{fmtTime(a.scheduledAt)}</div>
+                      <div className="calendar-time">
+                        {fmtTime(a.scheduledAt)}
+                        {fmtClientLocal(a.scheduledAt, a.clientTimezone ?? "") && (
+                          <span className="calendar-time-local">
+                            {fmtClientLocal(a.scheduledAt, a.clientTimezone ?? "")}
+                          </span>
+                        )}
+                      </div>
                       <div className="calendar-main">
                         <div className="calendar-title">
                           <strong>{a.title}</strong>

@@ -8474,6 +8474,114 @@ print("  ✓ 64g: lead-info window shows Deal value + Package tier, owner-only")
 PY2
 then PASS=$((PASS+1)); echo "  ✓ 64g: lead info window surfaces deal value + tier (owner-only)"
 else FAIL=$((FAIL+1)); echo "  ✗ 64g: lead-info window missing"; cat "$PASS_TMP"; fi
+echo "== 65. Appointments timezone auto-conversion (owner 2026-08-27) =="
+echo "-- 65a. timezone field round-trips on a client record (owner), owner-only --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Timezone Client Co","clientType":"commercial","timezone":"America/New_York"}' "$BASE/api/clients")
+check "65a: owner creates client with timezone -> 201" 201 "$S"
+TZ_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c=json.load(open('/tmp/body.json'))['client']
+assert c.get('timezone')=='America/New_York', c.get('timezone')
+print("  ✓ owner client carries timezone America/New_York")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 65a: timezone stored on owner client"
+else FAIL=$((FAIL+1)); echo "  ✗ 65a: timezone missing: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JT" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Timezone Client Co","clientType":"commercial","timezone":"America/Chicago"}' "$BASE/api/clients/$TZ_ID")
+check "65a: owner updates client timezone to Chicago -> 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c=json.load(open('/tmp/body.json'))['client']
+assert c.get('timezone')=='America/Chicago', c.get('timezone')
+print("  ✓ timezone updated to America/Chicago on round-trip")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 65a: timezone round-trips (create + PUT)"
+else FAIL=$((FAIL+1)); echo "  ✗ 65a: timezone round-trip failed: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 65b. Owner-only: tenants never receive nor write the timezone --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Tz Tenant Co","email":"tztenant@example.com","password":"tenantpass123"}' "$BASE/api/admin/orgs")
+check "65b: owner creates tenant for tz-isolation check -> 201" 201 "$S"
+JTTZ=$(mktemp)
+S=$(code -c "$JTTZ" -b "$JTTZ" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"tztenant@example.com","password":"tenantpass123"}' "$BASE/api/auth/login")
+check "65b: tz tenant login -> 200" 200 "$S"
+S=$(code -b "$JTTZ" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tz Tenant Client","clientType":"residential","timezone":"America/New_York"}' "$BASE/api/clients")
+check "65b: tenant creates client (bogus timezone) -> 201" 201 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c=json.load(open('/tmp/body.json'))['client']
+assert 'timezone' not in c, c            # tenant response must omit the owner-only key
+print("  ✓ tenant response carries NO timezone key")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 65b: tenant response owner-only (timezone absent)"
+else FAIL=$((FAIL+1)); echo "  ✗ 65b: tenant saw timezone: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JT" "$BASE/api/admin/orgs")
+TTZ_ID=$(python3 -c "import json;print([x['id'] for x in json.load(open('/tmp/body.json'))['orgs'] if x['name']=='Tz Tenant Co'][0])")
+check "65b: admin deletes tz tenant -> 200" 200 $(code -b "$JT" -X DELETE "$BASE/api/admin/orgs/$TTZ_ID")
+echo "-- 65c. conversion helper: DST-aware (3pm Eastern -> 12pm MST summer, 1pm MST winter) --"
+TZ_JSON=$(
+  cd "$(dirname "$0")/.." || exit 1
+  TZ65="$PWD/.tz65check.mjs"
+  cat > "$TZ65" <<'MJS'
+import { convertNaive, mstToClientLocal, clientLocalToMst } from "./src/timezone.ts";
+const out = {
+  sumNYtoMST: convertNaive("2026-07-15T15:00", "America/New_York", "America/Phoenix"),
+  winNYtoMST: convertNaive("2026-01-15T15:00", "America/New_York", "America/Phoenix"),
+  mstToNYsum: mstToClientLocal("2026-07-15T12:00", "America/New_York"),
+  nyToMSTsum: clientLocalToMst("2026-07-15T15:00", "America/New_York"),
+  winMSTtoNY: mstToClientLocal("2026-01-15T13:00", "America/New_York"),
+  chiStand: mstToClientLocal("2026-01-15T12:00", "America/Chicago")
+};
+console.log(JSON.stringify(out));
+MJS
+  bun "$TZ65"
+  rm -f "$TZ65"
+)
+if python3 - "$TZ_JSON" <<'PY' 2>"$PASS_TMP"
+import json,sys
+d=json.loads(sys.argv[1])
+assert d['sumNYtoMST']=='2026-07-15T12:00', d['sumNYtoMST']   # summer: 3pm EDt -> 12pm MST
+assert d['winNYtoMST']=='2026-01-15T13:00', d['winNYtoMST']   # winter: 3pm EST -> 1pm MST
+assert d['mstToNYsum']=='2026-07-15T15:00', d['mstToNYsum']   # reverse summer: 12pm MST -> 3pm
+assert d['nyToMSTsum']=='2026-07-15T12:00', d['nyToMSTsum']   # client 3pm -> stored 12pm MST summer
+assert d['winMSTtoNY']=='2026-01-15T15:00', d['winMSTtoNY']   # reverse winter: 1pm MST -> 3pm
+assert d['chiStand']=='2026-01-15T13:00', d['chiStand']       # winter MST->Chicago +1h
+print("  ✓ conversion: summer 3pm->12pm MST, winter 3pm->1pm MST; reverse correct")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 65c: conversion helper DST-correct"
+else FAIL=$((FAIL+1)); echo "  ✗ 65c: conversion wrong: $TZ_JSON"; cat "$PASS_TMP"; fi
+echo "-- 65d. scheduling UI surfaces converted values (source) + appointment carries clientTimezone --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"TZ Onboarding call\",\"scheduledAt\":\"2026-07-15T12:00\",\"duration\":30,\"clientId\":$TZ_ID}" "$BASE/api/appointments")
+check "65d: owner schedules appointment linked to NY-lead -> 201" 201 "$S"
+S=$(code -b "$JT" "$BASE/api/appointments")
+if python3 - "$TZ_ID" <<'PY' 2>"$PASS_TMP"
+import json,sys
+d=json.load(open('/tmp/body.json'))
+txz=[a for a in d['appointments'] if a.get('clientId')==int(sys.argv[1])]
+assert txz and txz[0].get('clientTimezone')=='America/Chicago', txz
+print("  ✓ appointment carries clientTimezone America/Chicago")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 65d: appointment serializes clientTimezone"
+else FAIL=$((FAIL+1)); echo "  ✗ 65d: appointment clientTimezone missing: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+if python3 - <<'PY' 2>"$PASS_TMP"
+appts=open('src/Appointments.tsx').read()
+cal=open('src/Calendar.tsx').read()
+tzsrc=open('src/timezone.ts').read()
+types=open('src/types.ts').read()
+assert 'mstToClientLocal' in appts and 'timezoneShort' in appts and 'clientTimezone' in appts
+assert 'mstToClientLocal' in cal and 'timezoneShort' in cal and 'clientTimezone' in cal
+assert 'OWNER_TIMEZONE = "America/Phoenix"' in tzsrc and 'convertNaive' in tzsrc
+assert 'timezone?: string' in types and 'clientTimezone?: string' in types
+print("  ✓ Appointments/Calendar convert + surface both MST and client-local; types declare fields")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 65d: scheduling UI surfaces converted values"
+else FAIL=$((FAIL+1)); echo "  ✗ 65d: scheduling UI conversion missing"; cat "$PASS_TMP"; fi
+rm -f "$JTTZ"
+
 rm -f "$JTT"
 
 echo "RESULT: $PASS passed, $FAIL failed"

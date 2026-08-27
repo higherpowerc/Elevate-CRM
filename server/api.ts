@@ -57,6 +57,7 @@ import {
   type StoredFieldDef,
   type VerticalTemplate,
 } from "../src/verticals";
+import { isKnownTimezone, DEFAULT_CLIENT_TIMEZONE } from "../src/timezone";
 import {
   createSession,
   verifySession,
@@ -558,6 +559,10 @@ function toClient(row: ClientRow, ownerOrg = false) {
           // the SAME rule as agreementStatus (comment above): tenant orgs
           // never get the key, ever.
           tier: row.tier ?? "",
+          // Owner 2026-08-27 — the lead/client's IANA timezone (for the
+          // calendar auto-conversion). OWNER-only, the SAME rule as tier:
+          // tenant orgs never get the key, ever.
+          timezone: row.timezone ?? "",
         }
       : {}),
     createdAt: row.created_at,
@@ -567,7 +572,7 @@ function toClient(row: ClientRow, ownerOrg = false) {
 
 /** Owner 2026-08-20 sales rework — serialize an appointment row for the API,
  *  normalizing the optional client's name for the owner's calendar view. */
-function toAppointment(row: AppointmentRow, clientName?: string) {
+function toAppointment(row: AppointmentRow & { client_timezone?: string | null }, clientName?: string, clientTz?: string) {
   return {
     id: row.id,
     orgId: row.org_id,
@@ -578,6 +583,9 @@ function toAppointment(row: AppointmentRow, clientName?: string) {
     duration: row.duration,
     status: isAppointmentStatus(row.status) ? row.status : "scheduled",
     notes: row.notes,
+    // Owner 2026-08-27 — the linked client's IANA timezone so the calendar
+    // can show their local time beside the owner's stored MST time.
+    clientTimezone: clientTz ?? row.client_timezone ?? "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -774,6 +782,11 @@ interface ClientInput {
    *  update, absent keys leave the stored value untouched. Setting a tier
    *  also drives the auto Services tags (see TIER_SERVICE_TAGS). */
   tier?: PackageTier;
+  /** Owner 2026-08-27 — IANA timezone ('' unset). OPTIONAL and OWNER-only,
+   *  the agreementStatus rule: accepted only from the owner org; tenant
+   *  payloads are ignored. On create, absent keys default to the owner's
+   *  Arizona/MST; on update, absent keys leave the stored value untouched. */
+  timezone?: string;
 }
 
 /** Adaptive intake Phase 1: optional TEXT columns — client JSON key → DB
@@ -1093,6 +1106,17 @@ function validateClient(
       if (!services.some((s) => s.toLowerCase() === t.toLowerCase())) services.push(t);
     }
   }
+  // Owner 2026-08-27 — IANA timezone (OWNER-only, the agreementStatus rule):
+  // accepted/validated ONLY from the owner org; tenant payloads are ignored
+  // (absent from the parsed input, so a tenant can never write it).
+  let timezone: string | undefined;
+  if (ownerOrg && body.timezone !== undefined && body.timezone !== null) {
+    const tz = String(body.timezone).trim();
+    if (!isKnownTimezone(tz)) {
+      return { ok: false, error: "timezone must be a known IANA timezone (or empty)." };
+    }
+    timezone = tz;
+  }
 
   // Adaptive intake Phase 1: optional intake/billing fields. Absent keys stay
   // undefined — create defaults them, update leaves them untouched. Text
@@ -1196,6 +1220,8 @@ function validateClient(
     website: website.value,
     leadSource: leadSource.value,
     ...(ownerOrg && body.tier !== undefined && body.tier !== null ? { tier } : {}),
+  
+    ...(ownerOrg && timezone !== undefined ? { timezone } : {}),
   };
   for (const f of INTAKE_TEXT_COLS) {
     const v = intakeText[f.key];
@@ -3722,8 +3748,8 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?)`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?, ?)`,
       )
       .run(
         orgId,
@@ -3736,6 +3762,8 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         ...statusValues(c),
         c.agreementStatus ?? "not_sent",
         c.tier ?? "",
+        // Owner 2026-08-27 — IANA timezone: '' unset → the owner's Arizona/MST.
+        c.timezone ?? DEFAULT_CLIENT_TIMEZONE,
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row, isOwnerSession(auth)) }, 201);
@@ -3932,7 +3960,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json(
       {
         ok: true,
-        appointment: toAppointment(row, client.company_name),
+        appointment: toAppointment(row, client.company_name, client.timezone),
         client: toClient(updated, true),
         emailStatus: email.ok ? "sent" : "failed",
         emailError: email.ok ? undefined : email.error,
@@ -3954,13 +3982,13 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     // list is the owner's live schedule of active demo calls only.
     const rows = db
       .query(
-        `SELECT a.*, c.company_name AS client_name
+        `SELECT a.*, c.company_name AS client_name, c.timezone AS client_timezone
            FROM appointments a
            LEFT JOIN clients c ON c.id = a.client_id
           WHERE a.status != 'cancelled'
           ORDER BY a.scheduled_at, a.id`,
       )
-      .all() as (AppointmentRow & { client_name: string | null })[];
+      .all() as (AppointmentRow & { client_name: string | null; client_timezone: string | null })[];
     return json({ appointments: rows.map((r) => toAppointment(r, r.client_name ?? undefined)) });
   }
   /* Appointments production (backlog 5a104eae) — OWNER-WORKSPACE: create an
@@ -4033,13 +4061,13 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     await maybeSendAppointmentReminders(req);
     const rows = db
       .query(
-        `SELECT a.*, c.company_name AS client_name
+        `SELECT a.*, c.company_name AS client_name, c.timezone AS client_timezone
            FROM appointments a
            LEFT JOIN clients c ON c.id = a.client_id
           WHERE a.org_id = ? AND a.status != 'cancelled'
           ORDER BY a.scheduled_at, a.id`,
       )
-      .all(orgId) as (AppointmentRow & { client_name: string | null })[];
+      .all(orgId) as (AppointmentRow & { client_name: string | null; client_timezone: string | null })[];
     const org = getOrg(orgId);
     return json({
       appointments: rows.map((r) => toAppointment(r, r.client_name ?? undefined)),
@@ -4301,6 +4329,19 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       // they are merged into services (preserving any body-sent or already-
       // stored services) so the tags are written even when the body omitted
       // services.
+      // Owner 2026-08-27 — IANA timezone (OWNER-only): persisted ONLY for the
+      // owner org and only when present in the body ('America/New_York' etc;
+      // '' clears back to unset = the owner's Arizona/MST). Tenant payloads
+      // never write it; partial updates never clobber an absent value.
+      const ownerTz = isOwnerSession(auth) ? body.timezone : undefined;
+      if (ownerTz !== undefined && ownerTz !== null) {
+        const tz = String(ownerTz).trim();
+        if (!isKnownTimezone(tz)) {
+          return err("timezone must be a known IANA timezone (or empty).", 400);
+        }
+        sets.push("timezone = ?");
+        params.push(tz);
+      }
       const ownerTier = isOwnerSession(auth) ? body.tier : undefined;
       if (ownerTier !== undefined && ownerTier !== null) {
         if (typeof ownerTier !== "string" || !isPackageTier(ownerTier)) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
 import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, money, type PackageTier } from "./types";
+import { CLIENT_TIMEZONES, timezoneLabel } from "./timezone";
 import { usePii, blurPii, PII_FIELD_KEYS } from "./pii";
 import {
   getCustomGroupsFor,
@@ -90,6 +91,9 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
   /** Owner 2026-08-27 — package tier ('' unset | tier1..4). Owner-only: the
    *  selector renders only in the owner workspace. */
   tier: PackageTier;
+  /** Owner 2026-08-27 — IANA timezone ( unset = the owner's Arizona/MST).
+   *  Owner-only: the selector renders only in the owner workspace. */
+  timezone: string;
 };
 
 export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, ownerLeadsTab = false, ownerOrg = false, busy, onClose, onSave }: Props) {
@@ -151,6 +155,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     demoOutcome: "",
     followUpNote: "",
     tier: "",
+    timezone: "",
   });
   const [form, setForm] = useState<FormState>(() =>
     client
@@ -208,6 +213,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
           demoOutcome: (client.demoOutcome ?? "") as "" | "sold" | "not_sold" | "maybe",
           followUpNote: client.followUpNote ?? "",
           tier: (client.tier ?? "") as PackageTier,
+          timezone: client.timezone ?? "",
         }
       : empty(),
   );
@@ -348,6 +354,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
         // workspace only in the UI; the server persists it solely for the
         // owner org).
         tier: (form.tier ?? "") as PackageTier,
+        timezone: form.timezone ?? "",
         billingSame,
         // When billing is the same as the service address the address values
         // are omitted from the save (nothing to store).
@@ -920,6 +927,35 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               <span className="field-hint">
                 Select the client's package tier. It drives the Services tags (Website / CRM / Lead
                 gen / Custom package) and the onboarding checklist. Pricing is set at charge time.
+              </span>
+            </div>
+          )}
+          {/* Owner 2026-08-27 — CLIENT TIMEZONE selector. OWNER-only: renders
+              only in the owner workspace (ownerOrg). The lead/client's IANA
+              timezone drives the calendar/appointments auto-conversion — the
+              owner schedules in their fixed Arizona/MST and the client's local
+              time is shown converted across DST. '' = unset (treated as the
+              owner's Arizona/MST). Tenants never see this selector nor the
+              field. */}
+          {ownerOrg && (
+            <div className="field intake-block timezone-picker">
+              <span className="field-label">Client timezone</span>
+              <select
+                className="timezone-select"
+                value={form.timezone}
+                aria-label="Client timezone"
+                onChange={(e) => set("timezone", e.target.value)}
+              >
+                {CLIENT_TIMEZONES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                {form.timezone
+                  ? `Appointments will show ${timezoneLabel(form.timezone)} local time beside the owner's Arizona/MST time.`
+                  : "Unset: appointments show in the owner's Arizona/MST time."}
               </span>
             </div>
           )}

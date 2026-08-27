@@ -245,6 +245,13 @@ export interface Client {
    *  tenant-facing code never has to know about it. Drives auto Services tags
    *  + the per-tier onboarding checklist + the future billing tier. */
   tier?: PackageTier;
+  /** Owner 2026-08-27 — this lead/client's IANA timezone (e.g.
+   *  "America/New_York"). '' = unset (treated as the owner's Arizona/MST).
+   *  Drives the calendar/appointments auto-conversion: the owner schedules in
+   *  their fixed MST and the client's local time is shown converted across
+   *  DST. OWNER-workspace-only, the same isolation rule as tier /
+   *  agreementStatus: tenant orgs never receive the key. */
+  timezone?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -262,6 +269,11 @@ export interface Appointment {
   duration: number;
   status: "scheduled" | "confirmed" | "held" | "cancelled";
   notes: string;
+  /** Owner 2026-08-27 — the linked client's IANA timezone ('' if unlinked or
+   *  unset). Populated by the server so the calendar UI can show the client's
+   *  local time alongside the owner's stored MST time. Owner-only concept; a
+   *  tenant never receives another account's timezone. */
+  clientTimezone?: string;
   createdAt: string;
   updatedAt: string;
 }
