@@ -58,7 +58,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateClient: (id: number, data: ClientInput) =>
+  /* Partial PUT (AZ defect D4, 2026-08-17): the server persists ONLY the
+   * fields the body carries — an omitted key never clobbers the stored value.
+   * The type says so, so owner-workspace callers (e.g. the Client accounts
+   * Edit-account action) may send just the fields they change. */
+  updateClient: (id: number, data: Partial<ClientInput>) =>
     request<{ client: Client }>(`/api/clients/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
@@ -219,8 +223,10 @@ export const api = {
      monthly subscription amount they pay (USD >= 0). Owner direction
      2026-08-15 — the per-account revenue-model selector is REMOVED (one
      product, subscription-based): adminUpdateOrg sends only the billing
-     amount. Owner-only; members get 403. */
-  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string; tier?: string }) =>
+     amount. Owner 2026-08-27 — the hub's Edit-account action also renames the
+     account (name): the org name IS the account name in the Clients cell.
+     Owner-only; members get 403. */
+  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string; tier?: string; name?: string }) =>
     request<{ ok: true; org: { id: number; name: string } }>(`/api/admin/orgs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

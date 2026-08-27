@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { fmtDate, money, type Org } from "./types";
+import { fmtDate, money, type Client, type Org } from "./types";
 import { PACKAGE_TIERS, TIER_LABELS, TIER_SHORT_LABELS, type PackageTier } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
@@ -52,7 +52,28 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
    *  Owner-only by construction: /api/clients is org-scoped and Accounts is
    *  rendered in the owner's workspace. */
   const [dealValueByOrg, setDealValueByOrg] = useState<Record<number, number>>({});
+  /** Owner 2026-08-27 — the linked owner-org client record per org id (the
+   *  Edit-account modal's prefill + PUT target). Owner-only by construction:
+   *  /api/clients is org-scoped and this section renders in the owner's
+   *  workspace only. */
+  const [clientByOrg, setClientByOrg] = useState<Record<number, Client>>({});
   const [error, setError] = useState<string | null>(null);
+  /* Owner 2026-08-27 — Edit account: the modal edits the LINKED owner-org
+     client record (company name / phone / deal value) + renames the org so
+     the Clients cell follows, and can generate a fresh agreement (upgrade
+     path) without ever opening the tenant's CRM. */
+  const [editing, setEditing] = useState<Org | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editDeal, setEditDeal] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [agreementBusy, setAgreementBusy] = useState(false);
+  const [agreementNotice, setAgreementNotice] = useState<{
+    kind: "success" | "warn";
+    text: string;
+    signUrl?: string;
+  } | null>(null);
   /** Org whose "View account" is in flight (shows a spinner on that row). */
   const [viewingOrgId, setViewingOrgId] = useState<number | null>(null);
   /** 3k — org whose "Reset password" is in flight. */
@@ -104,10 +125,18 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
       // the Deal value column can read the client's dealValue. Missing/never
       // auto-provisioned links simply stay unset and render "—".
       const map: Record<number, number> = {};
+      // Owner 2026-08-27 — the Edit-account modal needs the whole linked
+      // record (id to PUT, companyName/phone/dealValue to prefill, email for
+      // the agreement). Same join, same owner-org scope as the deal values.
+      const byOrg: Record<number, Client> = {};
       for (const c of clients) {
-        if (c.provisionedOrgId) map[c.provisionedOrgId] = c.dealValue;
+        if (c.provisionedOrgId) {
+          map[c.provisionedOrgId] = c.dealValue;
+          byOrg[c.provisionedOrgId] = c;
+        }
       }
       setDealValueByOrg(map);
+      setClientByOrg(byOrg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load client accounts.");
     }
@@ -227,6 +256,104 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [resetResult]);
+
+  /* ── Edit account (owner 2026-08-27) ──────────────────────────────────── */
+  /** The owner-org client record linked to the account being edited (null
+   *  when the account has none — its row shows no deal value either). */
+  const editingLinked = editing ? clientByOrg[editing.id] ?? null : null;
+
+  function openEdit(o: Org) {
+    const linked = clientByOrg[o.id];
+    setEditing(o);
+    setEditError(null);
+    setAgreementNotice(null);
+    // Prefill from the linked owner-org client record; fall back to the org
+    // name for accounts without a link (fields stay disabled there).
+    setEditName(linked ? linked.companyName : o.name);
+    setEditPhone(linked ? linked.phone : "");
+    setEditDeal(linked ? String(linked.dealValue ?? 0) : "");
+  }
+
+  /** Save: PUT the linked owner-org client record (name / phone / deal value)
+   *  and rename the org in step so the Clients cell reflects the edit. The
+   *  PUT target is safe by construction — clientByOrg is joined from the
+   *  OWNER org's own /api/clients (org-scoped server-side too) and only
+   *  records whose provisionedOrgId === the selected org's id land in it.
+   *  The tenant's CRM data is never touched. */
+  async function handleSaveEdit() {
+    if (!editing || !editingLinked) return;
+    const companyName = editName.trim();
+    if (!companyName) {
+      setEditError("Account name is required.");
+      return;
+    }
+    const trimmedDeal = editDeal.trim();
+    const dealValue = trimmedDeal === "" ? 0 : Number(trimmedDeal);
+    if (!Number.isFinite(dealValue) || dealValue < 0) {
+      setEditError("Deal value must be a non-negative number.");
+      return;
+    }
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      await api.updateClient(editingLinked.id, {
+        companyName,
+        clientType: editingLinked.clientType,
+        phone: editPhone.trim(),
+        dealValue,
+      });
+      // The org name IS the visible account name (the Clients cell renders
+      // o.name) — rename it through the owner-only PATCH so the table follows.
+      await api.adminUpdateOrg(editing.id, { name: companyName });
+      setEditing(null);
+      await load(); // re-join: Deal value column + Clients cell + prefill data
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  /** Generate a fresh agreement for the LINKED owner-org client (the upgrade
+   *  path): mints a new sign token + emails the /sign link. The server
+   *  rejects clients without an email — that error is surfaced as-is. */
+  async function handleGenerateAgreement() {
+    if (!editing || !editingLinked) return;
+    setAgreementBusy(true);
+    setAgreementNotice(null);
+    setEditError(null);
+    try {
+      const r = await api.sendAgreement(editingLinked.id);
+      if (r.emailStatus === "sent") {
+        setAgreementNotice({
+          kind: "success",
+          text: `Agreement sent to ${r.emailTo} — the sign link is valid for 30 days.`,
+        });
+      } else {
+        // The envelope exists and the link was minted — only the email failed.
+        // Never show a green "sent"; hand the owner the URL to forward.
+        setAgreementNotice({
+          kind: "warn",
+          text: `Agreement link generated, but the email failed to send: ${r.emailError ?? "unknown error"}`,
+          signUrl: r.signUrl,
+        });
+      }
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Agreement send failed.");
+    } finally {
+      setAgreementBusy(false);
+    }
+  }
+
+  /* Esc closes the Edit-account modal (same as every other modal). */
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setEditing(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing]);
 
   return (
     <div className="accounts-section">
@@ -593,6 +720,15 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                             {resettingOrgId === o.id ? "Resetting…" : "Reset password"}
                           </button>
                           <button
+                            className="btn btn-ghost btn-sm"
+                            title="Edit this account's name, phone and deal value — or generate a new agreement"
+                            aria-label={`Edit ${o.name} account`}
+                            disabled={viewingOrgId !== null || resettingOrgId !== null}
+                            onClick={() => openEdit(o)}
+                          >
+                            Edit
+                          </button>
+                          <button
                             className="icon-btn danger"
                             title="Delete this client account"
                             aria-label={`Delete ${o.name}`}
@@ -659,6 +795,138 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                 Done
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Owner 2026-08-27 — Edit account: edits the LINKED owner-org client
+          record (company name / phone / deal value) + renames the account
+          (org) in step, and generates a fresh agreement for upgrades. The
+          tenant's CRM is never opened or modified. Accounts WITHOUT a linked
+          client record show disabled fields + a note (there is no owner-org
+          client to edit and no agreement recipient). */}
+      {editing && (
+        <div className="overlay" role="dialog" aria-modal="true" aria-label="Edit account">
+          <div className="modal modal-sm">
+            <div className="modal-head">
+              <h2>Edit account</h2>
+              <button className="icon-btn" onClick={() => setEditing(null)} aria-label="Close" disabled={editBusy}>
+                ✕
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveEdit();
+              }}
+              className="form modal-form"
+            >
+              {editError && (
+                <div className="alert alert-error" role="alert">
+                  {editError}
+                </div>
+              )}
+              {editingLinked ? (
+                <>
+                  <label className="field">
+                    <span className="field-label">Company / account name</span>
+                    <input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      maxLength={200}
+                      required
+                      aria-label="Company / account name"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Phone number</span>
+                    <input
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      maxLength={40}
+                      className={pii ? "pii-blur" : undefined}
+                      aria-label="Phone number"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Deal value ($)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={editDeal}
+                      onChange={(e) => setEditDeal(e.target.value)}
+                      aria-label="Deal value in dollars"
+                    />
+                  </label>
+                  <p className="field-hint">
+                    Edits the client's own record in your workspace — the account's CRM data is not touched.
+                  </p>
+                  <div className="field intake-block">
+                    <span className="field-label">Agreement</span>
+                    <div className="password-row">
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={handleGenerateAgreement}
+                        disabled={agreementBusy || editBusy}
+                      >
+                        {agreementBusy ? "Generating…" : "Generate new agreement"}
+                      </button>
+                    </div>
+                    <span className="field-hint">
+                      Mints a fresh sign link and emails it to the client — use it after an upgrade or re-scope.
+                    </span>
+                    {agreementNotice && (
+                      <div className={agreementNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"} role="status">
+                        <p className="created-line">{agreementNotice.text}</p>
+                        {agreementNotice.signUrl && (
+                          <p className="created-line">
+                            Sign link: <code>{agreementNotice.signUrl}</code>
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="modal-actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)} disabled={editBusy}>
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={editBusy || agreementBusy}>
+                      {editBusy ? "Saving…" : "Save changes"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="alert alert-warn" role="status">
+                    <p className="created-line">No linked client record.</p>
+                    <p className="created-hint">
+                      This account is not linked to a client record in your workspace, so its name, phone and
+                      deal value are managed on the client record once the account is linked — and there is no
+                      one to generate an agreement for yet.
+                    </p>
+                  </div>
+                  <label className="field">
+                    <span className="field-label">Company / account name</span>
+                    <input value={editName} disabled aria-label="Company / account name (no linked client record)" />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Phone number</span>
+                    <input value="" disabled aria-label="Phone number (no linked client record)" />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Deal value ($)</span>
+                    <input type="number" min={0} value="" disabled aria-label="Deal value (no linked client record)" />
+                  </label>
+                  <div className="modal-actions">
+                    <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
+                      Close
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
           </div>
         </div>
       )}
