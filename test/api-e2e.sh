@@ -8783,6 +8783,101 @@ rm -rf "$MOCK66" "$JA66" "$JT66"
 
 rm -f "$JTT"
 
+echo "== 67. Password-reset link routing (owner bug 2026-08-27): the emailed #/reset?token= link opens the RESET page, signed-in or not =="
+# Owner report: clicking the emailed `<appUrl>/#/reset?token=…` link rendered
+# the LOGIN card. Two frontend causes, both fixed in src/App.tsx:
+#   1. the boot /api/auth/me 401 (signed out) fired `crm:unauthorized`, whose
+#      handler wiped resetToken right after the hash had been parsed;
+#   2. the `if (resetToken)` render branch was nested inside `if (!user)`, so
+#      a signed-in user opening the link missed the form entirely.
+# The server flow (forgot mints a 45-min token, reset redeems it) is UNCHANGED
+# — §28a covers it on throwaways; 67b re-runs the live link round-trip on $BASE.
+echo "-- 67a. Source guard: reset branch hoisted above the signed-in gate; onUnauthorized keeps a live token --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import re
+app = open('src/App.tsx').read()
+# the token is still parsed from the URL hash on boot
+assert 'function resetTokenFromHash()' in app
+assert 'setResetToken(resetTokenFromHash())' in app
+# (a) exactly ONE reset render branch, and it sits ABOVE `if (!user)` —
+# the reset page renders with or without a signed-in user
+assert app.count('if (resetToken) {') == 1, app.count('if (resetToken) {')
+hoist = app.index('if (resetToken) {')
+gate = app.index('if (!user) {')
+assert hoist < gate, (hoist, gate)
+seg = app[hoist:gate]
+assert '<ResetPassword' in seg and 'token={resetToken}' in seg
+# (b) onUnauthorized no longer clears the token unconditionally: the wipe is
+# guarded by the live-hash check, and a dying session also leaves a #/reset
+# hash alone (a stale session must never kick a visitor off the reset page)
+m = re.search(r'const onUnauthorized = \(\) => \{.*?\n    \};', app, re.S)
+assert m, 'onUnauthorized handler not found'
+body = m.group(0)
+assert 'if (!resetTokenFromHash()) setResetToken(null);' in body
+assert not re.search(r'^\s*setResetToken\(null\);\s*$', body, re.M)   # no bare wipe
+assert '!window.location.hash.startsWith("#/reset")' in body         # hash kept too
+print('  ✓ hoisted reset branch + guarded onUnauthorized (live token survives the boot 401)')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 67a: reset routing fixed in src/App.tsx (renders signed-out AND signed-in; 401 handler keeps a live token)"
+else FAIL=$((FAIL+1)); echo "  ✗ 67a: reset routing guard failed"; cat "$PASS_TMP"; fi
+echo "-- 67b. Live round-trip on \$BASE: forgot mints a token and emails the #/reset?token= link the fix serves --"
+# The main server posts email to RESEND_URL=:3195; stand the documented mock
+# up for the capture, then take it down.
+MOCK67=$(mktemp -d)
+MOCK67_EMAILS="$MOCK67/emails.jsonl"
+: > "$MOCK67_EMAILS"
+cat > "$MOCK67/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const OUT = process.env.MOCK67_OUT ?? "";
+const server = Bun.serve({
+  port: 3195,
+  async fetch(req) {
+    if (new URL(req.url).pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock67-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock67 resend on 3195");
+TS
+MOCK67_OUT="$MOCK67_EMAILS" nohup bun "$MOCK67/resend.ts" > "$MOCK67/resend.log" 2>&1 &
+MOCK67_PID=$!
+i=0; until curl -sf http://127.0.0.1:3195/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+S=$(code -X POST -H 'Content-Type: application/json' -H 'Origin: https://crm.example.test' \
+  -d "{\"email\":\"$ADMIN_EMAIL\"}" "$BASE/api/auth/forgot")
+check "67b: forgot-password for the owner email → 200" 200 "$S"
+if grep -Fq "a reset link is on its way" /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ 67b: generic success message (no enumeration)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 67b: forgot response: $(cat /tmp/body.json)"
+fi
+sleep 1
+if python3 - "$MOCK67_EMAILS" <<'PY' 2>"$MOCK67/email.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+reset = [l for l in lines if l.get("subject") == "Reset your password"]
+assert len(reset) == 1, [(l.get("subject"), l.get("to")) for l in lines]
+e = reset[0]
+# main server boots with TEST_EMAIL_TO=owner-test@gmail.com — delivery is
+# redirected there and the body prefixed "[TEST] Intended for …"
+assert e["to"] == ["owner-test@gmail.com"], e["to"]
+t = e["text"]
+assert "https://crm.example.test/#/reset?token=" in t, t
+assert "45 minutes" in t and "once" in t, t
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 67b: reset email carries the #/reset?token= link the fixed routing serves"
+else FAIL=$((FAIL+1)); echo "  ✗ 67b: reset email wrong: $(cat "$MOCK67/email.err" 2>/dev/null)"; fi
+# A stale/bogus token must come back 400 — NEVER 401, or the reset page's own
+# submit would fire crm:unauthorized and bounce the visitor to the login card.
+S=$(code -X POST -H 'Content-Type: application/json' \
+  -d '{"token":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","password":"Whatever123!"}' "$BASE/api/auth/reset")
+check "67b: reset with bogus token → 400 (never 401 on the reset page)" 400 "$S"
+kill "$MOCK67_PID" 2>/dev/null
+rm -rf "$MOCK67"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
