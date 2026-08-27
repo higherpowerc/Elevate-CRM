@@ -4386,11 +4386,16 @@ assert 'onGoToStage(firstStage)' in owner_branch and 'onGoToStage(midStage)' in 
 assert 'View ${firstStage} in the pipeline' in owner_branch, 'Active Leads card keeps its first-stage deep-link aria-label'
 assert 'View ${midStage} in the Onboarding pipeline' in owner_branch, 'Onboarding card keeps its mid-stage deep-link aria-label'
 # Owner direction 2026-08-26 — the Lost window became a 6th KPI card in this
-# row, immediately after Sold, and must keep its Restore/Delete behaviour.
+# row, immediately after Sold. Owner direction (same day) changed it to render
+# EXACTLY like the sibling count cards: a numeric count + a "View \u2192" deep-link
+# to the Lost listing — NO inline Restore/Delete list, NO handlers in the card.
+# Restore/delete of a lost client now happens on the Lost listing itself (the
+# Clients segs / edit modal), which the server-side §61 lifecycle still covers.
 assert owner_branch.count('>Lost<') == 1, 'Lost label must appear exactly once'
 assert owner_branch.index('>Lost<') > owner_branch.index('>Sold<'), 'Lost card must come after the Sold card'
-assert '>Lost<' in owner_branch and 'restoreLost(l)' in owner_branch and 'deleteLost(l.id)' in owner_branch, 'Lost card keeps the Restore/Delete handlers'
-assert 'lostBusy === l.id' in owner_branch, 'Lost card keeps the busy-state row disabling'
+assert 'onGoToLost' in owner_branch, 'Lost card wires its View deep-link (onGoToLost)'
+assert 'restoreLost' not in src and 'deleteLost' not in src and 'lostBusy' not in src, 'Lost card Restore/Delete handlers removed from Dashboard'
+assert 'lost-kpi-list' not in src and 'lost-kpi-item' not in src, 'Lost card inline Restore/Delete list removed'
 assert 'kept on record' in owner_branch, 'Lost card keeps its caption'
 cards_start = src.index('const stageCards = stages.map')
 cards_end = src.index('\n  return (', cards_start)
@@ -8129,6 +8134,52 @@ S=$(code -b "$JAR" "$BASE/api/admin/orgs")
 ISO_ORG=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print([o['id'] for o in d['orgs'] if o['name']=='Isolation Lost LLC'][0])")
 check "61e: delete tenant org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$ISO_ORG")
 rm -f "$JARISO"
+echo "-- 62. Owner Maybe bin + Lost-card View (owner direction 2026-08-26) =="
+# Change A — Lost card is now a read-only count + View deep-link (no inline
+#     restore/delete list). Change B — a "Maybe" seg sits next to Active and
+#     lists every scoped lead whose demoOutcome === 'maybe', with the
+#     follow-up note surfaced. Both are frontend-only; the server-side lost
+#     lifecycle ($61) and demoOutcome storage ($50e) are unchanged.
+if python3 - <<'PY' 2>"$PASS_TMP"
+src = open('src/Clients.tsx').read()
+app = open('src/App.tsx').read()
+dash = open('src/Dashboard.tsx').read()
+# B) Filter union includes "maybe"
+assert '"maybe"' in src, 'Filter union must include "maybe"'
+# B) Maybe seg sits immediately after Active
+i = src.index('const SEG_ORDER')
+seg = src[i:src.index('];', i)]
+assert seg.index('"active"') < seg.index('"maybe"') < seg.index('"archived"'), 'Maybe seg must sit right after Active'
+# B) visible memo filters demoOutcome === "maybe"
+assert 'c.demoOutcome === "maybe"' in src, 'Maybe filter must match demoOutcome === "maybe"'
+# B) maybe excluded from Active/All counts (no double count)
+assert 'c.demoOutcome !== "maybe"' in src, 'maybe leads must be excluded from Active/All counts'
+assert 'maybe: scoped.filter' in src, 'counts.maybe must exist'
+assert 'if (c.demoOutcome === "maybe") return false;' in src, 'maybe leads excluded from Active/Archived/All pipeline rows'
+# B) follow-up note surfaced in the Maybe listing
+i = src.index('filter === "maybe" ?')
+maybe_blk = src[i:src.index('filter === "lost" || filter === "dnc"', i)]
+assert 'Follow-up note' in maybe_blk, 'Maybe listing must surface the follow-up note column'
+assert 'c.followUpNote' in maybe_blk, 'Maybe listing must render followUpNote'
+assert 'Clear maybe' in maybe_blk, 'Maybe listing must offer a way back (Clear maybe)'
+# A) Dashboard Lost card wires the View deep-link; handlers removed
+assert 'onGoToLost' in dash, 'Dashboard Lost card must accept the onGoToLost prop'
+# A) App wires goToLost + initialFilter
+assert 'goToLost' in app and 'initialFilter' in app and 'onGoToLost={goToLost}' in app, 'App must wire the Lost View deep-link + initial filter'
+print('  ✓ source: Maybe seg next to Active filters demoOutcome=maybe with note; Lost card = count + View only')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 62: Maybe bin + Lost-card-View source correct"
+else FAIL=$((FAIL+1)); echo "  ✗ 62: Maybe bin + Lost-card-View source assertion failed"; cat "$PASS_TMP"; fi
+bun run build >/dev/null 2>&1
+NEWEST_JS62=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS62" ] && [ -f "$NEWEST_JS62" ]; then
+  for STR62 in "Maybe" "Follow-up note" "Clear maybe"; do
+    if grep -Fq "$STR62" "$NEWEST_JS62"; then PASS=$((PASS+1)); echo "  ✓ bundle: \"$STR62\" present"
+    else FAIL=$((FAIL+1)); echo "  ✗ bundle: \"$STR62\" missing from $NEWEST_JS62"; fi
+  done
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 62 bundle surface check"
+fi
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 import Login from "./Login";
 import ResetPassword from "./ResetPassword";
 import Dashboard from "./Dashboard";
-import Clients from "./Clients";
+import Clients, { type Filter } from "./Clients";
 import ClientsDirectory from "./ClientsDirectory";
 import Calendar from "./Calendar";
 import Appointments from "./Appointments";
@@ -57,6 +57,12 @@ export default function App() {
    *  view (the middle pipeline stages). Kept separate from leadsStage so the
    *  two pipeline tabs never inherit each other's filter. */
   const [onboardingStage, setOnboardingStage] = useState<string | null>(null);
+  /** Owner direction 2026-08-26 — deep-linked FILTER for the Leads view. The
+   *  Dashboard's "Lost" card "View →" sets this to "lost" and switches to the
+   *  Leads view, which opens on the Lost listing. A plain Leads-nav visit (and
+   *  any stage deep-link) resets it to "active" so a normal tab visit opens
+   *  the pipeline on Active. */
+  const [leadsFilter, setLeadsFilter] = useState<Filter>("active");
   /** 3k — a reset token from the URL hash (`#/reset?token=…`), shown while
    *  the user is signed out. */
   const [resetToken, setResetToken] = useState<string | null>(null);
@@ -196,6 +202,7 @@ export default function App() {
     setResetToken(null);
     setLeadsStage(null);
     setOnboardingStage(null);
+    setLeadsFilter("active");
   }, []);
 
   /* Phase 3d — "View account" from the owner's Clients tab (Accounts panel):
@@ -243,17 +250,20 @@ export default function App() {
       setOnboardingStage(null);
       if (!stage) {
         setLeadsStage(null);
+        setLeadsFilter("active");
         setView("leads");
         return;
       }
       const idx = stages.indexOf(stage);
       if (idx < 0) {
         setLeadsStage(null);
+        setLeadsFilter("active");
         setView("leads");
         return;
       }
       if (idx === stages.length - 1) {
         setLeadsStage(null);
+        setLeadsFilter("active");
         setView("clients");
         return;
       }
@@ -263,10 +273,22 @@ export default function App() {
         return;
       }
       setLeadsStage(stage);
+      setLeadsFilter("active");
       setView("leads");
     },
     [stages, isOwnerOrg],
   );
+
+  /* Owner direction 2026-08-26 — the Dashboard "Lost" card's "View →".
+     Switches to the owner's Leads view with the "Lost" filter active (the
+     Lost listing). Owner-only (the card is owner-only), so this is only ever
+     reached from the owner dashboard. */
+  const goToLost = useCallback(() => {
+    setLeadsStage(null);
+    setOnboardingStage(null);
+    setLeadsFilter("lost");
+    setView("leads");
+  }, []);
 
   if (!booted) {
     return (
@@ -378,6 +400,7 @@ export default function App() {
                 onClick={() => {
                   setLeadsStage(null);
                   setOnboardingStage(null);
+                  setLeadsFilter("active");
                   setView("leads");
                 }}
               >
@@ -527,6 +550,7 @@ export default function App() {
         {effectiveView === "dashboard" ? (
           <Dashboard
             onGoToStage={goToStage}
+            onGoToLost={goToLost}
             stages={stages}
             ownerOrg={isOwnerOrg}
           />
@@ -541,6 +565,7 @@ export default function App() {
             ownerOrg={isOwnerOrg}
             scope={isOwnerOrg ? "first" : "all"}
             initialStage={leadsStage}
+            initialFilter={leadsFilter}
             canEdit={canEditTab("clients")}
           />
         ) : effectiveView === "onboarding" ? (
