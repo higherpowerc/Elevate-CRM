@@ -8522,7 +8522,7 @@ S=$(code -b "$JT" "$BASE/api/admin/orgs")
 TTZ_ID=$(python3 -c "import json;print([x['id'] for x in json.load(open('/tmp/body.json'))['orgs'] if x['name']=='Tz Tenant Co'][0])")
 check "65b: admin deletes tz tenant -> 200" 200 $(code -b "$JT" -X DELETE "$BASE/api/admin/orgs/$TTZ_ID")
 echo "-- 65c. conversion helper: DST-aware (3pm Eastern -> 12pm MST summer, 1pm MST winter) --"
-TZ_JSON=$(cd "$(dirname "$0")/.." && bun -e 'import { convertNaive, mstToClientLocal, clientLocalToMst } from "./src/timezone.ts"; console.log(JSON.stringify({sumNYtoMST:convertNaive("2026-07-15T15:00","America/New_York","America/Phoenix"), winNYtoMST:convertNaive("2026-01-15T15:00","America/New_York","America/Phoenix"), mstToNYsum:mstToClientLocal("2026-07-15T12:00","America/New_York"), nyToMSTsum:clientLocalToMst("2026-07-15T15:00","America/New_York"), winMSTtoNY:mstToClientLocal("2026-01-15T13:00","America/New_York"), chiStand:mstToClientLocal("2026-01-15T12:00","America/Chicago")})')
+TZ_JSON=$(bun -e 'import { convertNaive, mstToClientLocal, clientLocalToMst } from "./src/timezone.ts"; console.log(JSON.stringify({sumNYtoMST:convertNaive("2026-07-15T15:00","America/New_York","America/Phoenix"), winNYtoMST:convertNaive("2026-01-15T15:00","America/New_York","America/Phoenix"), mstToNYsum:mstToClientLocal("2026-07-15T12:00","America/New_York"), nyToMSTsum:clientLocalToMst("2026-07-15T15:00","America/New_York"), winMSTtoNY:mstToClientLocal("2026-01-15T13:00","America/New_York"), chiStand:mstToClientLocal("2026-01-15T12:00","America/Chicago")})')
 if python3 - "$TZ_JSON" <<'PY' 2>"$PASS_TMP"
 import json,sys
 d=json.loads(sys.argv[1])
@@ -8541,10 +8541,10 @@ S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
   -d "{\"title\":\"TZ Onboarding call\",\"scheduledAt\":\"2026-07-15T12:00\",\"duration\":30,\"clientId\":$TZ_ID}" "$BASE/api/appointments")
 check "65d: owner schedules appointment linked to NY-lead -> 201" 201 "$S"
 S=$(code -b "$JT" "$BASE/api/appointments")
-if python3 - <<'PY' 2>"$PASS_TMP"
-import json
+if python3 - "$TZ_ID" <<'PY' 2>"$PASS_TMP"
+import json,sys
 d=json.load(open('/tmp/body.json'))
-txz=[a for a in d['appointments'] if a.get('clientId')==$TZ_ID]
+txz=[a for a in d['appointments'] if a.get('clientId')==int(sys.argv[1])]
 assert txz and txz[0].get('clientTimezone')=='America/Chicago', txz
 print("  ✓ appointment carries clientTimezone America/Chicago")
 PY
