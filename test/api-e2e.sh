@@ -6514,10 +6514,14 @@ if [ -f server/invoices.ts ] && grep -Fq 'generateInvoicePdf' server/invoices.ts
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: invoice/pdf markers missing"
 fi
-if grep -Fq 'Bill this account' src/Finance.tsx && grep -Fq 'ownerOrg' src/Finance.tsx && grep -Fq 'Mark paid' src/Finance.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: Finance tab billing panel (amount + interval + mark-paid fallback)"
+# Owner 2026-08-27 (backlog 8b9bbe2c): the single-client "Bill a client
+# account" search window became the "Paying clients" hub — the per-client
+# payment-link action (amount + interval) now lives on each hub row, and
+# "Mark paid" stays as the manual fallback in the Stripe status window.
+if grep -Fq 'handleHubPaymentLink' src/Finance.tsx && grep -Fq 'clientPaymentLink(c.id, { amount: a, interval: hubLinkIntervals' src/Finance.tsx && grep -Fq 'ownerOrg' src/Finance.tsx && grep -Fq 'Mark paid' src/Finance.tsx && ! grep -Fq 'Bill this account' src/Finance.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: Finance tab billing (per-client payment link in the paying-clients hub + mark-paid fallback)"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: Finance.tsx billing panel markers missing"
+  FAIL=$((FAIL+1)); echo "  ✗ source: Finance.tsx hub billing markers missing or old bill window still present"
 fi
 # Owner 2026-08-25: the payment-status tracker is its OWN independent
 # "Stripe status" window (signed+unpaid "Pending payment" rows + billed-status
@@ -9117,6 +9121,262 @@ check "69b: orgs list final → 200" 200 "$S"
 grep -q "\"id\":$BYSTANDER69," /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 69b: bystander org still listed after everything (isolation intact)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 69b: bystander org vanished"; }
 S=$(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$BYSTANDER69")
 check "69b: cleanup bystander org → 200" 200 "$S"
+
+echo "== 70. Finance 'Active clients on a plan' = contracted definition (owner 2026-08-27, backlog 61e598ec) =="
+# Owner definition of an ACTIVE client: completed ALL lead-flow stages (the
+# record sits in the org's TERMINAL "Sold" stage) + agreement SIGNED + payment
+# RECEIVED (paymentStatus 'paid'). The old KPI counted EVERY non-lost /
+# non-archived / non-orphaned record regardless of funnel progress or
+# paperwork (8 on live data — mostly leads). DECISION (recorded in the PR):
+# the Subscription MRR figure uses the SAME filter — the KPI note says
+# "Sum of N active clients' monthlyAmount", so the money and the count must
+# tell the same story; MRR is money actually under contract.
+# Locks on a throwaway owner server (fresh DB, the §63 pattern): one client
+# in each decisive state, then mirror the Finance computation over
+# /api/clients and prove ONLY the fully-contracted client counts.
+MOCK70=$(mktemp -d)
+start_crm 3032 "$MOCK70/db" "$MOCK70/srv.log" "$MOCK70/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET -u RESEND_API_KEY -u RESEND_URL -u TEST_EMAIL_TO
+B70=http://localhost:3032
+J70=$(mktemp)
+S=$(code -c "$J70" -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B70/api/auth/login")
+check "70a: owner login → 200" 200 "$S"
+code -b "$J70" "$B70/api/settings" > /dev/null
+TERM70=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+FIRST70=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
+echo "     (owner buckets: first=\"$FIRST70\", terminal/sold=\"$TERM70\")"
+# sign70 <clientId> — the REAL e-sign flow: mint the agreement (the response
+# carries the raw signUrl so the owner can forward it when email fails) and
+# redeem the token publicly.
+sign70() {
+  code -b "$J70" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$1}" "$B70/api/agreements/send" > /dev/null
+  TOKEN70=$(python3 -c "import json;u=json.load(open('/tmp/body.json')).get('signUrl','');print(u.rsplit('/sign/',1)[1] if '/sign/' in u else '')")
+  [ -n "$TOKEN70" ] || { echo "  ✗ 70: no signUrl in agreements/send response: $(cat /tmp/body.json)"; FAIL=$((FAIL+1)); return 1; }
+  code -b "$J70" -X POST -H 'Content-Type: application/json' -d '{"action":"sign","name":"Hub Signer","consent":true}' "$B70/api/sign/$TOKEN70" > /dev/null
+}
+echo "-- 70b. Seed one client per decisive state --"
+S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Active Co\",\"contactName\":\"A\",\"email\":\"active70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":40,\"dealValue\":400,\"stage\":\"$TERM70\"}" "$B70/api/clients")
+check "70b: create Hub Active Co (terminal, mo 40) → 201" 201 "$S"
+ACTIVE70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+sign70 "$ACTIVE70"
+S=$(code -b "$J70" -X POST "$B70/api/clients/$ACTIVE70/payment-paid")
+check "70b: Hub Active Co payment received → 200 (FULLY contracted)" 200 "$S"
+S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Signed Unpaid Co\",\"contactName\":\"B\",\"email\":\"unpaid70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":30,\"dealValue\":300,\"stage\":\"$TERM70\"}" "$B70/api/clients")
+check "70b: create Hub Signed Unpaid Co (terminal, mo 30) → 201" 201 "$S"
+UNPAID70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+sign70 "$UNPAID70"
+S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Unsigned Co\",\"contactName\":\"C\",\"email\":\"unsigned70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":20,\"dealValue\":200,\"stage\":\"$TERM70\"}" "$B70/api/clients")
+check "70b: create Hub Unsigned Co (terminal, no agreement, mo 20) → 201" 201 "$S"
+UNSIGNED70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Midfunnel Co\",\"contactName\":\"D\",\"email\":\"mid70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":60,\"dealValue\":600,\"stage\":\"$FIRST70\"}" "$B70/api/clients")
+check "70b: create Hub Midfunnel Co (FIRST stage, mo 60) → 201" 201 "$S"
+MID70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+sign70 "$MID70"
+S=$(code -b "$J70" -X POST "$B70/api/clients/$MID70/payment-paid")
+check "70b: Hub Midfunnel Co payment received" 200 "$S"
+# API reality check: the e-sign flow AUTO-ADVANCES a signed record to the
+# terminal stage (§25c boot-backfill semantics), so signing alone can never
+# leave a record mid-funnel. The one way a signed+paid record ends up outside
+# the terminal stage is the OWNER moving it back — do exactly that, which is
+# the case the soldStage clause of the contracted definition guards.
+S=$(code -b "$J70" "$B70/api/clients/$MID70")
+MIDSTAGE70=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['stage'])")
+if [ "$MIDSTAGE70" = "$TERM70" ]; then PASS=$((PASS+1)); echo "  ✓ 70b: signing auto-advanced the record to the terminal stage (\"$TERM70\")"; else FAIL=$((FAIL+1)); echo "  ✗ 70b: expected signed record auto-advanced to $TERM70, got $MIDSTAGE70"; fi
+S=$(code -b "$J70" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Midfunnel Co\",\"clientType\":\"commercial\",\"stage\":\"$FIRST70\"}" "$B70/api/clients/$MID70")
+check "70b: owner parks the signed+paid record back in the FIRST stage → 200" 200 "$S"
+S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Lost Co\",\"contactName\":\"E\",\"email\":\"lost70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":50,\"dealValue\":500,\"stage\":\"$TERM70\"}" "$B70/api/clients")
+check "70b: create Hub Lost Co (terminal, signed+paid, mo 50) → 201" 201 "$S"
+LOST70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+sign70 "$LOST70"
+S=$(code -b "$J70" -X POST "$B70/api/clients/$LOST70/payment-paid")
+check "70b: Hub Lost Co payment received" 200 "$S"
+S=$(code -b "$J70" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Lost Co\",\"clientType\":\"commercial\",\"lost\":true,\"lostReason\":\"Canceled\"}" "$B70/api/clients/$LOST70")
+check "70b: mark Hub Lost Co lost → 200" 200 "$S"
+echo "-- 70c. Orphaned signed+paid Sold record (DB-injected, the §63 fabrication) --"
+cat > "$MOCK70/inject.ts" <<TS
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+const owner = db.query("SELECT org_id FROM users WHERE role='admin' ORDER BY id LIMIT 1").get() as { org_id: number };
+const r = db.query("INSERT INTO clients (org_id, company_name, client_type, deal_value, monthly_amount, stage, agreement_status, payment_status, provisioned_org_id) VALUES (?, ?, 'commercial', 700, 70, ?, 'signed', 'paid', 987654321)").run(owner.org_id, "Hub Orphan Co", process.env.TERM70 ?? "Sold");
+console.log("ORPHAN70 " + r.lastInsertRowid);
+TS
+ORPHAN70=$(DATA_DIR="$MOCK70/db" TERM70="$TERM70" bun "$MOCK70/inject.ts" 2>/dev/null | grep '^ORPHAN70 ' | awk '{print $2}')
+[ -n "$ORPHAN70" ] && { PASS=$((PASS+1)); echo "  ✓ 70c: orphaned signed+paid Sold record fabricated (id=$ORPHAN70)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 70c: orphan inject failed"; }
+echo "-- 70d. Mirror the Finance cockpit over /api/clients — ONLY the fully-contracted client counts --"
+S=$(code -b "$J70" "$B70/api/clients?archived=1")
+check "70d: owner GET clients → 200" 200 "$S"
+if ACTIVE70="$ACTIVE70" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))['clients']
+active = [c for c in d if c.get('soldStage') is True and not c.get('lost') and not c.get('archived')
+          and not c.get('orphanedAccount') and c.get('agreementStatus') == 'signed'
+          and c.get('paymentStatus') == 'paid']
+assert len(active) == 1, [(c['companyName'], c.get('soldStage'), c.get('agreementStatus'), c.get('paymentStatus')) for c in d]
+assert active[0]['companyName'] == 'Hub Active Co', active
+assert active[0]['id'] == int(os.environ['ACTIVE70'])
+mrr = sum(c.get('monthlyAmount') or 0 for c in active)
+assert abs(mrr - 40) < 0.001, mrr
+print("  ✓ activeCount = 1 (only Hub Active Co) · Subscription MRR = 40 — same filter")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 70d: active-set mirror failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))['clients']
+by = {c['companyName']: c for c in d}
+excl = {
+  'Hub Signed Unpaid Co': 'not paid',
+  'Hub Unsigned Co': 'agreement not signed',
+  'Hub Midfunnel Co': 'parked mid-funnel (not soldStage)',
+  'Hub Lost Co': 'lost',
+  'Hub Orphan Co': 'orphanedAccount',
+}
+for name, why in excl.items():
+    c = by[name]
+    counts = (c.get('soldStage') is True and not c.get('lost') and not c.get('archived')
+              and not c.get('orphanedAccount') and c.get('agreementStatus') == 'signed'
+              and c.get('paymentStatus') == 'paid')
+    assert not counts, (name, why, c)
+assert by['Hub Midfunnel Co'].get('soldStage') is False, 'signed+paid record parked mid-funnel must NOT be soldStage'
+assert by['Hub Active Co'].get('soldStage') is True, 'terminal record must be soldStage'
+print("  ✓ each excluded client fails the definition for exactly the expected reason")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 70d: exclusion-reason assertions failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 70e. soldStage is OWNER-only: a tenant response never carries the key --"
+S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"SoldKey Tenant Co","email":"soldkey70@tenant.example","password":"tenant70pass"}' "$B70/api/admin/orgs")
+check "70e: owner creates tenant org → 201" 201 "$S"
+JT70=$(mktemp)
+S=$(code -c "$JT70" -b "$JT70" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"soldkey70@tenant.example","password":"tenant70pass"}' "$B70/api/auth/login")
+check "70e: tenant login → 200" 200 "$S"
+code -b "$JT70" "$B70/api/settings" > /dev/null
+TT70=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+S=$(code -b "$JT70" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Tenant Terminal Co\",\"clientType\":\"residential\",\"stage\":\"$TT70\"}" "$B70/api/clients")
+check "70e: tenant creates a client in ITS terminal stage → 201" 201 "$S"
+S=$(code -b "$JT70" "$B70/api/clients?archived=1")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))['clients']
+assert d, 'tenant should see its own client'
+assert all('soldStage' not in c for c in d), 'soldStage leaked to a tenant response'
+assert all('agreementStatus' not in c and 'paymentStatus' not in c for c in d), 'owner billing keys leaked to a tenant'
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 70e: tenant terminal-stage client carries NO soldStage/agreementStatus/paymentStatus"; else FAIL=$((FAIL+1)); echo "  ✗ 70e: owner-only key leak:"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 70f. Source guards: the Finance filter + server flag are wired --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+fin = open('src/Finance.tsx').read()
+api = open('server/api.ts').read()
+types = open('src/types.ts').read()
+assert 'c.soldStage === true' in fin, 'Finance active filter must require the terminal (Sold) stage'
+assert 'c.agreementStatus === "signed"' in fin, 'Finance active filter must require a SIGNED agreement'
+assert 'c.paymentStatus === "paid"' in fin, 'Finance active filter must require RECEIVED payment'
+assert 'Sold · agreement signed · payment received' in fin, 'KPI note must state the definition'
+assert 'soldStage: isFinalStage(row.org_id, row.stage)' in api, 'server must compute soldStage'
+assert 'soldStage?: boolean' in types, 'Client type must carry soldStage'
+print('ok')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 70f: Finance contracted-active filter + server soldStage flag present"; else FAIL=$((FAIL+1)); echo "  ✗ 70f: source guard missing:"; cat "$PASS_TMP" 2>/dev/null; fi
+stop_crm "$MOCK70/srv.pid"; sleep 0.3
+rm -rf "$MOCK70" "$J70" "$JT70"
+echo "  ✓ 70: contracted active-client definition verified (throwaway owner server torn down)"
+
+
+echo "== 71. Finance 'Paying clients' hub (owner 2026-08-27, backlog 8b9bbe2c) =="
+# The old single-client "Bill a client account" search window is now a HUB:
+# every paying client listed at once (no per-client search), meaningful fields
+# per row, INLINE tier / subscription / deal-value edits through the SAME
+# org-scoped PUT path the account hub (PR #106) uses, and the per-client
+# payment-link action kept. Owner-only; tenants never see it.
+echo "-- 71a. Source guards: hub structure + old single-client bill window gone --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+fin = open('src/Finance.tsx').read()
+assert 'aria-label="Paying clients"' in fin, 'hub card missing'
+assert 'Paying <em className="serif">clients</em>' in fin, 'hub heading missing'
+assert 'payingClients' in fin and 'soldStage === true' in fin, 'hub set must key off soldStage'
+assert 'handleHubSave' in fin and 'api.updateClient' in fin, 'inline edits must use the org-scoped PUT path'
+assert 'handleHubPaymentLink' in fin and 'api.clientPaymentLink' in fin, 'payment-link action must be kept'
+assert 'PACKAGE_TIERS.map' in fin, 'tier select missing'
+for legacy in ('Bill</em> a client account', 'billClientId', 'handleBill', 'Bill this account'):
+    assert legacy not in fin, f'legacy bill-window marker still present: {legacy}'
+# the hub renders ONLY for the owner workspace (same gate as the old window)
+seg = fin[fin.index('aria-label="Paying clients"') - 400 :]
+assert 'ownerOrg && canEdit' in fin[fin.rindex('{ownerOrg && canEdit', 0, fin.index('aria-label="Paying clients"')):], 'hub must be owner-only'
+print('ok')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 71a: paying-clients hub wired, legacy bill window removed, owner-only gate kept"; else FAIL=$((FAIL+1)); echo "  ✗ 71a: hub source guards failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 71b. The hub's data + inline edit path (same PUT as the PR #106 account hub) --"
+JT71=$(mktemp)
+S=$(code -c "$JT71" -b "$JT71" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "71b: owner login → 200" 200 "$S"
+code -b "$JT71" "$BASE/api/settings" > /dev/null
+TERM71=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+S=$(code -b "$JT71" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Deal Co\",\"contactName\":\"H\",\"email\":\"hub71@deal.example\",\"clientType\":\"commercial\",\"monthlyAmount\":200,\"dealValue\":5000,\"stage\":\"$TERM71\"}" "$BASE/api/clients")
+check "71b: create sold client Hub Deal Co (mo 200 / deal 5000) → 201" 201 "$S"
+HUB71=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c.get('soldStage') is True, c
+assert c.get('tier', 'MISSING') == '', c.get('tier')
+assert c.get('paymentStatus') == 'none', c.get('paymentStatus')
+print("  ✓ soldStage true, tier unset, payment none — the row the hub lists")
+PY
+[ $? -eq 0 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "  ✗ 71b: hub-row assertions failed:"; cat "$PASS_TMP" 2>/dev/null; }
+# THE HUB EDIT: one PUT carrying exactly what the hub sends — tier + deal
+# value + subscription level (companyName/clientType required by the
+# validator). Server persists ONLY these keys (partial-update rule).
+S=$(code -b "$JT71" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Hub Deal Co","clientType":"commercial","tier":"tier2","dealValue":6000,"monthlyAmount":250}' "$BASE/api/clients/$HUB71")
+check "71b: hub PUT (tier2 + deal 6000 + subscription 250) → 200" 200 "$S"
+S=$(code -b "$JT71" "$BASE/api/clients/$HUB71")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['tier'] == 'tier2', c.get('tier')
+assert c['dealValue'] == 6000, c.get('dealValue')
+assert c['monthlyAmount'] == 250, c.get('monthlyAmount')
+assert c['stage'] != '', c
+assert sorted(c['services']) == ['CRM', 'Website'], c.get('services')  # tier's auto tags merged
+print("  ✓ tier/subscription/deal value persisted via the hub path; tier tags merged; nothing else clobbered")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 71b: hub edit persistence failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+echo "-- 71c. The hub's payment-link action keeps its gates (409 unsigned → 503 no Stripe) --"
+S=$(code -b "$JT71" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":250,"interval":"month"}' "$BASE/api/clients/$HUB71/payment-link")
+check "71c: payment link on UNSIGNED sold client → 409 (hub shows the sign gate)" 409 "$S"
+code -b "$JT71" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$HUB71}" "$BASE/api/agreements/send" > /dev/null
+TOKEN71=$(python3 -c "import json;u=json.load(open('/tmp/body.json')).get('signUrl','');print(u.rsplit('/sign/',1)[1] if '/sign/' in u else '')")
+check "71c: agreement generated for the hub client → 200" 200 $(code -b "$JT71" -X POST -H 'Content-Type: application/json' -d '{"action":"sign","name":"Hub Signer","consent":true}' "$BASE/api/sign/$TOKEN71")
+S=$(code -b "$JT71" -X POST -H 'Content-Type: application/json' \
+  -d '{"amount":250,"interval":"month"}' "$BASE/api/clients/$HUB71/payment-link")
+check "71c: payment link on SIGNED client, Stripe keys unset → 503 (hub shows the warn)" 503 "$S"
+echo "-- 71d. Hub membership: the sold row stays listed after the edits (mirrors payingClients) --"
+S=$(code -b "$JT71" "$BASE/api/clients?archived=1")
+if HUB71="$HUB71" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))['clients']
+hub = [c for c in d if c.get('soldStage') is True and not c.get('lost') and not c.get('archived')
+       and not c.get('orphanedAccount')]
+assert any(c['id'] == int(os.environ['HUB71']) for c in hub), 'edited client fell out of the hub set'
+print("  ✓ Hub Deal Co still in the hub set after the inline edits")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 71d: hub membership failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+S=$(code -b "$JT71" -X DELETE "$BASE/api/clients/$HUB71")
+check "71d: cleanup Hub Deal Co → 200" 200 "$S"
+rm -f "$JT71"
+echo "  ✓ 71: paying-clients hub verified"
+
 
 echo "RESULT: $PASS passed, $FAIL failed"
 

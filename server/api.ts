@@ -555,6 +555,14 @@ function toClient(row: ClientRow, ownerOrg = false) {
           // "Sold MRR" and the Finance subscription MRR. OWNER-only; used by
           // the Finance subscription-MRR computation to skip dead accounts.
           orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id),
+          // Owner 2026-08-27 (Finance active-client fix, backlog 61e598ec) —
+          // true when this record sits in its org's TERMINAL ("Sold") pipeline
+          // stage, i.e. the lead flow is COMPLETE. Feeds the Finance cockpit's
+          // contracted active-client definition (terminal stage + agreement
+          // SIGNED + payment RECEIVED) and the paying-clients hub listing.
+          // OWNER-only, the SAME rule as tier/agreementStatus: tenant orgs
+          // never receive the key.
+          soldStage: isFinalStage(row.org_id, row.stage),
           // Owner 2026-08-27 — package tier ('' unset | tier1..4). OWNER-only,
           // the SAME rule as agreementStatus (comment above): tenant orgs
           // never get the key, ever.

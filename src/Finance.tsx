@@ -4,6 +4,8 @@ import { usePii, blurPii } from "./pii";
 import {
   INVOICE_STATUSES,
   INVOICE_STATUS_TONE,
+  PACKAGE_TIERS,
+  TIER_SHORT_LABELS,
   fmtDate,
   invoiceStatusLabel,
   money,
@@ -127,15 +129,26 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
    * workspace (ownerOrg); tenants never see any of it. */
 
   /** Subscription MRR — the org's OWN subscription book: the sum of
-   *  `monthlyAmount` over the owner's ACTIVE (non-lost, non-archived) client
-   *  records. Complements (does not replace) the dashboard's "Sold MRR" KPI,
-   *  which is deal-value based. */
+   *  `monthlyAmount` over the owner's ACTIVE clients. ACTIVE is the owner's
+   *  contracted definition (2026-08-27, backlog 61e598ec): the record
+   *  completed ALL lead-flow stages (it sits in the org's terminal "Sold"
+   *  stage — `soldStage`, server-computed), the agreement is SIGNED, and the
+   *  payment is RECEIVED (`paymentStatus === "paid"`). Lost / archived /
+   *  orphaned records never count. The MRR figure uses the SAME filter as the
+   *  "Active clients on a plan" count — the money and the count must tell the
+   *  same story (MRR = money actually under contract). Complements (does not
+   *  replace) the dashboard's "Sold MRR" KPI, which is deal-value based. */
   const subscriptionMrr = useMemo(() => {
     if (!ownerOrg) return { mrr: 0, activeCount: 0 };
-    // Active = not lost, not archived, and NOT orphaned: a sold client whose
-    // account (org) was deleted must never count toward Subscription MRR
-    // (owner 2026-08-26 incident guard — orphaned records must not inflate MRR).
-    const active = clients.filter((c) => !c.lost && !c.archived && !c.orphanedAccount);
+    const active = clients.filter(
+      (c) =>
+        c.soldStage === true &&
+        !c.lost &&
+        !c.archived &&
+        !c.orphanedAccount &&
+        c.agreementStatus === "signed" &&
+        c.paymentStatus === "paid",
+    );
     const mrr = active.reduce((s, c) => s + (Number(c.monthlyAmount) || 0), 0);
     return { mrr, activeCount: active.length };
   }, [ownerOrg, clients]);
@@ -263,60 +276,125 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
   }
 
   /* Phase 5 — Stripe billing for client accounts (owner direction
-     2026-08-18). Owner workspace only (ownerOrg prop). "Bill this account"
-     creates a Stripe Payment Link at the owner-entered amount (no hard-coded
-     rates) and emails it; a Stripe webhook auto-flips the Payment column to
-     paid + emails the invoice PDF; "Mark paid" stays as the manual fallback. */
-  const [billClientId, setBillClientId] = useState("");
-  const [billAmount, setBillAmount] = useState("");
-  const [billInterval, setBillInterval] = useState<"month" | "one_time">("month");
-  const [billResult, setBillResult] = useState<{
-    url: string;
-    amountCents: number;
-    emailTo: string;
-    emailStatus: string;
-    emailError?: string;
-  } | null>(null);
-  const [billNotice, setBillNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+     2026-08-18). Owner workspace only (ownerOrg prop). The old single-client
+     "Bill a client account" search form was rebuilt (owner 2026-08-27,
+     backlog 8b9bbe2c) into the "Paying clients" hub below: every paying
+     client listed at once, inline tier / subscription / deal-value edits via
+     the SAME org-scoped PUT the account hub uses, and the per-client
+     payment-link action kept — create a Stripe Payment Link at the
+     owner-entered amount (no hard-coded rates) and email it; a Stripe webhook
+     auto-flips the Payment column to paid + emails the invoice PDF; "Mark
+     paid" stays as the manual fallback in the Stripe status window. */
 
-  async function handleBill(e: FormEvent) {
-    e.preventDefault();
-    const a = Number(billAmount);
-    if (!billClientId || !billAmount.trim() || !Number.isFinite(a) || a <= 0) {
-      setError("Choose a client and enter a payment amount in dollars.");
+  /** The hub's set: every owner client who COMPLETED the lead flow (sits in
+   *  the org's terminal "Sold" stage — server-computed `soldStage`) and is
+   *  not lost / archived / orphaned. Broader than the contracted "active"
+   *  subset on purpose: signed-but-unpaid and agreement-pending rows need to
+   *  be visible here so the owner can manage (tier / subscription / deal
+   *  value) and bill them (payment link) — the exact clients a strict
+   *  signed+paid filter would hide. Each row badges its state. */
+  const payingClients = useMemo(() => {
+    if (!ownerOrg) return [];
+    return clients
+      .filter((c) => c.soldStage === true && !c.lost && !c.archived && !c.orphanedAccount)
+      .sort((a, b) => a.companyName.localeCompare(b.companyName));
+  }, [ownerOrg, clients]);
+
+  /** Row state badge: how far along the contracted flow this paying client is. */
+  function payingState(c: Client): { label: string; tone: string } {
+    if (c.agreementStatus === "signed" && c.paymentStatus === "paid")
+      return { label: "Active · paid", tone: "tone-green" };
+    if (c.agreementStatus === "signed") return { label: "Signed · unpaid", tone: "tone-amber" };
+    return { label: "Agreement pending", tone: "tone-gray" };
+  }
+
+  /* Inline-edit drafts, keyed by client id (fall back to the stored values). */
+  const [hubTiers, setHubTiers] = useState<Record<number, string>>({});
+  const [hubMonthly, setHubMonthly] = useState<Record<number, string>>({});
+  const [hubDeal, setHubDeal] = useState<Record<number, string>>({});
+  /* Per-row payment-link amount + interval (default: the subscription level). */
+  const [hubLinkAmounts, setHubLinkAmounts] = useState<Record<number, string>>({});
+  const [hubLinkIntervals, setHubLinkIntervals] = useState<Record<number, "month" | "one_time">>({});
+  const [hubSavingId, setHubSavingId] = useState<number | null>(null);
+  const [hubLinkingId, setHubLinkingId] = useState<number | null>(null);
+  const [hubNotice, setHubNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+
+  /** Save a hub row's inline edits. Reuses the EXACT update path the account
+   *  hub in Clients/Accounts.tsx (PR #106) uses — PUT /api/clients/:id —
+   *  which is org-scoped server-side and persists ONLY the fields the body
+   *  carries (omitted keys never clobber stored values). companyName +
+   *  clientType are required by the server's validator on every PUT; the hub
+   *  renders for the owner workspace only (ownerOrg), so tenants never reach
+   *  it. `override` lets the tier select save its NEW value on change. */
+  async function handleHubSave(c: Client, override?: { tier?: string; monthly?: string; deal?: string }) {
+    const tier = override?.tier ?? hubTiers[c.id] ?? c.tier ?? "";
+    const monthlyRaw = (override?.monthly ?? hubMonthly[c.id] ?? (c.monthlyAmount ? String(c.monthlyAmount) : "")).trim();
+    const dealRaw = (override?.deal ?? hubDeal[c.id] ?? String(c.dealValue ?? 0)).trim();
+    const monthly = monthlyRaw === "" ? 0 : Number(monthlyRaw);
+    const deal = dealRaw === "" ? 0 : Number(dealRaw);
+    if (!Number.isFinite(monthly) || monthly < 0) {
+      setHubNotice({ kind: "warn", text: `Subscription for ${c.companyName} must be a non-negative number.` });
       return;
     }
-    setBusy(true);
-    setError(null);
-    setBillNotice(null);
-    setBillResult(null);
+    if (!Number.isFinite(deal) || deal < 0) {
+      setHubNotice({ kind: "warn", text: `Deal value for ${c.companyName} must be a non-negative number.` });
+      return;
+    }
+    const changed =
+      tier !== (c.tier ?? "") ||
+      monthly !== (Number(c.monthlyAmount) || 0) ||
+      deal !== (Number(c.dealValue) || 0);
+    if (!changed) return;
+    setHubSavingId(c.id);
+    setHubNotice(null);
     try {
-      const r = await api.clientPaymentLink(Number(billClientId), { amount: a, interval: billInterval });
-      setBillResult({
-        url: r.url,
-        amountCents: r.amountCents,
-        emailTo: r.emailTo,
-        emailStatus: r.emailStatus,
-        emailError: r.emailError,
+      await api.updateClient(c.id, {
+        companyName: c.companyName,
+        clientType: c.clientType,
+        ...(tier !== (c.tier ?? "") ? { tier: tier as NonNullable<Client["tier"]> } : {}),
+        ...(monthly !== (Number(c.monthlyAmount) || 0) ? { monthlyAmount: monthly } : {}),
+        ...(deal !== (Number(c.dealValue) || 0) ? { dealValue: deal } : {}),
       });
-      setBillNotice({
+      setHubNotice({ kind: "success", text: `Saved changes for ${c.companyName}.` });
+      await load();
+    } catch (err) {
+      setHubNotice({ kind: "warn", text: err instanceof Error ? err.message : "Save failed." });
+    } finally {
+      setHubSavingId(null);
+    }
+  }
+
+  /** The hub's per-client payment-link action (kept from the old bill window):
+   *  create + email the Stripe payment link at the owner-entered amount. */
+  async function handleHubPaymentLink(c: Client) {
+    const raw = (hubLinkAmounts[c.id] ?? (c.monthlyAmount ? String(c.monthlyAmount) : "")).trim();
+    const a = Number(raw);
+    if (!raw || !Number.isFinite(a) || a <= 0) {
+      setHubNotice({ kind: "warn", text: `Enter an amount for ${c.companyName} before sending the payment link.` });
+      return;
+    }
+    setHubLinkingId(c.id);
+    setHubNotice(null);
+    try {
+      await api.clientPaymentLink(c.id, { amount: a, interval: hubLinkIntervals[c.id] ?? "month" });
+      setHubNotice({
         kind: "success",
-        text: `Payment link sent to ${r.emailTo} — when the client pays, the bill flips to Paid automatically.`,
+        text: `Payment link sent to ${c.companyName} — when the client pays, the bill flips to Paid automatically.`,
       });
       await load();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setError("This client's agreement must be signed before billing them.");
+        setHubNotice({ kind: "warn", text: "This client's agreement must be signed before sending a payment link." });
       } else if (err instanceof ApiError && err.status === 503) {
-        setBillNotice({
+        setHubNotice({
           kind: "warn",
-          text: "Stripe is not connected yet. Once Stripe keys are added this form will create + email the payment link.",
+          text: "Stripe is not connected yet. Once Stripe keys are added, this will email the client the payment link.",
         });
       } else {
-        setError(err instanceof Error ? err.message : "Could not create the payment link.");
+        setHubNotice({ kind: "warn", text: err instanceof Error ? err.message : "Could not send the payment link." });
       }
     } finally {
-      setBusy(false);
+      setHubLinkingId(null);
     }
   }
 
@@ -400,9 +478,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
       setSendingId(null);
     }
   }
-  const billFormRef = useRef<HTMLDivElement>(null);
-  const billAmountRef = useRef<HTMLInputElement>(null);
-
   if (!invoices) {
     return error ? (
       <div className="alert alert-error">{error}</div>
@@ -490,7 +565,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
             <div className="card kpi" aria-label="Active subscription clients">
               <span className="kpi-label">Active clients on a plan</span>
               <span className="kpi-value">{subscriptionMrr.activeCount}</span>
-              <span className="kpi-note">Non-lost, non-archived records with a monthly plan</span>
+              <span className="kpi-note">Sold · agreement signed · payment received</span>
             </div>
           </div>
 
@@ -737,79 +812,166 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
       )}
 
       {ownerOrg && canEdit && (
-        <div className="card inv-add stripe-bill" ref={billFormRef}>
+        <div className="card stripe-bill paying-hub" aria-label="Paying clients">
           <div className="page-head" style={{ marginBottom: "var(--stack-gap)" }}>
             <div>
               <h2 className="h3">
-                <em className="serif">Bill</em> a client account
+                Paying <em className="serif">clients</em>
               </h2>
               <p className="page-sub">
-                Create a Stripe payment link at the amount you set — the client pays on Stripe's
-                checkout, the bill flips to Paid automatically, and the invoice is emailed.
+                Every client who completed the lead flow (Sold) in one place — edit the package tier,
+                subscription level, or deal value inline (saves on save/blur), and send each client's
+                Stripe payment link. Active on a plan = signed agreement + payment received.
               </p>
             </div>
           </div>
-          <form className="inv-add-row" onSubmit={handleBill}>
-            <SearchableSelect
-              piiBlur={pii}
-              className="inv-add-client"
-              value={billClientId}
-              onChange={setBillClientId}
-              options={clients.map((c) => ({
-                value: String(c.id),
-                label: c.companyName + (c.archived ? " (archived)" : ""),
-              }))}
-              placeholder="Search clients…"
-              ariaLabel="Billing client"
-              emptyLabel="No client"
-            />
-            <div className="inv-add-amount">
-              <span className="inv-dollar" aria-hidden="true">
-                $
-              </span>
-              <input
-                ref={billAmountRef}
-                type="number"
-                min="0.01"
-                step="0.01"
-                inputMode="decimal"
-                value={billAmount}
-                onChange={(e) => setBillAmount(e.target.value)}
-                placeholder="0.00"
-                aria-label="Billing amount"
-              />
-            </div>
-            <select
-              value={billInterval}
-              onChange={(e) => setBillInterval(e.target.value as "month" | "one_time")}
-              aria-label="Billing interval"
-            >
-              <option value="month">Monthly subscription</option>
-              <option value="one_time">One-time invoice</option>
-            </select>
-            <button className="btn btn-primary" disabled={busy}>
-              Bill this account
-            </button>
-          </form>
-          {billResult && (
-            <p className="inv-notes" style={{ marginTop: ".5rem" }}>
-              Payment link sent to {billResult.emailTo} ({money(billResult.amountCents / 100)}
-              {billInterval === "month" ? "/mo" : " one-time"}) ·{" "}
-              <a href={billResult.url} target="_blank" rel="noreferrer">
-                open checkout ↗
-              </a>
-              {billResult.emailError && <span className="tone-red"> · email failed: {billResult.emailError}</span>}
-            </p>
-          )}
-          {billNotice && (
+          {hubNotice && (
             <div
-              className={billNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
-              role={billNotice.kind === "success" ? "status" : "alert"}
-              style={{ marginTop: ".5rem" }}
+              className={hubNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+              role={hubNotice.kind === "success" ? "status" : "alert"}
+              style={{ marginBottom: "var(--stack-gap)" }}
             >
-              {billNotice.text}
+              {hubNotice.text}
             </div>
           )}
+          {payingClients.length === 0 ? (
+            <p className="cockpit-empty">
+              No paying clients yet — a client lands here when they reach the end of the pipeline (Sold).
+            </p>
+          ) : (
+            <div className="table-wrap">
+              <table className="table paying-table">
+                <thead>
+                  <tr>
+                    <th>Client</th>
+                    <th>Package tier</th>
+                    <th className="num">Subscription/mo</th>
+                    <th className="num">Deal value</th>
+                    <th>Payment</th>
+                    <th>Bill</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payingClients.map((c) => {
+                    const st = payingState(c);
+                    return (
+                      <tr key={c.id}>
+                        <td data-label="Client">
+                          <span className={`cell-name${blurPii(pii)}`}>{c.companyName}</span>
+                          <span className={`badge ${st.tone}`}>{st.label}</span>
+                        </td>
+                        <td data-label="Package tier">
+                          <select
+                            aria-label={`Package tier for ${c.companyName}`}
+                            value={hubTiers[c.id] ?? c.tier ?? ""}
+                            onChange={(e) => {
+                              setHubTiers((m) => ({ ...m, [c.id]: e.target.value }));
+                              handleHubSave(c, { tier: e.target.value });
+                            }}
+                            disabled={hubSavingId === c.id}
+                          >
+                            <option value="">Unset</option>
+                            {PACKAGE_TIERS.map((t) => (
+                              <option key={t} value={t}>
+                                {TIER_SHORT_LABELS[t]}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td data-label="Subscription/mo" className="num">
+                          <div className="inv-add-amount hub-money">
+                            <span className="inv-dollar" aria-hidden="true">
+                              $
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              inputMode="decimal"
+                              aria-label={`Subscription level for ${c.companyName}`}
+                              value={hubMonthly[c.id] ?? (c.monthlyAmount ? String(c.monthlyAmount) : "")}
+                              onChange={(e) => setHubMonthly((m) => ({ ...m, [c.id]: e.target.value }))}
+                              onBlur={() => handleHubSave(c)}
+                              disabled={hubSavingId === c.id}
+                            />
+                          </div>
+                        </td>
+                        <td data-label="Deal value" className="num">
+                          <div className="inv-add-amount hub-money">
+                            <span className="inv-dollar" aria-hidden="true">
+                              $
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              inputMode="decimal"
+                              aria-label={`Deal value for ${c.companyName}`}
+                              value={hubDeal[c.id] ?? String(c.dealValue ?? 0)}
+                              onChange={(e) => setHubDeal((m) => ({ ...m, [c.id]: e.target.value }))}
+                              onBlur={() => handleHubSave(c)}
+                              disabled={hubSavingId === c.id}
+                            />
+                          </div>
+                        </td>
+                        <td data-label="Payment">
+                          <span className={c.paymentStatus === "paid" ? "badge tone-green" : c.paymentStatus === "sent" ? "badge tone-amber" : "badge tone-gray"}>
+                            {c.paymentStatus === "paid" ? "Paid" : c.paymentStatus === "sent" ? "Link sent" : "Not billed"}
+                          </span>
+                          {c.paymentStatus === "paid" && c.paidAt && (
+                            <span className="inv-due"> · {new Date(c.paidAt).toLocaleDateString()}</span>
+                          )}
+                        </td>
+                        <td data-label="Bill">
+                          <div className="row-actions hub-bill-actions">
+                            <div className="inv-add-amount hub-money">
+                              <span className="inv-dollar" aria-hidden="true">
+                                $
+                              </span>
+                              <input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                inputMode="decimal"
+                                aria-label={`Payment link amount for ${c.companyName}`}
+                                placeholder={c.monthlyAmount ? String(c.monthlyAmount) : "0.00"}
+                                value={hubLinkAmounts[c.id] ?? ""}
+                                onChange={(e) => setHubLinkAmounts((m) => ({ ...m, [c.id]: e.target.value }))}
+                              />
+                            </div>
+                            <select
+                              aria-label={`Billing interval for ${c.companyName}`}
+                              value={hubLinkIntervals[c.id] ?? "month"}
+                              onChange={(e) =>
+                                setHubLinkIntervals((m) => ({
+                                  ...m,
+                                  [c.id]: e.target.value as "month" | "one_time",
+                                }))
+                              }
+                            >
+                              <option value="month">Monthly</option>
+                              <option value="one_time">One-time</option>
+                            </select>
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => handleHubPaymentLink(c)}
+                              disabled={hubLinkingId === c.id}
+                            >
+                              {hubLinkingId === c.id ? "Sending…" : "Send payment link"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="inv-notes cockpit-foot">
+            Edits save through the same org-scoped update path as the account hub; tenants never see
+            this window. No payment is charged from this screen — the client pays on Stripe's checkout.
+          </p>
         </div>
       )}
 

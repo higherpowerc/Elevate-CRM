@@ -239,6 +239,13 @@ export interface Client {
    *  behind). OWNER-only; the Finance subscription-MRR computation skips these
    *  so an orphaned/dead record can never inflate MRR. */
   orphanedAccount?: boolean;
+  /** Owner 2026-08-27 (Finance active-client fix, backlog 61e598ec) — true
+   *  when this record sits in its org's TERMINAL ("Sold") pipeline stage, i.e.
+   *  the lead flow is complete. Feeds the Finance cockpit's contracted
+   *  active-client definition (terminal + agreement signed + payment received)
+   *  and the paying-clients hub. OWNER-workspace-only: present on owner-org
+   *  responses only; tenant orgs never receive the key. */
+  soldStage?: boolean;
   /** Owner 2026-08-27 — this client/lead's package tier ('' unset | tier1..4),
    *  the owner's 4 package tiers. OWNER-workspace-only: present on owner-org
    *  responses only (tenant orgs never receive the key). Optional so the
