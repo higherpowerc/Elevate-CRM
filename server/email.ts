@@ -356,23 +356,30 @@ export function sendDemoCallEmail(opts: {
   });
 }
 
-/** Appointments production (backlog 5a104eae) — the day-before "appointment
- *  tomorrow" reminder. The two action links are the credential: each carries
+/** Appointments production (backlog 5a104eae) — the "appointment tomorrow"
+ *  reminder. The two action links are the credential: each carries
  *  the appointment's unguessable token so the recipient can Confirm (flips
  *  status → confirmed) or Reschedule (pick a new time) WITHOUT logging in.
- *  Fire-and-forget like every transactional email. */
+ *  reminderKind (owner 2026-08-27): demo-call appointments are reminded
+ *  1 hour before the call ("hour" → "is in 1 hour" subject/lead line);
+ *  every other appointment keeps the classic day-before wording ("day",
+ *  the default). Fire-and-forget like every transactional email. */
 export function sendAppointmentReminderEmail(opts: {
   to: string;
   clientName: string;
   scheduledAt: string;
   confirmUrl: string;
   rescheduleUrl: string;
+  reminderKind?: "day" | "hour";
 }): Promise<SendEmailResult> {
   const when = fmtMstDateTime(opts.scheduledAt);
+  const hour = opts.reminderKind === "hour";
   const text = [
     `Hi ${opts.clientName},`,
     "",
-    `A reminder that your appointment with Revzenta is coming up: ${when}.`,
+    hour
+      ? `A reminder that your appointment with Revzenta is in 1 hour: ${when}.`
+      : `A reminder that your appointment with Revzenta is coming up: ${when}.`,
     "",
     "Please confirm so we know you're still coming:",
     opts.confirmUrl,
@@ -384,7 +391,7 @@ export function sendAppointmentReminderEmail(opts: {
   ].join("\n");
   return sendEmail({
     to: opts.to,
-    subject: "Your Revzenta appointment is tomorrow",
+    subject: hour ? "Your Revzenta appointment is in 1 hour" : "Your Revzenta appointment is tomorrow",
     text,
   });
 }
