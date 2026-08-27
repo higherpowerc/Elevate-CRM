@@ -8463,6 +8463,17 @@ print("  ✓ 64f: tier source guards present (types/api/modal/accounts)")
 PY
 then PASS=$((PASS+1)); echo "  ✓ 64f: source guards present"
 else FAIL=$((FAIL+1)); echo "  ✗ 64f: source guard missing"; cat "$PASS_TMP"; fi
+echo "-- 64g. Lead info window: deal value + package tier surfaced in the record's info window, owner-only --"
+if python3 - <<'PY2' 2>"$PASS_TMP"
+clientmodal=open('src/ClientModal.tsx').read()
+assert 'lead-info' in clientmodal and 'Lead information' in clientmodal   # the info panel
+assert 'Deal value' in clientmodal and 'money(form.dealValue)' in clientmodal   # deal value visibly formatted
+assert 'Package tier' in clientmodal and 'TIER_LABELS[form.tier]' in clientmodal  # tier visibly labelled
+assert 'ownerOrg && (' in clientmodal                                    # owner-only: absent from tenant modal
+print("  ✓ 64g: lead-info window shows Deal value + Package tier, owner-only")
+PY2
+then PASS=$((PASS+1)); echo "  ✓ 64g: lead info window surfaces deal value + tier (owner-only)"
+else FAIL=$((FAIL+1)); echo "  ✗ 64g: lead-info window missing"; cat "$PASS_TMP"; fi
 rm -f "$JTT"
 
 echo "RESULT: $PASS passed, $FAIL failed"
