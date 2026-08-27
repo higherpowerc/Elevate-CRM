@@ -194,6 +194,11 @@ export interface Client {
    *  bucket rather than silently dropping it from every tab. OWNER-workspace-
    *  only. */
   orphanedStage?: boolean;
+  /** Owner 2026-08-26 — true when this sold client's provisionedOrgId points
+   *  to an org that no longer exists (a deleted account left the Sold record
+   *  behind). OWNER-only; the Finance subscription-MRR computation skips these
+   *  so an orphaned/dead record can never inflate MRR. */
+  orphanedAccount?: boolean;
   createdAt: string;
   updatedAt: string;
 }

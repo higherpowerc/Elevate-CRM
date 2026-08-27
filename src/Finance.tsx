@@ -132,7 +132,10 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
    *  which is deal-value based. */
   const subscriptionMrr = useMemo(() => {
     if (!ownerOrg) return { mrr: 0, activeCount: 0 };
-    const active = clients.filter((c) => !c.lost && !c.archived);
+    // Active = not lost, not archived, and NOT orphaned: a sold client whose
+    // account (org) was deleted must never count toward Subscription MRR
+    // (owner 2026-08-26 incident guard — orphaned records must not inflate MRR).
+    const active = clients.filter((c) => !c.lost && !c.archived && !c.orphanedAccount);
     const mrr = active.reduce((s, c) => s + (Number(c.monthlyAmount) || 0), 0);
     return { mrr, activeCount: active.length };
   }, [ownerOrg, clients]);
