@@ -8522,7 +8522,24 @@ S=$(code -b "$JT" "$BASE/api/admin/orgs")
 TTZ_ID=$(python3 -c "import json;print([x['id'] for x in json.load(open('/tmp/body.json'))['orgs'] if x['name']=='Tz Tenant Co'][0])")
 check "65b: admin deletes tz tenant -> 200" 200 $(code -b "$JT" -X DELETE "$BASE/api/admin/orgs/$TTZ_ID")
 echo "-- 65c. conversion helper: DST-aware (3pm Eastern -> 12pm MST summer, 1pm MST winter) --"
-TZ_JSON=$(bun -e 'import { convertNaive, mstToClientLocal, clientLocalToMst } from "./src/timezone.ts"; console.log(JSON.stringify({sumNYtoMST:convertNaive("2026-07-15T15:00","America/New_York","America/Phoenix"), winNYtoMST:convertNaive("2026-01-15T15:00","America/New_York","America/Phoenix"), mstToNYsum:mstToClientLocal("2026-07-15T12:00","America/New_York"), nyToMSTsum:clientLocalToMst("2026-07-15T15:00","America/New_York"), winMSTtoNY:mstToClientLocal("2026-01-15T13:00","America/New_York"), chiStand:mstToClientLocal("2026-01-15T12:00","America/Chicago")})')
+TZ_JSON=$(
+  cd "$(dirname "$0")/.." || exit 1
+  TZ65="$PWD/.tz65check.mjs"
+  cat > "$TZ65" <<'MJS'
+import { convertNaive, mstToClientLocal, clientLocalToMst } from "./src/timezone.ts";
+const out = {
+  sumNYtoMST: convertNaive("2026-07-15T15:00", "America/New_York", "America/Phoenix"),
+  winNYtoMST: convertNaive("2026-01-15T15:00", "America/New_York", "America/Phoenix"),
+  mstToNYsum: mstToClientLocal("2026-07-15T12:00", "America/New_York"),
+  nyToMSTsum: clientLocalToMst("2026-07-15T15:00", "America/New_York"),
+  winMSTtoNY: mstToClientLocal("2026-01-15T13:00", "America/New_York"),
+  chiStand: mstToClientLocal("2026-01-15T12:00", "America/Chicago")
+};
+console.log(JSON.stringify(out));
+MJS
+  bun "$TZ65"
+  rm -f "$TZ65"
+)
 if python3 - "$TZ_JSON" <<'PY' 2>"$PASS_TMP"
 import json,sys
 d=json.loads(sys.argv[1])
