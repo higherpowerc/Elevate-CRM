@@ -4002,6 +4002,17 @@ legend.field-label {
   color: var(--accent, #d6ff3f);
   padding-top: 2px;
 }
+/* Owner 2026-08-27 — the client's local time shown under the owner's MST
+   time in the calendar/appointments rows (only when a non-MST timezone is
+   set). Faint + break-anywhere so it never shoves the row. */
+.calendar-time-local {
+  display: block;
+  font-weight: 500;
+  font-size: 0.82em;
+  color: var(--ink-60, #9aa0a6);
+  white-space: normal;
+  min-width: 88px;
+}
 .calendar-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .calendar-actions { margin-left: auto; align-self: center; }
 .calendar-title { display: flex; flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }

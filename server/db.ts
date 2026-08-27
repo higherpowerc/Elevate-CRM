@@ -1189,6 +1189,25 @@ db.exec(`
 }
 
 /**
+ * Client timezone (owner direction 2026-08-27 — calendar/appointments
+ * auto-conversion). Idempotent — safe on every boot.
+ *
+ * clients gains the OWNER-only timezone column:
+ *   timezone TEXT NOT NULL DEFAULT '' — IANA name (e.g. "America/New_York");
+ *                  '' = unset (treated as the owner's fixed Arizona/MST).
+ *                  Owner-only, the same isolation rule as agreement_status /
+ *                  tier: tenant orgs never receive or write it. Drives the
+ *                  calendar conversion between the owner's MST and the
+ *                  client's local time (DST-aware). Plain TEXT with DEFAULT,
+ *                  so existing rows backfill to '' and no FK games are needed.
+ */
+{
+  const clientCols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  if (!clientCols.some((c) => c.name === "timezone")) {
+    db.exec("ALTER TABLE clients ADD COLUMN timezone TEXT NOT NULL DEFAULT ''");
+  }
+}
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
@@ -1560,6 +1579,9 @@ export interface ClientRow {
    *  none); surfaced in the edit modal on the owner Leads tab. Owner-workspace
    *  only. */
   follow_up_note: string;
+  /** Owner 2026-08-27 — IANA timezone ('' = unset → owner's Arizona/MST).
+   *  Owner-only, like tier/agreement_status. Drives the calendar conversion. */
+  timezone: string;
 }
 
 export interface TaskRow {
