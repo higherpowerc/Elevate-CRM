@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { fmtDate, type Org } from "./types";
+import { fmtDate, money, type Org } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
@@ -45,6 +45,12 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const [orgs, setOrgs] = useState<Org[] | null>(null);
+  /** Owner request 2026-08-26 — deal value per client account, keyed by
+   *  org id. Built by joining each account (org) to its linked client record
+   *  (client.provisionedOrgId === org.id) and reading the client's dealValue.
+   *  Owner-only by construction: /api/clients is org-scoped and Accounts is
+   *  rendered in the owner's workspace. */
+  const [dealValueByOrg, setDealValueByOrg] = useState<Record<number, number>>({});
   const [error, setError] = useState<string | null>(null);
   /** Org whose "View account" is in flight (shows a spinner on that row). */
   const [viewingOrgId, setViewingOrgId] = useState<number | null>(null);
@@ -88,8 +94,16 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const { orgs } = await api.adminOrgs();
+      const [{ orgs }, { clients }] = await Promise.all([api.adminOrgs(), api.clients(true)]);
       setOrgs(orgs);
+      // Join each account (org) to its linked client via provisionedOrgId so
+      // the Deal value column can read the client's dealValue. Missing/never
+      // auto-provisioned links simply stay unset and render "—".
+      const map: Record<number, number> = {};
+      for (const c of clients) {
+        if (c.provisionedOrgId) map[c.provisionedOrgId] = c.dealValue;
+      }
+      setDealValueByOrg(map);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load client accounts.");
     }
@@ -382,20 +396,21 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
           ) : (
             <table className="table">
               {/* Owner live-test reorg 2026-08-18 + billing cycle (owner request
-    2026-08-25) — the accounts table has SIX columns (Clients | Members |
-    Client records | Created | Billing cycle | Actions). Explicit fixed-layout
-    widths so nothing truncates: Clients (24%) fits the business name + meta
-    lines, numeric/badge columns compact (8/10), Created (12%), Billing cycle
-    (14%) fits the inline editable date input, and Actions (30%) is wide enough
-    for View account / Reset password / Delete without clipping (flex-wrap
-    guards). */}
+    2026-08-25) + deal value (owner request 2026-08-26) — the accounts table
+    has SEVEN columns (Clients | Members | Client records | Created | Billing
+    cycle | Deal value | Actions). Explicit fixed-layout widths so nothing
+    truncates: Clients (23%) fits the business name + meta lines, numeric/badge
+    columns compact (7/9/10), Created (11%), Billing cycle (13%) fits the value
+    line + inline editable date input, and Actions (27%) is wide enough for View
+    account / Reset password / Delete without clipping (flex-wrap guards). */}
 <colgroup>
-  <col style={{ width: "24%" }} />
-  <col style={{ width: "8%" }} />
+  <col style={{ width: "23%" }} />
+  <col style={{ width: "7%" }} />
+  <col style={{ width: "9%" }} />
+  <col style={{ width: "11%" }} />
+  <col style={{ width: "13%" }} />
   <col style={{ width: "10%" }} />
-  <col style={{ width: "12%" }} />
-  <col style={{ width: "15%" }} />
-  <col style={{ width: "31%" }} />
+  <col style={{ width: "27%" }} />
 </colgroup>
               <thead>
                 <tr>
@@ -404,6 +419,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                   <th className="num">Client records</th>
                   <th>Created</th>
                   <th>Billing cycle</th>
+                  <th className="num">Deal value</th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
@@ -491,25 +507,39 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           />
                         ) : (
                           <span className="billing-cycle-cell">
-                            {o.billingCycleDate ? (
-                              fmtDate(o.billingCycleDate)
-                            ) : (
-                              <span className="cell-muted">&mdash;</span>
-                            )}{" "}
-                            <button
-                              type="button"
-                              className="icon-btn btn-sm"
-                              title="Set billing cycle date"
-                              aria-label={`Set billing cycle date for ${o.name}`}
-                              onClick={() => {
-                                setEditingBillingOrgId(o.id);
-                                setBillingDraft(o.billingCycleDate || "");
-                              }}
-                              disabled={savingBillingOrgId !== null}
-                            >
-                              &#9998;
-                            </button>
+                            <span className="billing-cycle-value" title="Monthly subscription value">
+                              {(o.monthlySubscriptionAmount ?? 0) > 0
+                                ? `${money(o.monthlySubscriptionAmount)}/mo`
+                                : <span className="cell-muted">&mdash;</span>}
+                            </span>
+                            <span className="billing-cycle-date-line">
+                              {o.billingCycleDate ? (
+                                fmtDate(o.billingCycleDate)
+                              ) : (
+                                <span className="cell-muted">&mdash;</span>
+                              )}{" "}
+                              <button
+                                type="button"
+                                className="icon-btn btn-sm"
+                                title="Set billing cycle date"
+                                aria-label={`Set billing cycle date for ${o.name}`}
+                                onClick={() => {
+                                  setEditingBillingOrgId(o.id);
+                                  setBillingDraft(o.billingCycleDate || "");
+                                }}
+                                disabled={savingBillingOrgId !== null}
+                              >
+                                &#9998;
+                              </button>
+                            </span>
                           </span>
+                        )}
+                      </td>
+                      <td className="num" data-label="Deal value">
+                        {dealValueByOrg[o.id] ? (
+                          money(dealValueByOrg[o.id])
+                        ) : (
+                          <span className="cell-muted">&mdash;</span>
                         )}
                       </td>
                       <td data-label="Actions">

@@ -4107,9 +4107,23 @@ legend.field-label {
    account's billing cycle date without the table overflowing. */
 .billing-cycle-cell {
   display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: nowrap;
+}
+.billing-cycle-value {
+  font-weight: 600;
+}
+.billing-cycle-date-line {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.billing-cycle-date-line .icon-btn {
+  color: var(--muted);
 }
 .billing-date-input {
   width: 150px;
