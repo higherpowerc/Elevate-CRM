@@ -2111,7 +2111,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               Archive the record instead if you want to keep it.
             </p>
           }
-          confirmLabel="Delete permanently"
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

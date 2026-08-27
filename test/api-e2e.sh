@@ -4074,15 +4074,30 @@ if [ -n "$NEWEST_JS37" ]; then
   # (PR #78) legitimately use 24%, so it persists in the shared bundle; the
   # source-level checks below, scoped to src/Accounts.tsx, verify the old
   # Accounts widths are gone.)
-  if grep -Fq 'width:"23%"' "$NEWEST_JS37" && grep -Fq 'width:"7%"' "$NEWEST_JS37" && grep -Fq 'width:"9%"' "$NEWEST_JS37" && grep -Fq 'width:"11%"' "$NEWEST_JS37" && grep -Fq 'width:"13%"' "$NEWEST_JS37" && grep -Fq 'width:"10%"' "$NEWEST_JS37" && grep -Fq 'width:"27%"' "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table is 7 columns (Clients 23 | Members 7 | Records 9 | Created 11 | Billing 13 | Deal 10 | Actions 27)"
+  # Owner 2026-08-27 table cleanup — the accounts table now has THIRTEEN
+  # columns (Account | Package | Status | Phone | Email | Password | Members |
+  # Client records | Created | Subscription | Billing cycle | Deal value |
+  # Actions), widths 12/6/8/9/10/9/4/4/7/7/7/7/10. The PR #102 subscription
+  # value keeps its own column (was stacked above the cycle date). Presence
+  # greps run against the shared bundle; the old-widths anti-check below is
+  # scoped to src/Accounts.tsx (other tables legitimately use some of those
+  # percentages, e.g. the owner Leads colgroup).
+  if grep -Fq 'width:"12%"' "$NEWEST_JS37" && grep -Fq 'width:"6%"' "$NEWEST_JS37" && grep -Fq 'width:"8%"' "$NEWEST_JS37" && grep -Fq 'width:"4%"' "$NEWEST_JS37" && grep -Fq 'width:"10%"' "$NEWEST_JS37" && grep -Fq 'width:"7%"' "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table ships the 13-col cleanup colgroup (12/6/8/9/10/9/4/4/7/7/7/7/10)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 7-col colgroup widths missing in $NEWEST_JS37"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 13-col colgroup widths missing in $NEWEST_JS37"
   fi
-  if grep -Fq 'width: "23%"' src/Accounts.tsx && grep -Fq 'width: "7%"' src/Accounts.tsx && grep -Fq 'width: "9%"' src/Accounts.tsx && grep -Fq 'width: "11%"' src/Accounts.tsx && grep -Fq 'width: "13%"' src/Accounts.tsx && grep -Fq 'width: "10%"' src/Accounts.tsx && grep -Fq 'width: "27%"' src/Accounts.tsx; then
-    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup is the 7-col layout (23/7/9/11/13/10/27)"
+  if grep -Fq 'width: "12%"' src/Accounts.tsx && grep -Fq 'width: "6%"' src/Accounts.tsx && grep -Fq 'width: "8%"' src/Accounts.tsx && grep -Fq 'width: "4%"' src/Accounts.tsx && grep -Fq 'width: "9%"' src/Accounts.tsx && grep -Fq 'width: "10%"' src/Accounts.tsx && grep -Fq 'accounts-table' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup is the 13-col cleanup layout (12/6/8/9/10/9/4/4/7/7/7/7/10, scoped .accounts-table)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 7-col colgroup missing from src/Accounts.tsx"
+    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 13-col cleanup colgroup missing from src/Accounts.tsx"
+  fi
+  # The OLD 7-col widths must be gone from the accounts table (23/11/13/27 are
+  # unambiguous old markers — 4/6/8/12 are new; 7/9/10 exist in both layouts).
+  if ! grep -Fq 'width: "23%"' src/Accounts.tsx && ! grep -Fq 'width: "11%"' src/Accounts.tsx && ! grep -Fq 'width: "13%"' src/Accounts.tsx && ! grep -Fq 'width: "27%"' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: old 7-col Accounts colgroup widths (23/11/13/27) are gone from src/Accounts.tsx"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ source: old Accounts colgroup widths still present in src/Accounts.tsx"
   fi
   # PR #78 (Sales-Flow UI) re-shaped the OWNER's client tables: the owner Leads
   # tab is now 4 columns (30/27/20/23) and Onboarding is 6 columns — so "23%" is
@@ -8999,6 +9014,110 @@ if grep -q '"sent":0' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 68c: se
 stop_crm "$MOCK68/srv.pid"
 kill "$MOCK68_PID" 2>/dev/null
 rm -rf "$MOCK68" "$J68"
+# ─────────────────────────────────────────────────────────────────────────────
+# §69. Owner 2026-08-27 cleanup battery: Client-accounts table redesign (every
+# data point owns a labeled column, nothing truncates), "Active client
+# accounts" heading, destructive confirm buttons read "Confirm", deal value on
+# the sold-unbuilt rows, and the DELETE-cascade fix — deleting an OWNER client
+# with a provisioned account tears the account down too (symmetric with
+# DELETE /api/admin/orgs/:id), so no ghost workspace survives in the accounts
+# list or the active count. Foreign orgs are untouched.
+echo "== 69. Accounts-table cleanup + client-delete cascade (owner 2026-08-27) =="
+
+echo "-- 69a. Source guards: 13-column cleanup, heading rename, Confirm buttons, sold-unbuilt deal value --"
+if python3 - <<'PY'
+acc = open('src/Accounts.tsx').read()
+modal = open('src/ConfirmDeleteModal.tsx').read()
+cd = open('src/ClientsDirectory.tsx').read()
+# (A) the accounts window heading is now "Active client accounts"
+assert 'Active client accounts' in acc
+# (PRIMARY) the table is scoped .accounts-table and every data point owns a
+# labeled column; the shared truncating .cell-name/.cell-company are gone here
+assert 'accounts-table' in acc
+for col in ['data-label="Account"', 'data-label="Package"', 'data-label="Status"',
+            'data-label="Phone"', 'data-label="Email"', 'data-label="Password"',
+            'data-label="Members"', 'data-label="Client records"', 'data-label="Created"',
+            'data-label="Subscription"', 'data-label="Billing cycle"',
+            'data-label="Deal value"', 'data-label="Actions"']:
+    assert col in acc, col
+assert 'cell-name' not in acc and 'cell-company' not in acc
+# the money-at-a-glance subscription value survives in its own column
+assert 'monthlySubscriptionAmount' in acc
+# (B) every destructive confirm button reads "Confirm" — wording lives in the
+# modal title/body. Default flipped; no caller passes a destructive label.
+assert 'confirmLabel = "Confirm"' in modal
+for f in ['src/Tasks.tsx', 'src/Finance.tsx', 'src/Settings.tsx',
+          'src/ClientsDirectory.tsx', 'src/Clients.tsx', 'src/StageEditor.tsx',
+          'src/Accounts.tsx']:
+    assert 'confirmLabel="' not in open(f).read(), f
+# (C) the sold-unbuilt rows carry the deal value
+assert 'money(c.dealValue)' in cd
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 69a: table cleanup + 'Active client accounts' + Confirm buttons + sold-unbuilt deal value wired"
+else FAIL=$((FAIL+1)); echo "  ✗ 69a: source guards failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+
+echo "-- 69b. Client-delete cascade: deleting an owner client removes its provisioned account (symmetric with admin org delete); foreign orgs untouched --"
+code -b "$JAR" "$BASE/api/settings" > /dev/null
+F69=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
+SOLD69=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+# A bystander tenant org that the cascade must NOT touch.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Cascade Bystander Co","email":"bystander69@example.com","password":"bystander69pass"}' "$BASE/api/admin/orgs")
+check "69b: owner creates the bystander tenant org → 201" 201 "$S"
+BYSTANDER69=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+JT69=$(mktemp)
+# A sold client, provisioned like any paying customer.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Cascade Victim Co\",\"contactName\":\"Vic\",\"email\":\"vic69@example.com\",\"clientType\":\"commercial\",\"dealValue\":1500,\"stage\":\"$SOLD69\"}" "$BASE/api/clients")
+check "69b: owner creates a sold-stage client → 201" 201 "$S"
+CV69=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JAR" -X POST "$BASE/api/admin/clients/$CV69/provision")
+check "69b: owner provisions the client's account → 200" 200 "$S"
+CV69_ORG=$(grep -o '"orgId":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+if [ -n "$CV69_ORG" ] && [ "$CV69_ORG" != "0" ]; then PASS=$((PASS+1)); echo "  ✓ 69b: account built (org $CV69_ORG)"; else FAIL=$((FAIL+1)); echo "  ✗ 69b: no orgId from provision: $(cat /tmp/body.json)"; fi
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "69b: orgs list → 200" 200 "$S"
+grep -q "\"id\":$CV69_ORG," /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 69b: the provisioned account is listed (sits in Client accounts + the active count)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 69b: provisioned org missing from the list"; }
+# THE FIX: deleting the OWNER client takes the linked account with it.
+S=$(code -b "$JAR" -X DELETE "$BASE/api/clients/$CV69")
+check "69b: owner deletes the client → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "69b: orgs list after the client delete → 200" 200 "$S"
+if python3 - "$CV69_ORG" "$BYSTANDER69" <<'PY' 2>"$PASS_TMP"
+import json, sys
+victim, bystander = int(sys.argv[1]), int(sys.argv[2])
+orgs = json.load(open('/tmp/body.json'))['orgs']
+ids = [o['id'] for o in orgs]
+assert victim not in ids, "ghost account survived the client delete"
+assert bystander in ids, "cascade touched a foreign org"
+b = [o for o in orgs if o['id'] == bystander][0]
+assert b.get('status', 'active') != 'canceled', b
+print("  ✓ the linked account is GONE from /admin/orgs (leaves Client accounts + the active count); the bystander org is untouched")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 69b: cascade assertions failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+# The linked sold client record is gone ENTIRELY (same semantics as account
+# delete — no lingering Sold count, no orphan).
+S=$(code -b "$JAR" "$BASE/api/clients?archived=1")
+check "69b: owner clients after delete → 200" 200 "$S"
+grep -q "\"id\":$CV69," /tmp/body.json && { FAIL=$((FAIL+1)); echo "  ✗ 69b: the sold client record survived its own delete"; } || { PASS=$((PASS+1)); echo "  ✓ 69b: the sold client record is gone (no orphan, no Sold-count leak)"; }
+# A tenant deleting its OWN client must stay a plain row delete (isolation) —
+# the bystander org's user still works, the org still stands.
+S=$(code -c "$JT69" -b "$JT69" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"bystander69@example.com","password":"bystander69pass"}' "$BASE/api/auth/login")
+check "69b: bystander tenant login → 200" 200 "$S"
+S=$(code -b "$JT69" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Bystander Own Co","contactName":"By","email":"by69@example.com","clientType":"commercial"}' "$BASE/api/clients")
+check "69b: bystander tenant creates a client → 201" 201 "$S"
+BT69=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JT69" -X DELETE "$BASE/api/clients/$BT69")
+check "69b: bystander tenant deletes their own client → 200" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/admin/orgs")
+check "69b: orgs list final → 200" 200 "$S"
+grep -q "\"id\":$BYSTANDER69," /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 69b: bystander org still listed after everything (isolation intact)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 69b: bystander org vanished"; }
+S=$(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$BYSTANDER69")
+check "69b: cleanup bystander org → 200" 200 "$S"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

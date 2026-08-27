@@ -322,6 +322,12 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
                       ) : (
                         <span className="inv-notes">Sold · no account yet</span>
                       )}
+                      {/* Owner 2026-08-27 — the deal value on every
+                          sold-unbuilt row (money at a glance, matching the
+                          accounts table's Deal value column). */}
+                      <span className="inv-notes" title="Deal value">
+                        Deal {money(c.dealValue)}
+                      </span>
                     </div>
                   </div>
                   <div className="row-actions">
@@ -579,7 +585,6 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
               Archive the record instead if you want to keep it.
             </p>
           }
-          confirmLabel="Delete permanently"
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

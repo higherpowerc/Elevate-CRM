@@ -19,7 +19,10 @@ interface Props {
   entity: ReactNode;
   /** Optional extra context rendered under the standard message. */
   note?: ReactNode;
-  /** Label for the confirm button (default "Delete"). */
+  /** Label for the confirm button. Owner 2026-08-27: every destructive
+   *  confirm button reads "Confirm" — the destructive wording lives in the
+   *  modal title/body ("Delete this workspace?", "Remove member?" …), not on
+   *  the button. */
   confirmLabel?: string;
   busy?: boolean;
   onCancel: () => void;
@@ -32,7 +35,7 @@ export default function ConfirmDeleteModal({
   title,
   entity,
   note,
-  confirmLabel = "Delete",
+  confirmLabel = "Confirm",
   busy,
   onCancel,
   onConfirm,

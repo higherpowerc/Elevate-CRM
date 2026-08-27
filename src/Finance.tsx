@@ -953,7 +953,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
               {deleting.clientName ? <> for <span className={pii ? "pii-blur" : undefined}>{deleting.clientName}</span></> : ""}
             </>
           }
-          confirmLabel="Delete permanently"
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

@@ -2031,7 +2031,6 @@ export default function Settings({
               removed.
             </p>
           }
-          confirmLabel="Remove member"
           busy={membersBusy}
           onCancel={() => setDeletingMember(null)}
           onConfirm={handleRemoveMember}
@@ -2046,7 +2045,6 @@ export default function Settings({
               Clients keep their saved values for this field.
             </p>
           }
-          confirmLabel="Remove"
           busy={busy}
           onCancel={() => setConfirmRemoveField(null)}
           onConfirm={() => removeField(confirmRemoveField)}
@@ -2061,7 +2059,6 @@ export default function Settings({
               Existing client values are kept.
             </p>
           }
-          confirmLabel="Remove"
           busy={busy}
           onCancel={() => setConfirmRemoveGroup(null)}
           onConfirm={() => removeGroup(confirmRemoveGroup)}
@@ -2077,7 +2074,6 @@ export default function Settings({
               no further charges will be made. This cannot be undone from this account.
             </p>
           }
-          confirmLabel="Cancel account"
           busy={cancelBusy}
           onCancel={() => setConfirmCancel(false)}
           onConfirm={handleCancelAccount}

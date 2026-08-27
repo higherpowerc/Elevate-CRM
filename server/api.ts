@@ -1841,6 +1841,44 @@ function ownerOrgIds(): number[] {
 /** True when the client's stage is the FINAL stage of this org's pipeline
  *  (case-insensitive exact match on the last stage name). For the owner org
  *  that final stage is "Sold". */
+/** Owner 2026-08-27 — shared org delete cascade. Both delete paths must be
+ *  SYMMETRIC: DELETE /api/admin/orgs/:id (owner deletes an account) and
+ *  DELETE /api/clients/:id (owner deletes a client whose sold record carries
+ *  a provisioned workspace). Drops every org child table (FK ON: invoices,
+ *  tasks, appointments, tickets [replies cascade], agreement envelopes,
+ *  clients, users), the owner-org client rows linked via
+ *  clients.provisioned_org_id, provisioning events and password resets, then
+ *  the org itself — inside one transaction. Refuses the owner's own org.
+ *  Foreign orgs are never touched (every statement is org-scoped by id). */
+function deleteOrgCascade(id: number): void {
+  if (id === ensureDefaultOrg()) return;
+  db.transaction(() => {
+    db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
+    db.query("DELETE FROM tasks WHERE org_id = ?").run(id);
+    // Appointments FK orgs(id) with no cascade — without this an org holding
+    // any appointment 500s the delete on the FK (latent in the old inline
+    // path; the shared helper hardens both callers).
+    db.query("DELETE FROM appointments WHERE org_id = ?").run(id);
+    // Support tickets (PR #54; replies cascade on ticket) and agreement
+    // envelopes (PR #59) both FK to orgs — dropped before the org row.
+    db.query("DELETE FROM tickets WHERE org_id = ?").run(id);
+    db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
+    db.query("DELETE FROM clients WHERE org_id = ?").run(id);
+    // Owner direction 2026-08-26 — deleting an account deletes its linked
+    // SOLD client ENTIRELY (the owner-org record pointing at this workspace
+    // via clients.provisioned_org_id), so it stops counting under the owner's
+    // Sold KPIs. Hard delete — the same irreversible semantics as deleting
+    // the account itself.
+    db.query("DELETE FROM clients WHERE provisioned_org_id = ?").run(id);
+    // 3g-3: provisioning events pointing at this org (plain columns, no FK).
+    db.query("DELETE FROM provision_events WHERE new_org_id = ? OR source_org_id = ?").run(id, id);
+    // 3k: password_resets references users — drop this org's tokens first.
+    db.query("DELETE FROM password_resets WHERE user_id IN (SELECT id FROM users WHERE org_id = ?)").run(id);
+    db.query("DELETE FROM users WHERE org_id = ?").run(id);
+    db.query("DELETE FROM orgs WHERE id = ?").run(id);
+  })();
+}
+
 function isFinalStage(orgId: number, stage: string): boolean {
   const org = getOrg(orgId);
   if (!org) return false;
@@ -2848,31 +2886,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     if (!org) return err("Org not found.", 404);
     // The default org is the owner's own org ("Revzenta") — never deletable.
     if (org.id === ensureDefaultOrg()) return err("Cannot delete the owner org.", 400);
-    db.transaction(() => {
-      db.query("DELETE FROM invoices WHERE org_id = ?").run(id);
-      db.query("DELETE FROM tasks WHERE org_id = ?").run(id);
-      // Support tickets (PR #54) and agreement envelopes (PR #59) both FK to
-      // orgs — a tenant that opened a ticket (or signed an agreement) used to
-      // 500 the org delete on the FK; drop every child table's rows first.
-      db.query("DELETE FROM tickets WHERE org_id = ?").run(id);
-      db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
-      db.query("DELETE FROM clients WHERE org_id = ?").run(id);
-      // Owner direction 2026-08-26 — deleting an account deletes its linked
-      // SOLD client ENTIRELY. The owner's sold client record lives in the OWNER
-      // org (not this deleted org) and points at this workspace via
-      // clients.provisioned_org_id; without this the source Sold record would
-      // survive and keep counting under the owner's Sold KPIs. Hard delete
-      // (cannot be undone) — the same irreversible semantics as deleting the
-      // account itself.
-      db.query("DELETE FROM clients WHERE provisioned_org_id = ?").run(id);
-      // 3g-3: provisioning events pointing at this org (plain columns, no FK —
-      // cleaned so no orphaned event rows reference a deleted org).
-      db.query("DELETE FROM provision_events WHERE new_org_id = ? OR source_org_id = ?").run(id, id);
-      // 3k: password_resets references users — drop this org's tokens first.
-      db.query("DELETE FROM password_resets WHERE user_id IN (SELECT id FROM users WHERE org_id = ?)").run(id);
-      db.query("DELETE FROM users WHERE org_id = ?").run(id);
-      db.query("DELETE FROM orgs WHERE id = ?").run(id);
-    })();
+    deleteOrgCascade(id);
     return json({ ok: true });
   }
 
@@ -4436,6 +4450,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       if (deniedWrite) return deniedWrite;
       const row = find();
       if (!row) return err("Client not found.", 404);
+      // Owner 2026-08-27 delete-cascade (mirror of adminDeleteOrg): deleting an
+      // OWNER client whose sold record carries a provisioned workspace tears the
+      // ACCOUNT down too, so it leaves the Client accounts table and the active
+      // count — previously the workspace survived as a ghost. Owner sessions
+      // only (tenant clients never carry provisioned_org_id; the guard keeps
+      // row-level isolation airtight), and deleteOrgCascade refuses the owner's
+      // own org. Foreign orgs are never touched.
+      if (row.provisioned_org_id !== 0 && isOwnerSession(auth)) {
+        deleteOrgCascade(row.provisioned_org_id);
+      }
       db.query("DELETE FROM clients WHERE id = ? AND org_id = ?").run(id, orgId);
       return json({ ok: true });
     }
