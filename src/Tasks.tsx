@@ -321,7 +321,6 @@ export default function Tasks({ canEdit = true }: { canEdit?: boolean }) {
         <ConfirmDeleteModal
           title="Delete task?"
           entity={deleting.title}
-          confirmLabel="Delete permanently"
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

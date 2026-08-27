@@ -36,26 +36,27 @@ function generatePassword(): string {
 /** Client-account management (owner 2026-08-18 live-test reorg): the OWNER's
  *  Clients tab is the single hub for account management, so the account panel
  *  that used to live in src/Admin.tsx (Administration) relocated here. It is
- *  rendered by the owner's Clients tab only. The per-account billing column
- *  is gone (amounts are Phase 5 prep only — they are no longer surfaced in
- *  the UI; the PATCH endpoint stays for Phase 5). The accounts table is
- *  exactly 5 columns — Clients | Members | Client records | Created | Actions
- *  — with an explicit fixed-layout colgroup so no column cuts off (Clients
- *  fits the business name, Actions fits the three buttons). */
+ *  rendered by the owner's Clients tab only.
+ *
+ *  Owner 2026-08-27 table cleanup: EVERY data point owns a dedicated,
+ *  clearly-labeled column — Account | Package | Status | Phone | Email |
+ *  Password | Members | Client records | Created | Subscription | Billing
+ *  cycle | Deal value | Actions — with an explicit fixed-layout colgroup
+ *  (widths sum to 100%). Nothing truncates: names, emails and passwords wrap
+ *  fully (scoped `.accounts-table` CSS — other .table users keep the shared
+ *  .cell-* ellipsis behavior). The PR #102 money-at-a-glance subscription
+ *  value keeps its own column (was stacked above the cycle date); the cycle
+ *  date stays inline-editable. */
 export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const [orgs, setOrgs] = useState<Org[] | null>(null);
-  /** Owner request 2026-08-26 — deal value per client account, keyed by
-   *  org id. Built by joining each account (org) to its linked client record
-   *  (client.provisionedOrgId === org.id) and reading the client's dealValue.
-   *  Owner-only by construction: /api/clients is org-scoped and Accounts is
-   *  rendered in the owner's workspace. */
-  const [dealValueByOrg, setDealValueByOrg] = useState<Record<number, number>>({});
-  /** Owner 2026-08-27 — the linked owner-org client record per org id (the
-   *  Edit-account modal's prefill + PUT target). Owner-only by construction:
-   *  /api/clients is org-scoped and this section renders in the owner's
-   *  workspace only. */
+  /** Owner request 2026-08-26 (carried through the 2026-08-27 table cleanup)
+   *  — the linked owner-org client record per org id, joined via
+   *  client.provisionedOrgId === org.id. Drives the Phone / Deal value
+   *  columns and the Edit-account modal (prefill + PUT target). Owner-only by
+   *  construction: /api/clients is org-scoped and Accounts is rendered in the
+   *  owner's workspace. */
   const [clientByOrg, setClientByOrg] = useState<Record<number, Client>>({});
   const [error, setError] = useState<string | null>(null);
   /* Owner 2026-08-27 — Edit account: the modal edits the LINKED owner-org
@@ -121,21 +122,17 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     try {
       const [{ orgs }, { clients }] = await Promise.all([api.adminOrgs(), api.clients(true)]);
       setOrgs(orgs);
-      // Join each account (org) to its linked client via provisionedOrgId so
-      // the Deal value column can read the client's dealValue. Missing/never
+      // Join each account (org) to its linked client via provisionedOrgId.
+      // Owner 2026-08-27 — this single join feeds the Phone / Deal value
+      // columns AND the Edit-account modal (id to PUT, companyName / phone /
+      // dealValue to prefill, email for the agreement). Missing/never
       // auto-provisioned links simply stay unset and render "—".
-      const map: Record<number, number> = {};
-      // Owner 2026-08-27 — the Edit-account modal needs the whole linked
-      // record (id to PUT, companyName/phone/dealValue to prefill, email for
-      // the agreement). Same join, same owner-org scope as the deal values.
       const byOrg: Record<number, Client> = {};
       for (const c of clients) {
         if (c.provisionedOrgId) {
-          map[c.provisionedOrgId] = c.dealValue;
           byOrg[c.provisionedOrgId] = c;
         }
       }
-      setDealValueByOrg(map);
       setClientByOrg(byOrg);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load client accounts.");
@@ -530,7 +527,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
 
         <div className="card table-wrap admin-table">
           <div className="admin-card-head">
-            <h3 className="admin-card-title">Client accounts</h3>
+            <h3 className="admin-card-title">Active client accounts</h3>
             <p className="admin-card-sub">
               {visibleOrgs ? `${visibleOrgs.length} workspace${visibleOrgs.length === 1 ? "" : "s"}` : "Loading…"}
             </p>
@@ -543,30 +540,42 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
               <p className="empty-sub">Create the first client account to provision a workspace.</p>
             </div>
           ) : (
-            <table className="table">
-              {/* Owner live-test reorg 2026-08-18 + billing cycle (owner request
-    2026-08-25) + deal value (owner request 2026-08-26) — the accounts table
-    has SEVEN columns (Clients | Members | Client records | Created | Billing
-    cycle | Deal value | Actions). Explicit fixed-layout widths so nothing
-    truncates: Clients (23%) fits the business name + meta lines, numeric/badge
-    columns compact (7/9/10), Created (11%), Billing cycle (13%) fits the value
-    line + inline editable date input, and Actions (27%) is wide enough for View
-    account / Reset password / Delete without clipping (flex-wrap guards). */}
-<colgroup>
-  <col style={{ width: "23%" }} />
-  <col style={{ width: "7%" }} />
-  <col style={{ width: "9%" }} />
-  <col style={{ width: "11%" }} />
-  <col style={{ width: "13%" }} />
-  <col style={{ width: "10%" }} />
-  <col style={{ width: "27%" }} />
-</colgroup>
+            <table className="table accounts-table">
+              {/* Owner 2026-08-27 table cleanup — EVERY data point owns a
+    clearly-labeled column and nothing truncates (scoped .accounts-table CSS;
+    other .table users keep the shared .cell-* ellipsis). THIRTEEN columns:
+    Account | Package | Status | Phone | Email | Password | Members | Client
+    records | Created | Subscription | Billing cycle | Deal value | Actions.
+    Fixed-layout widths sum to 100% (12/6/8/9/10/9/4/4/7/7/7/7/10) — long
+    values wrap to extra lines instead of clipping, and the Actions column
+    wraps its buttons (the .admin-table .row-actions flex-wrap guard). */}
+              <colgroup>
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "4%" }} />
+                <col style={{ width: "4%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "10%" }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>Clients</th>
+                  <th>Account</th>
+                  <th>Package</th>
+                  <th>Status</th>
+                  <th>Phone</th>
+                  <th>Email</th>
+                  <th>Password</th>
                   <th className="num">Members</th>
                   <th className="num">Client records</th>
                   <th>Created</th>
+                  <th className="num">Subscription</th>
                   <th>Billing cycle</th>
                   <th className="num">Deal value</th>
                   <th className="actions-th">Actions</th>
@@ -574,70 +583,79 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
               </thead>
               <tbody>
                 {visibleOrgs.map((o) => {
+                  /* The linked owner-org client record (provisionedOrgId join)
+                     — feeds the Phone and Deal value columns. */
+                  const linked = clientByOrg[o.id];
                   return (
                     <tr key={o.id}>
-                      <td className="cell-strong" data-label="Clients">
-                        <div className="cell-company">
-                          <span className={`cell-name${blurPii(pii)}`} title={o.name}>
-                            {o.name}
+                      <td className="acc-strong" data-label="Account">
+                        {/* FULL account name — wraps, never truncated. */}
+                        <span className={`acc-name${blurPii(pii)}`} title={o.name}>
+                          {o.name}
+                        </span>
+                      </td>
+                      <td data-label="Package">
+                        {o.tier ? (
+                          <span className="chip chip-tier" title={TIER_LABELS[o.tier] ?? o.tier}>
+                            {TIER_SHORT_LABELS[o.tier] ?? o.tier}
                           </span>
-                          {o.provisionedFromClient && (
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
+                        )}
+                      </td>
+                      <td data-label="Status">
+                        {o.status === "canceled" ? (
+                          <span
+                            className="chip chip-archived"
+                            title={o.retentionUntil ? `Canceled — data retained until ${o.retentionUntil.slice(0, 10)}` : "Canceled — data retained 30 days"}
+                          >
+                            canceled
+                          </span>
+                        ) : o.provisionedFromClient ? (
+                          <>
                             <span
                               className="chip chip-provisioned"
                               title="This workspace was auto-created when a sold lead moved into the Sold stage"
                             >
                               auto-provisioned
                             </span>
-                          )}
-                          {o.tier ? (
-                            <span
-                              className="chip chip-tier"
-                              title={TIER_LABELS[o.tier] ?? o.tier}
-                            >
-                              {TIER_SHORT_LABELS[o.tier] ?? o.tier}
+                            <span className="acc-note">
+                              from sold lead &middot; <b>{o.provisionedFromClientName || "—"}</b>
                             </span>
-                          ) : null}
-                          {o.status === "canceled" && (
-                            <span
-                              className="chip chip-archived"
-                              title={o.retentionUntil ? `Canceled — data retained until ${o.retentionUntil.slice(0, 10)}` : "Canceled — data retained 30 days"}
-                            >
-                              canceled
-                            </span>
-                          )}
-                        </div>
-                        {/* 3g-3 — for auto-provisioned orgs: the source lead
-                            name + the login credentials the owner hands over.
-                            The temp password disappears once the member's
-                            first login clears it. */}
-                        {o.provisionedFromClient && (
-                          <div className="prov-row-meta">
-                            <p className="prov-row-line">
-                              New — auto-provisioned from sold lead ·{" "}
-                              <b>{o.provisionedFromClientName || "—"}</b>
-                            </p>
-                            <p className="prov-row-line">
-                              Login: <code>{o.loginEmail}</code>
-                              {o.tempPassword ? (
-                                <>
-                                  {" "}· Temp password: <code>{o.tempPassword}</code>
-                                </>
-                              ) : (
-                                <span className="cell-muted">
-                                  {" "}· password delivered — member has logged in
-                                </span>
-                              )}
-                            </p>
-                          </div>
+                          </>
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
                         )}
-                        {/* 3k — a reset temp password while undelivered: shown
-                            for ANY org (not just auto-provisioned), cleared on
-                            first login. */}
-                        {o.resetPassword && (
-                          <p className="prov-row-line">
-                            Reset password: <code>{o.resetPassword}</code>{" "}
-                            <span className="cell-muted">· shown until the client signs in</span>
-                          </p>
+                      </td>
+                      <td className="acc-line" data-label="Phone">
+                        {linked?.phone ? (
+                          <span className={blurPii(pii)}>{linked.phone}</span>
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
+                        )}
+                      </td>
+                      <td className="acc-line" data-label="Email">
+                        {o.loginEmail ? (
+                          <span className={blurPii(pii)}>{o.loginEmail}</span>
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
+                        )}
+                      </td>
+                      <td className="acc-line" data-label="Password">
+                        {/* 3g-3/3k — the temp password while undelivered (from
+                            provisioning or an owner reset), cleared on the
+                            member's first login. */}
+                        {o.tempPassword ? (
+                          <code>{o.tempPassword}</code>
+                        ) : o.resetPassword ? (
+                          <>
+                            <code>{o.resetPassword}</code>
+                            <span className="acc-note">reset &middot; shown until the client signs in</span>
+                          </>
+                        ) : o.provisionedFromClient ? (
+                          <span className="acc-muted">delivered &middot; member has logged in</span>
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
                         )}
                       </td>
                       <td className="num" data-label="Members">
@@ -647,6 +665,13 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
+                      <td className="num" data-label="Subscription" title="Monthly subscription value">
+                        {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
+                          `${money(o.monthlySubscriptionAmount)}/mo`
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
+                        )}
+                      </td>
                       <td data-label="Billing cycle">
                         {editingBillingOrgId === o.id ? (
                           <input
@@ -663,21 +688,16 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                             aria-label={`Billing cycle date for ${o.name}`}
                           />
                         ) : (
-                          <span className="billing-cycle-cell">
-                            <span className="billing-cycle-value" title="Monthly subscription value">
-                              {(o.monthlySubscriptionAmount ?? 0) > 0
-                                ? `${money(o.monthlySubscriptionAmount)}/mo`
-                                : <span className="cell-muted">&mdash;</span>}
-                            </span>
-                            <span className="billing-cycle-date-line">
+                          <span className="acc-cycle">
+                            <span className="acc-cycle-line">
                               {o.billingCycleDate ? (
                                 fmtDate(o.billingCycleDate)
                               ) : (
-                                <span className="cell-muted">&mdash;</span>
-                              )}{" "}
+                                <span className="acc-muted">&mdash;</span>
+                              )}
                               <button
                                 type="button"
-                                className="icon-btn btn-sm"
+                                className="icon-btn"
                                 title="Set billing cycle date"
                                 aria-label={`Set billing cycle date for ${o.name}`}
                                 onClick={() => {
@@ -693,10 +713,10 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         )}
                       </td>
                       <td className="num" data-label="Deal value">
-                        {dealValueByOrg[o.id] ? (
-                          money(dealValueByOrg[o.id])
+                        {linked?.dealValue ? (
+                          money(linked.dealValue)
                         ) : (
-                          <span className="cell-muted">&mdash;</span>
+                          <span className="acc-muted">&mdash;</span>
                         )}
                       </td>
                       <td data-label="Actions">
@@ -757,7 +777,6 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
               The client's login, clients, tasks and invoices will all be removed with it.
             </p>
           }
-          confirmLabel="Delete workspace"
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}

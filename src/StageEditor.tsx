@@ -158,7 +158,6 @@ export default function StageEditor({
               removed.
             </p>
           }
-          confirmLabel="Remove stage"
           busy={busy}
           onCancel={() => setConfirming(null)}
           onConfirm={() => {
