@@ -4304,3 +4304,29 @@ legend.field-label {
   padding-top: 14px;
 }
 
+
+/* ── Paying clients hub (Finance, owner 2026-08-27, backlog 8b9bbe2c) ── */
+.paying-table .cell-name {
+  display: block;
+  font-weight: 700;
+}
+.paying-table td .badge {
+  margin-top: 4px;
+}
+.paying-table .hub-money {
+  display: inline-flex;
+  min-width: 96px;
+}
+.paying-table .hub-money input {
+  width: 100%;
+}
+.paying-table select {
+  max-width: 190px;
+}
+.hub-bill-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-bill-actions .hub-money {
+  min-width: 84px;
+}
