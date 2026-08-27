@@ -4074,23 +4074,24 @@ if [ -n "$NEWEST_JS37" ]; then
   # (PR #78) legitimately use 24%, so it persists in the shared bundle; the
   # source-level checks below, scoped to src/Accounts.tsx, verify the old
   # Accounts widths are gone.)
-  # Owner 2026-08-27 table cleanup — the accounts table now has THIRTEEN
-  # columns (Account | Package | Status | Phone | Email | Password | Members |
-  # Client records | Created | Subscription | Billing cycle | Deal value |
-  # Actions), widths 12/6/8/9/10/9/4/4/7/7/7/7/10. The PR #102 subscription
-  # value keeps its own column (was stacked above the cycle date). Presence
-  # greps run against the shared bundle; the old-widths anti-check below is
-  # scoped to src/Accounts.tsx (other tables legitimately use some of those
-  # percentages, e.g. the owner Leads colgroup).
-  if grep -Fq 'width:"12%"' "$NEWEST_JS37" && grep -Fq 'width:"6%"' "$NEWEST_JS37" && grep -Fq 'width:"8%"' "$NEWEST_JS37" && grep -Fq 'width:"4%"' "$NEWEST_JS37" && grep -Fq 'width:"10%"' "$NEWEST_JS37" && grep -Fq 'width:"7%"' "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table ships the 13-col cleanup colgroup (12/6/8/9/10/9/4/4/7/7/7/7/10)"
+  # Owner 2026-08-27 table cleanup — the accounts table has THIRTEEN columns
+  # (Account | Package | Status | Phone | Email | Password | Members | Client
+  # records | Created | Subscription | Billing cycle | Deal value | Actions).
+  # Owner live-test fix 2026-08-27 (overlap regression): the FIXED colgroup
+  # widths made any cell wider than its column paint over the neighbour
+  # (nowrap chips, the non-wrapping 4-button action row, the 150px date
+  # input). The table now ships table-layout:auto with NO colgroup, so the
+  # bundle check verifies the CSS auto-layout + wrap guards instead of
+  # column widths.
+  if [ -n "$NEWEST_CSS37" ] && grep -Fq '.accounts-table{table-layout:auto}' "$NEWEST_CSS37" && grep -Fq '.accounts-table .row-actions{flex-wrap:wrap}' "$NEWEST_CSS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table ships auto layout + wrapping row-actions (no fixed-colgroup overlap)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 13-col colgroup widths missing in $NEWEST_JS37"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts auto-layout/wrap guards missing from $NEWEST_CSS37"
   fi
-  if grep -Fq 'width: "12%"' src/Accounts.tsx && grep -Fq 'width: "6%"' src/Accounts.tsx && grep -Fq 'width: "8%"' src/Accounts.tsx && grep -Fq 'width: "4%"' src/Accounts.tsx && grep -Fq 'width: "9%"' src/Accounts.tsx && grep -Fq 'width: "10%"' src/Accounts.tsx && grep -Fq 'accounts-table' src/Accounts.tsx; then
-    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup is the 13-col cleanup layout (12/6/8/9/10/9/4/4/7/7/7/7/10, scoped .accounts-table)"
+  if ! grep -q '<colgroup' src/Accounts.tsx && grep -Fq 'accounts-table' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx ships 13 labeled columns with NO fixed colgroup (auto layout, columns size to content)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 13-col cleanup colgroup missing from src/Accounts.tsx"
+    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts.tsx must not carry a fixed colgroup (overlap regression)"
   fi
   # The OLD 7-col widths must be gone from the accounts table (23/11/13/27 are
   # unambiguous old markers — 4/6/8/12 are new; 7/9/10 exist in both layouts).
@@ -9047,6 +9048,20 @@ for col in ['data-label="Account"', 'data-label="Package"', 'data-label="Status"
 assert 'cell-name' not in acc and 'cell-company' not in acc
 # the money-at-a-glance subscription value survives in its own column
 assert 'monthlySubscriptionAmount' in acc
+# (A2) Owner live-test fix 2026-08-27 (overlap regression): NO fixed colgroup —
+# columns size to their content (scoped table-layout:auto), the action row
+# wraps, and the scoped CSS produces NO truncation (ellipsis/nowrap) on the
+# name cells.
+assert '<colgroup' not in acc, 'fixed colgroup must stay gone (overlap regression)'
+css = open('src/styles.css').read()
+sec = css[css.index('.accounts-table'):css.index('/* Appointments "Schedule" box')]
+assert 'table-layout: auto' in sec, 'accounts table must use table-layout:auto'
+assert '.accounts-table .row-actions' in sec
+name_rule = sec[sec.index('.accounts-table .row-actions'):]
+assert 'flex-wrap: wrap' in name_rule, 'accounts action rows must wrap'
+name_block = sec.split('.accounts-table .acc-name,')[1].split('}')[0]
+assert 'white-space: normal' in name_block, 'account name cells must wrap, not truncate'
+assert 'ellipsis' not in name_block and 'nowrap' not in name_block, 'no ellipsis/nowrap on account name cells'
 # (B) every destructive confirm button reads "Confirm" — wording lives in the
 # modal title/body. Default flipped; no caller passes a destructive label.
 assert 'confirmLabel = "Confirm"' in modal

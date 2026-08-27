@@ -41,12 +41,15 @@ function generatePassword(): string {
  *  Owner 2026-08-27 table cleanup: EVERY data point owns a dedicated,
  *  clearly-labeled column — Account | Package | Status | Phone | Email |
  *  Password | Members | Client records | Created | Subscription | Billing
- *  cycle | Deal value | Actions — with an explicit fixed-layout colgroup
- *  (widths sum to 100%). Nothing truncates: names, emails and passwords wrap
- *  fully (scoped `.accounts-table` CSS — other .table users keep the shared
- *  .cell-* ellipsis behavior). The PR #102 money-at-a-glance subscription
- *  value keeps its own column (was stacked above the cycle date); the cycle
- *  date stays inline-editable. */
+ *  cycle | Deal value | Actions. Nothing truncates: names, emails and
+ *  passwords wrap fully (scoped `.accounts-table` CSS — other .table users
+ *  keep the shared .cell-* ellipsis behavior). Live-test fix (owner
+ *  2026-08-27): the fixed colgroup made cells paint over their neighbours
+ *  (nowrap chips, non-wrapping action buttons, the 150px date input), so the
+ *  table now uses `table-layout: auto` with NO colgroup — columns size to
+ *  their content and can never collide. The PR #102 money-at-a-glance
+ *  subscription value keeps its own column (was stacked above the cycle
+ *  date); the cycle date stays inline-editable. */
 export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
@@ -546,24 +549,12 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     other .table users keep the shared .cell-* ellipsis). THIRTEEN columns:
     Account | Package | Status | Phone | Email | Password | Members | Client
     records | Created | Subscription | Billing cycle | Deal value | Actions.
-    Fixed-layout widths sum to 100% (12/6/8/9/10/9/4/4/7/7/7/7/10) — long
-    values wrap to extra lines instead of clipping, and the Actions column
-    wraps its buttons (the .admin-table .row-actions flex-wrap guard). */}
-              <colgroup>
-                <col style={{ width: "12%" }} />
-                <col style={{ width: "6%" }} />
-                <col style={{ width: "8%" }} />
-                <col style={{ width: "9%" }} />
-                <col style={{ width: "10%" }} />
-                <col style={{ width: "9%" }} />
-                <col style={{ width: "4%" }} />
-                <col style={{ width: "4%" }} />
-                <col style={{ width: "7%" }} />
-                <col style={{ width: "7%" }} />
-                <col style={{ width: "7%" }} />
-                <col style={{ width: "7%" }} />
-                <col style={{ width: "10%" }} />
-              </colgroup>
+    NO fixed colgroup (owner live-test 2026-08-27: under table-layout:fixed the
+    locked % widths made nowrap chips, the non-wrapping action buttons and the
+    150px date input PAINT OVER the neighbouring columns). With the scoped
+    table-layout:auto the columns size to their content and can never collide;
+    long values wrap to extra lines instead of clipping, and the Actions
+    column wraps its buttons (scoped .accounts-table .row-actions guard). */}
               <thead>
                 <tr>
                   <th>Account</th>

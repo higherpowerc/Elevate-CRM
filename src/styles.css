@@ -4181,6 +4181,9 @@ legend.field-label {
    names, emails and passwords wrap fully instead. Strictly scoped to
    `.accounts-table` so every OTHER table keeps the shared .cell-* rules
    untouched. */
+.accounts-table {
+  table-layout: auto;
+}
 .accounts-table th {
   white-space: normal;
   overflow: visible;
@@ -4190,8 +4193,42 @@ legend.field-label {
 .accounts-table td {
   vertical-align: top;
 }
+/* Owner live-test 2026-08-27 — the previous fixed colgroup layout OVERLAPPED:
+   under table-layout:fixed every column is locked to its % width and any cell
+   content wider than that paints straight over the neighbouring column —
+   the nowrap .chip "auto-provisioned" spilled into Phone, the 4-button
+   .row-actions (flex-wrap existed only under .admin-table) spilled past the
+   table edge, the 150px billing date input and the nowrap cycle date+pen line
+   spilled into Deal value. FIX: columns size to their content (auto layout,
+   no fixed colgroup) + wrap guards so nothing can spill. Scoped strictly to
+   .accounts-table — every other table keeps the shared .table behavior. */
+/* Long UNBROKEN values (emails, temp passwords, names) wrap inside their own
+   column via the targeted rules below (.acc-name/.acc-line/.acc-note carry
+   word-break: break-word). A blanket overflow-wrap:anywhere on every cell was
+   tried and REVERTED: it drives every column's min-content to ~0, so dates
+   wrapped mid-number ("Aug/27,/2026") and the status chip broke mid-word.
+   With per-cell guards, auto layout gives dates/chips their natural width and
+   only genuinely long strings wrap. */
+.accounts-table .row-actions {
+  flex-wrap: wrap;
+}
+.accounts-table .chip {
+  white-space: normal;
+}
+.accounts-table .billing-date-input {
+  width: 100%;
+  max-width: 150px;
+}
+.accounts-table .acc-cycle-line {
+  flex-wrap: wrap;
+}
 .accounts-table .acc-strong {
   font-weight: 600;
+}
+/* Phone/Email/Password keep a small floor so long unbroken strings wrap into
+   readable chunks instead of 4-character slivers on tight viewports. */
+.accounts-table .acc-line {
+  min-width: 9ch;
 }
 .accounts-table .acc-name,
 .accounts-table .acc-line {
@@ -4207,6 +4244,7 @@ legend.field-label {
   font-size: 11.5px;
   color: var(--muted);
   line-height: 1.45;
+  word-break: break-word;
 }
 .accounts-table .acc-note code {
   background: rgba(242, 241, 236, 0.07);
