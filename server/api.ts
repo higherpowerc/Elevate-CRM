@@ -554,6 +554,10 @@ function toClient(row: ClientRow, ownerOrg = false) {
           // "Sold MRR" and the Finance subscription MRR. OWNER-only; used by
           // the Finance subscription-MRR computation to skip dead accounts.
           orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id),
+          // Owner 2026-08-27 — package tier ('' unset | tier1..4). OWNER-only,
+          // the SAME rule as agreementStatus (comment above): tenant orgs
+          // never get the key, ever.
+          tier: row.tier ?? "",
         }
       : {}),
     createdAt: row.created_at,
@@ -668,6 +672,33 @@ export function isAgreementStatus(v: unknown): v is AgreementStatus {
   return typeof v === "string" && (AGREEMENT_STATUSES as readonly string[]).includes(v);
 }
 
+/* ── Client package tier (owner direction 2026-08-27) ────────────────
+ * The owner's 4 redefined package tiers. OWNER-only: exposed to and written
+ * by the OWNER org only (the same isolation rule as agreement_status/
+ * payment_status) — tenant orgs never receive the key and never write it.
+ * The tier drives auto Services tags + the per-tier onboarding checklist +
+ * the future billing tier (per-tier pricing is the owner's call at charge
+ * time — NO hard-coded rates). Values: '' (unset) | tier1..tier4. */
+export type PackageTier = "" | "tier1" | "tier2" | "tier3" | "tier4";
+export const TIER_KEYS: readonly string[] = ["tier1", "tier2", "tier3", "tier4"];
+export const TIER_LABELS: Record<string, string> = {
+  "": "",
+  tier1: "Tier 1 — Website only",
+  tier2: "Tier 2 — Website + CRM",
+  tier3: "Tier 3 — Website + CRM + Lead gen",
+  tier4: "Tier 4 — Custom package",
+};
+export const TIER_SERVICE_TAGS: Record<string, string[]> = {
+  "": [],
+  tier1: ["Website"],
+  tier2: ["Website", "CRM"],
+  tier3: ["Website", "CRM", "Lead gen"],
+  tier4: ["Custom package"],
+};
+function isPackageTier(v: unknown): v is PackageTier {
+  return typeof v === "string" && (v === "" || TIER_KEYS.includes(v));
+}
+
 interface ClientInput {
   companyName: string;
   contactName: string;
@@ -737,6 +768,12 @@ interface ClientInput {
    *  keys default to "not_sent"; on update, absent keys leave the stored
    *  value untouched (the same partial-update rule lost/DNC follow). */
   agreementStatus?: AgreementStatus;
+  /** Owner 2026-08-27 — package tier ('' unset | tier1..4). OPTIONAL and
+   *  OWNER-only: the server accepts it only from the owner org (role=admin);
+   *  tenant payloads are ignored. On create, absent keys default to ''; on
+   *  update, absent keys leave the stored value untouched. Setting a tier
+   *  also drives the auto Services tags (see TIER_SERVICE_TAGS). */
+  tier?: PackageTier;
 }
 
 /** Adaptive intake Phase 1: optional TEXT columns — client JSON key → DB
@@ -1038,6 +1075,25 @@ function validateClient(
     stage = s;
   }
 
+  // Owner 2026-08-27 — package tier (OWNER-only, the agreementStatus rule):
+  // accepted/validated ONLY from the owner org; tenant payloads are ignored
+  // (absent from the parsed input). Setting a tier also drives the AUTO
+  // Services tags (Website / CRM / Lead gen / Custom package) — they are
+  // merged (deduped, case-insensitive) into `services` so the tags follow the
+  // tier on create and in the UI. Per-tier pricing is the owner's call at
+  // charge time — no hard-coded rates.
+  let tier: PackageTier = "";
+  if (ownerOrg && body.tier !== undefined && body.tier !== null) {
+    if (typeof body.tier !== "string" || !isPackageTier(body.tier.trim())) {
+      return { ok: false, error: "Tier must be one of tier1, tier2, tier3, tier4 (or empty)." };
+    }
+    tier = body.tier.trim() as PackageTier;
+    const tags = TIER_SERVICE_TAGS[tier] ?? [];
+    for (const t of tags) {
+      if (!services.some((s) => s.toLowerCase() === t.toLowerCase())) services.push(t);
+    }
+  }
+
   // Adaptive intake Phase 1: optional intake/billing fields. Absent keys stay
   // undefined — create defaults them, update leaves them untouched. Text
   // fields are trimmed + length-capped; yes/no fields accept true/false or
@@ -1139,6 +1195,7 @@ function validateClient(
     zip: zip.value,
     website: website.value,
     leadSource: leadSource.value,
+    ...(ownerOrg && body.tier !== undefined && body.tier !== null ? { tier } : {}),
   };
   for (const f of INTAKE_TEXT_COLS) {
     const v = intakeText[f.key];
@@ -1553,6 +1610,9 @@ interface OrgRow {
   /** Owner request 2026-08-25 — the day of the month this client account is
    *  billed ('' = not set). Owner-set inline on the Client accounts table. */
   billing_cycle_date: string;
+  /** Owner 2026-08-27 — this client account's package tier ('' unset |
+   *  tier1..4). Owner-only admin data (the client accounts table). */
+  tier: string;
 }
 
 function toOrg(row: OrgRow) {
@@ -1579,6 +1639,8 @@ function toOrg(row: OrgRow) {
     revenueModel: row.revenue_model ?? "sales",
     // Owner request 2026-08-25 — billing cycle date ('' = not set).
     billingCycleDate: row.billing_cycle_date ?? "",
+    // Owner 2026-08-27 — package tier ('' unset | tier1..4).
+    tier: row.tier ?? "",
     // Phase 5 prep — account lifecycle ('' = never canceled / active).
     status: row.status ?? "active",
     canceledAt: row.canceled_at ?? "",
@@ -1594,6 +1656,9 @@ interface NewOrgInput {
    *  2026-08-16 the catalog is B2B & B2C only). "" = no preset — the org
    *  starts from the default pipeline with no seeded fields. */
   verticalKey: string;
+  /** Owner 2026-08-27 — package tier ('' unset | tier1..4). Optional; the
+   *  owner picks it on the Create-account form. */
+  tier: string;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1632,7 +1697,17 @@ function validateNewOrg(
     }
   }
 
-  return { ok: true, value: { name, email, password, verticalKey } };
+  // Owner 2026-08-27 — optional package tier on the Create-account form.
+  // Validated against the 4 package tiers ('' = unset). Rejected otherwise.
+  let tier = "";
+  if (body.tier !== undefined && body.tier !== null && body.tier !== "") {
+    if (typeof body.tier !== "string" || !isPackageTier(body.tier.trim())) {
+      return { ok: false, error: "Tier must be one of tier1, tier2, tier3, tier4 (or empty)." };
+    }
+    tier = body.tier.trim();
+  }
+
+  return { ok: true, value: { name, email, password, verticalKey, tier } };
 }
 
 /**
@@ -1652,6 +1727,10 @@ function insertOrgWithMember(input: {
   email: string;
   passwordHash: string;
   verticalKey: string;
+  /** Owner 2026-08-27 — package tier to stamp on the new org/account ('' =
+   *  unset). Carried from a sold lead on auto-provision or picked on the
+   *  Create-account form. */
+  tier?: string;
 }): { orgId: number; userId: number } {
   const tpl = input.verticalKey ? VERTICAL_MAP[input.verticalKey] : null;
   return db.transaction(() => {
@@ -1662,8 +1741,8 @@ function insertOrgWithMember(input: {
       orgIdNew = Number(
         db
           .query(
-            `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key, revenue_model)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO orgs (name, stages, custom_fields, service_model, delivery_type, industry, vertical_key, revenue_model, tier)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             input.name,
@@ -1677,10 +1756,11 @@ function insertOrgWithMember(input: {
             // type (both B2B and B2C → subscription; bare orgs keep the
             // 'sales' column default).
             tpl.revenueModel,
+            input.tier ?? "",
           ).lastInsertRowid,
       );
     } else {
-      orgIdNew = Number(db.query("INSERT INTO orgs (name) VALUES (?)").run(input.name).lastInsertRowid);
+      orgIdNew = Number(db.query("INSERT INTO orgs (name, tier) VALUES (?, ?)").run(input.name, input.tier ?? "").lastInsertRowid);
     }
     const userId = Number(
       db
@@ -1830,7 +1910,7 @@ async function provisionSoldClient(client: ClientRow): Promise<{
       | null;
     if (!cur || cur.provisioned_org_id !== 0) return null;
     const email = pickUniqueUserEmail(baseEmail);
-    const { orgId, userId } = insertOrgWithMember({ name: orgName, email, passwordHash, verticalKey });
+    const { orgId, userId } = insertOrgWithMember({ name: orgName, email, passwordHash, verticalKey, tier: client.tier ?? "" });
     db.query("UPDATE clients SET provisioned_org_id = ? WHERE id = ?").run(orgId, client.id);
     db.query("UPDATE orgs SET provisioned_from_client = ?, provisioned_temp_password = ? WHERE id = ?").run(
       client.id,
@@ -2555,6 +2635,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
                 o.monthly_subscription_amount,
                 o.revenue_model,
                 o.billing_cycle_date,
+                o.tier,
                 o.status,
                 o.canceled_at,
                 o.retention_until,
@@ -2630,6 +2711,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         email: v.value.email,
         passwordHash: hash,
         verticalKey: v.value.verticalKey,
+        tier: v.value.tier,
       });
     } catch (e) {
       if (e instanceof Error && e.message.includes("already exists")) {
@@ -2782,6 +2864,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       }
       sets.push("billing_cycle_date = ?");
       params.push(b);
+    }
+    // Owner 2026-08-27 — owner edits an account's package tier directly (the
+    // per-account editable tier). '' clears it; reject anything else invalid.
+    if (body.tier !== undefined && body.tier !== null) {
+      const t = String(body.tier);
+      if (!isPackageTier(t)) {
+        return err("Tier must be one of tier1, tier2, tier3, tier4 (or empty).", 400);
+      }
+      sets.push("tier = ?");
+      params.push(t === "" ? "" : t);
     }
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(id);
@@ -3630,8 +3722,8 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?)`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?)`,
       )
       .run(
         orgId,
@@ -3643,6 +3735,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         ...intake.values,
         ...statusValues(c),
         c.agreementStatus ?? "not_sent",
+        c.tier ?? "",
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row, isOwnerSession(auth)) }, 201);
@@ -4202,10 +4295,48 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         sets.push("follow_up_note = ?");
         params.push(String(body.followUpNote));
       }
+      // Owner 2026-08-27 — package tier (OWNER-only): persisted ONLY for the
+      // owner org and only when present in the body (the agreementStatus /
+      // lost-DNC rule). Setting a tier also drives the AUTO Services tags —
+      // they are merged into services (preserving any body-sent or already-
+      // stored services) so the tags are written even when the body omitted
+      // services.
+      const ownerTier = isOwnerSession(auth) ? body.tier : undefined;
+      if (ownerTier !== undefined && ownerTier !== null) {
+        if (typeof ownerTier !== "string" || !isPackageTier(ownerTier)) {
+          return err("tier must be one of tier1, tier2, tier3, tier4 (or empty).", 400);
+        }
+        const tags = TIER_SERVICE_TAGS[ownerTier === "" ? "" : ownerTier] ?? [];
+        let base: string[] = [];
+        if (has("services")) {
+          base = c.services;
+        } else {
+          const curRow = db
+            .query("SELECT services FROM clients WHERE id = ? AND org_id = ?")
+            .get(id, orgId) as { services?: string } | null;
+          try {
+            base = JSON.parse(curRow?.services ?? "[]") as string[];
+          } catch {
+            base = [];
+          }
+        }
+        const merged = [...new Set([...base, ...tags])];
+        sets.push("services = ?");
+        params.push(JSON.stringify(merged));
+        sets.push("tier = ?");
+        params.push(ownerTier === "" ? "" : ownerTier);
+      }
       sets.push("updated_at = datetime('now')");
       params.push(id, orgId);
       db.query(`UPDATE clients SET ${sets.join(", ")} WHERE id = ? AND org_id = ?`).run(...params);
       const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
+      // Owner 2026-08-27 — tier flows to the ACCOUNT: when the owner edits a
+      // client's tier and the client is linked to a provisioned workspace, keep
+      // the account (org) tier in sync so editing the client reflects on the
+      // account. Tenant edits (and absent tier keys) never touch it.
+      if (isOwnerSession(auth) && body.tier !== undefined && body.tier !== null && updated.provisioned_org_id !== 0) {
+        db.query("UPDATE orgs SET tier = ? WHERE id = ?").run(updated.tier ?? "", updated.provisioned_org_id);
+      }
       // 3g-3: the single trigger hook — after ANY owner-org client update, if
       // the record is now in the final "Sold" stage (and not provisioned yet)
       // a brand-new tenant workspace is provisioned for it. The stage change

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { fmtDate, money, type Org } from "./types";
+import { PACKAGE_TIERS, TIER_LABELS, TIER_SHORT_LABELS, type PackageTier } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
@@ -72,6 +73,9 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   /** 3f-1: the business type picker (owner direction 2026-08-16 — the catalog
    *  is B2B & B2C only; B2B is the default: "Mainly we will be selling B2B"). */
   const [vertical, setVertical] = useState("b2b");
+  /** Owner 2026-08-27 — the client package tier picked on the Create-account
+   *  form ('' unset | tier1..4). Stored on the new account (org). */
+  const [tier, setTier] = useState<PackageTier>("");
   const [formError, setFormError] = useState<string | null>(null);
   const [created, setCreated] = useState<{
     orgName: string;
@@ -148,6 +152,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
         email: email.trim(),
         password,
         vertical,
+        tier,
       });
       setCreated({ orgName: org.name, email: user.email, password, verticalLabel: verticalLabel(vertical), emailStatus, emailError });
       setName("");
@@ -155,6 +160,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
       setPassword("");
       setShowPassword(false);
       setVertical("b2b");
+      setTier("");
       await load();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Create failed.");
@@ -327,6 +333,22 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
               </span>
             </label>
             <label className="field">
+              <span className="field-label">Package tier</span>
+              <select value={tier} onChange={(e) => setTier(e.target.value as PackageTier)}>
+                <option value="">— No tier —</option>
+                {PACKAGE_TIERS.map((t) => (
+                  <option key={t} value={t}>
+                    {TIER_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                The client's package tier (Website / +CRM / +Lead gen / Custom). It flows to the
+                account and drives Services tags + the onboarding checklist. Pricing is set at
+                charge time.
+              </span>
+            </label>
+            <label className="field">
               <span className="field-label">Client email *</span>
               <input
                 type="email"
@@ -440,6 +462,14 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                               auto-provisioned
                             </span>
                           )}
+                          {o.tier ? (
+                            <span
+                              className="chip chip-tier"
+                              title={TIER_LABELS[o.tier] ?? o.tier}
+                            >
+                              {TIER_SHORT_LABELS[o.tier] ?? o.tier}
+                            </span>
+                          ) : null}
                           {o.status === "canceled" && (
                             <span
                               className="chip chip-archived"

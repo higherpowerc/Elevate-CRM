@@ -564,6 +564,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
           defaultStage={terminalStage}
           customFieldDefs={customFieldDefs}
           intake={intake}
+          ownerOrg={ownerOrg}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}

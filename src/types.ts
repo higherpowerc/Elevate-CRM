@@ -93,6 +93,46 @@ export type AgreementStatus = "not_sent" | "sent" | "delivered" | "signed" | "de
  *  receive the field (absent from their API responses). */
 export type PaymentStatus = "none" | "sent" | "paid";
 
+/** Owner 2026-08-27 — the client package tier (the owner's 4 redefined
+ *  package tiers). '' = unset. The tier is OWNER-only data (never in tenant
+ *  responses), stored on the client/lead AND reflected on the account (org),
+ *  and it drives auto Services tags + the per-tier onboarding checklist + the
+ *  future billing tier. Per-tier pricing is the owner's call at charge time —
+ *  no hard-coded rates. */
+export type PackageTier = "" | "tier1" | "tier2" | "tier3" | "tier4";
+
+/** The four package tiers, in display order (owner 2026-08-27). */
+export const PACKAGE_TIERS: PackageTier[] = ["tier1", "tier2", "tier3", "tier4"];
+
+/** Human label per tier (used by the intake selector, the create-account
+ *  package selector and the accounts chip). */
+export const TIER_LABELS: Record<PackageTier, string> = {
+  "": "",
+  tier1: "Tier 1 — Website only",
+  tier2: "Tier 2 — Website + CRM",
+  tier3: "Tier 3 — Website + CRM + Lead gen",
+  tier4: "Tier 4 — Custom package",
+};
+
+/** The short package-tier label (fits a chip on the accounts table). */
+export const TIER_SHORT_LABELS: Record<PackageTier, string> = {
+  "": "",
+  tier1: "Tier 1 · Website",
+  tier2: "Tier 2 · Website + CRM",
+  tier3: "Tier 3 · Website + CRM + Lead gen",
+  tier4: "Tier 4 · Custom",
+};
+
+/** Auto Services tags each tier drives (owner 2026-08-27). When a tier is set
+ *  the server merges these tags into the client's services list. */
+export const TIER_SERVICE_TAGS: Record<PackageTier, string[]> = {
+  "": [],
+  tier1: ["Website"],
+  tier2: ["Website", "CRM"],
+  tier3: ["Website", "CRM", "Lead gen"],
+  tier4: ["Custom package"],
+};
+
 export interface Client {
   id: number;
   companyName: string;
@@ -199,6 +239,12 @@ export interface Client {
    *  behind). OWNER-only; the Finance subscription-MRR computation skips these
    *  so an orphaned/dead record can never inflate MRR. */
   orphanedAccount?: boolean;
+  /** Owner 2026-08-27 — this client/lead's package tier ('' unset | tier1..4),
+   *  the owner's 4 package tiers. OWNER-workspace-only: present on owner-org
+   *  responses only (tenant orgs never receive the key). Optional so the
+   *  tenant-facing code never has to know about it. Drives auto Services tags
+   *  + the per-tier onboarding checklist + the future billing tier. */
+  tier?: PackageTier;
   createdAt: string;
   updatedAt: string;
 }
@@ -462,6 +508,11 @@ export interface Org {
   status?: string;
   canceledAt?: string;
   retentionUntil?: string;
+  /** Owner 2026-08-27 — this client account's package tier ('' unset |
+   *  tier1..4). Set by the Create-account package selector and carried from the
+   *  linked sold lead on auto-provision; editable via the owner. Owner-only
+   *  admin data (never in tenant responses). */
+  tier?: PackageTier;
 }
 /** 3g-3: an owner notification that a sold lead got auto-provisioned. */
 export interface ProvisionEvent {

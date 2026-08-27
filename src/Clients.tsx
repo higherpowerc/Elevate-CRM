@@ -1937,6 +1937,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           customFieldDefs={customFieldDefs}
           intake={intake}
           ownerLeadsTab={ownerLeadsTab}
+          ownerOrg={ownerOrg}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}

@@ -1154,6 +1154,41 @@ db.exec(`
 }
 
 /**
+ * Client package-tier foundation (owner direction 2026-08-27 —
+ * Tier 1 Website only / Tier 2 Website + CRM / Tier 3 Website + CRM + Lead
+ * gen / Tier 4 Custom package). Idempotent — safe on every boot.
+ *
+ * clients gains the OWNER-only package-tier column:
+ *   tier TEXT NOT NULL DEFAULT '' — '' (unset) | 'tier1' | 'tier2' | 'tier3'
+ *                  | 'tier4' (the 4 package tiers). Owner-only: exposed to and
+ *                  written by the OWNER org only (the same isolation rule as
+ *                  agreement_status / payment_status) — tenant orgs never
+ *                  receive the key in API responses and never write it. The
+ *                  tier drives auto Services tags + the per-tier onboarding
+ *                  checklist + the future billing tier (per-tier pricing is
+ *                  the owner's call at charge time — NO hard-coded rates).
+ * orgs gains the matching account-tier column (same values) so each CLIENT
+ * ACCOUNT reflects its package tier:
+ *   tier TEXT NOT NULL DEFAULT '' — set when the owner creates/builds an
+ *                  account (the Create-account package selector) and carried
+ *                  from a sold lead when it auto-provisions (provisionSoldClient
+ *                  copies the linked client's tier). Owner-only admin data.
+ *
+ * Plain TEXT with DEFAULTs, so existing rows backfill cleanly and no FK
+ * games are needed (the same pattern every Phase 3 migration uses).
+ */
+{
+  const clientCols = db.query("PRAGMA table_info(clients)").all() as { name: string }[];
+  if (!clientCols.some((c) => c.name === "tier")) {
+    db.exec("ALTER TABLE clients ADD COLUMN tier TEXT NOT NULL DEFAULT ''");
+  }
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "tier")) {
+    db.exec("ALTER TABLE orgs ADD COLUMN tier TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
