@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
-import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, type PackageTier } from "./types";
+import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, money, type PackageTier } from "./types";
 import { usePii, blurPii, PII_FIELD_KEYS } from "./pii";
 import {
   getCustomGroupsFor,
@@ -868,6 +868,31 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               ))}
             </div>
           </div>
+          {/* Owner 2026-08-27 — LEAD INFORMATION: deal value + package tier
+              surfaced as a clear read-only summary in the record's info
+              window, visible at every step of the lead process (Leads /
+              Onboarding / Sold — the modal is shared across all stages).
+              OWNER-only: both are owner concepts (deal value is the owner's
+              projected deal; the tier is owner-only data). The tier stays
+              editable via the selector below and deal value via its intake
+              field, so the summary always reflects the live values. */}
+          {ownerOrg && (
+            <div className="intake-block lead-info" aria-label="Lead information">
+              <div className="lead-info-title">Lead information</div>
+              <div className="form-grid intake-grid">
+                <div className="field">
+                  <span className="field-label">Deal value</span>
+                  <div className="lead-info-value">{money(form.dealValue)}</div>
+                </div>
+                <div className="field">
+                  <span className="field-label">Package tier</span>
+                  <div className="lead-info-value">
+                    {form.tier ? (TIER_LABELS[form.tier] ?? form.tier) : "— None set —"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Owner 2026-08-27 — CLIENT PACKAGE TIER selector. OWNER-only:
               renders only in the owner workspace (ownerOrg). The 4 tiers
               (Tier 1 Website only / Tier 2 Website + CRM / Tier 3 Website +

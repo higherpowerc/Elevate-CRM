@@ -3416,6 +3416,32 @@ legend.field-label {
 .intake-grid .field {
   min-width: 0;
 }
+/* Owner 2026-08-27 — Lead information summary (deal value + package tier)
+   in the client/lead record's info window. Read-only panel styled like the
+   intake sections; lives OUTSIDE a section so it shows at every pipeline
+   stage (Leads / Onboarding / Sold) for the owner workspace. */
+.lead-info {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(242, 241, 236, 0.03);
+}
+.lead-info-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.lead-info-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  padding-top: 4px;
+  line-height: 1.35;
+}
 /* Compact yes/no toggle (PO required, COI, pet on premises). */
 .yesno-seg {
   align-self: flex-start;
