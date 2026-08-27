@@ -203,7 +203,7 @@ export const api = {
   /* Owner-only admin endpoints (Phase 2 — tenant provisioning). A member
      calling these gets a 403 from the server. */
   adminOrgs: () => request<{ orgs: Org[] }>("/api/admin/orgs"),
-  adminCreateOrg: (data: { name: string; email: string; password: string; vertical?: string }) =>
+  adminCreateOrg: (data: { name: string; email: string; password: string; vertical?: string; tier?: string }) =>
     request<{
       org: CreatedOrg;
       user: CreatedOrgUser;
@@ -220,7 +220,7 @@ export const api = {
      2026-08-15 — the per-account revenue-model selector is REMOVED (one
      product, subscription-based): adminUpdateOrg sends only the billing
      amount. Owner-only; members get 403. */
-  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string }) =>
+  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string; tier?: string }) =>
     request<{ ok: true; org: { id: number; name: string } }>(`/api/admin/orgs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

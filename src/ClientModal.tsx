@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
+import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, type PackageTier } from "./types";
 import { usePii, blurPii, PII_FIELD_KEYS } from "./pii";
 import {
   getCustomGroupsFor,
@@ -28,6 +29,10 @@ interface Props {
    *  maybe-outcome follow-up note) which lives in the edit modal — NOT a list
    *  column or dropdown. */
   ownerLeadsTab?: boolean;
+  /** Owner 2026-08-27 — true only in the OWNER workspace (Clients/Leads tabs
+   *  + the sold-customer directory). Shows the package-tier selector. The tier
+   *  is OWNER-only data — tenants never see the selector nor the field. */
+  ownerOrg?: boolean;
   busy: boolean;
   onClose: () => void;
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
@@ -82,9 +87,12 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
    *  Leads tab. */
   demoOutcome: "" | "sold" | "not_sold" | "maybe";
   followUpNote: string;
+  /** Owner 2026-08-27 — package tier ('' unset | tier1..4). Owner-only: the
+   *  selector renders only in the owner workspace. */
+  tier: PackageTier;
 };
 
-export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, ownerLeadsTab = false, busy, onClose, onSave }: Props) {
+export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, ownerLeadsTab = false, ownerOrg = false, busy, onClose, onSave }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const createStage = defaultStage ?? stages[0] ?? "Leads";
@@ -142,6 +150,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     dncDate: "",
     demoOutcome: "",
     followUpNote: "",
+    tier: "",
   });
   const [form, setForm] = useState<FormState>(() =>
     client
@@ -198,6 +207,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
           dncDate: client.dncDate ?? "",
           demoOutcome: (client.demoOutcome ?? "") as "" | "sold" | "not_sold" | "maybe",
           followUpNote: client.followUpNote ?? "",
+          tier: (client.tier ?? "") as PackageTier,
         }
       : empty(),
   );
@@ -322,9 +332,22 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     }
     const billingSame = form.billingSame !== false;
     setError(null);
+    // Owner 2026-08-27 — the package tier drives auto Services tags: merge the
+    // tier's tags into services before saving so the tags persist even if the
+    // owner only picked a tier (the server enforces the same merge).
+    const tierTags = TIER_SERVICE_TAGS[form.tier === "" ? "" : (form.tier as PackageTier)] ?? [];
+    const services = [...form.services];
+    for (const t of tierTags) {
+      if (!services.some((s) => s.toLowerCase() === t.toLowerCase())) services.push(t);
+    }
     onSave(
       {
         ...form,
+        services,
+        // Owner 2026-08-27 — the package tier ships with the save (owner
+        // workspace only in the UI; the server persists it solely for the
+        // owner org).
+        tier: (form.tier ?? "") as PackageTier,
         billingSame,
         // When billing is the same as the service address the address values
         // are omitted from the save (nothing to store).
@@ -845,6 +868,36 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               ))}
             </div>
           </div>
+          {/* Owner 2026-08-27 — CLIENT PACKAGE TIER selector. OWNER-only:
+              renders only in the owner workspace (ownerOrg). The 4 tiers
+              (Tier 1 Website only / Tier 2 Website + CRM / Tier 3 Website +
+              CRM + Lead gen / Tier 4 Custom package) are the owner's defined
+              package tiers; the tier drives auto Services tags, the per-tier
+              onboarding checklist and the future billing tier (per-tier
+              pricing is the owner's call at charge time — no hard-coded
+              rates). Tenants never see this selector nor the field. */}
+          {ownerOrg && (
+            <div className="field intake-block tier-picker">
+              <span className="field-label">Package tier</span>
+              <select
+                className="tier-select"
+                value={form.tier}
+                aria-label="Package tier"
+                onChange={(e) => set("tier", e.target.value as PackageTier)}
+              >
+                <option value="">— None set —</option>
+                {PACKAGE_TIERS.map((t) => (
+                  <option key={t} value={t}>
+                    {TIER_LABELS[t]}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">
+                Select the client's package tier. It drives the Services tags (Website / CRM / Lead
+                gen / Custom package) and the onboarding checklist. Pricing is set at charge time.
+              </span>
+            </div>
+          )}
           {sections.map((section) =>
             section.fields.length === 0 ? null : (
               <section className="intake-section" key={section.id} aria-label={section.title}>

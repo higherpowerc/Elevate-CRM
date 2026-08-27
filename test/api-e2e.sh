@@ -8346,6 +8346,125 @@ stop_crm "$MOCK63/srv.pid"; sleep 0.3
 rm -rf "$MOCK63" "$J63"
 echo "  ✓ 63: MRR active-sold-only lock verified (throwaway owner server torn down)"
 
+
+echo "== 64. Client package tier (owner 2026-08-27) — data field + surfaces =="
+# Fresh owner login on the main server (earlier sections may have logged out).
+JT=$(mktemp)
+S=$(code -c "$JT" -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "tier: owner login → 200" 200 "$S"
+
+echo "-- 64a. Owner creates a lead with tier2 → tier persists + drives Services tags --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tiered Co","clientType":"residential","tier":"tier2","services":["Installation"]}' "$BASE/api/clients")
+check "owner creates client with tier2 → 201" 201 "$S"
+TIERED_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c.get('tier') == 'tier2', c
+sv = [x.lower() for x in c['services']]
+assert 'website' in sv and 'crm' in sv and 'installation' in sv, c['services']
+print("  ✓ tier2 persisted with auto 'Website','CRM' service tags (kept Installation)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 64a: tier2 + auto service tags on create"
+else FAIL=$((FAIL+1)); echo "  ✗ 64a: create tier/tags wrong: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+
+echo "-- 64b. Owner edits the client tier → round-trip + tags update --"
+S=$(code -b "$JT" -X PUT -H 'Content-Type: application/json' \
+  -d '{"tier":"tier4"}' "$BASE/api/clients/$TIERED_ID")
+check "owner updates client tier2→tier4 → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c.get('tier') == 'tier4', c
+sv = [x.lower() for x in c['services']]
+assert 'custom package' in sv and 'website' in sv and 'crm' in sv, c['services']
+print("  ✓ tier4 persisted; auto tags replaced with 'Custom package' (kept Website/CRM/Installation)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 64b: tier round-trip + tag update on PUT"
+else FAIL=$((FAIL+1)); echo "  ✗ 64b: PUT tier wrong: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+
+echo "-- 64c. Admin create-account flow sets the account tier → flows to account --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Tier Account Co","email":"tieracct@example.com","password":"tierpass123","tier":"tier3"}' "$BASE/api/admin/orgs")
+check "admin creates account with tier3 → 201" 201 "$S"
+S=$(code -b "$JT" "$BASE/api/admin/orgs")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+o = next(x for x in d['orgs'] if x['name']=='Tier Account Co')
+assert o.get('tier') == 'tier3', o
+print("  ✓ create-account package selector stored tier3 on the account")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 64c: account tier flows on create-account"
+else FAIL=$((FAIL+1)); echo "  ✗ 64c: account tier missing: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+TACCT_ID=$(python3 -c "import json;print([x['id'] for x in json.load(open('/tmp/body.json'))['orgs'] if x['name']=='Tier Account Co'][0])")
+
+echo "-- 64d. Owner-only: tenants never see the tier and cannot write it --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Tier Tenant Co","email":"tiertenant@example.com","password":"tenantpass123"}' "$BASE/api/admin/orgs")
+check "admin creates tenant for owner-only check → 201" 201 "$S"
+JTT=$(mktemp)
+S=$(code -c "$JTT" -b "$JTT" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"tiertenant@example.com","password":"tenantpass123"}' "$BASE/api/auth/login")
+check "tier tenant login → 200" 200 "$S"
+S=$(code -b "$JTT" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tier Tenant Client","clientType":"residential","tier":"tier2","services":["X"]}' "$BASE/api/clients")
+check "tenant creates client (with bogus tier) → 201" 201 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert 'tier' not in c, c            # tenant response must omit the owner-only key
+sv = [x.lower() for x in c['services']]
+assert 'website' not in sv, c['services']   # tier tags not applied (tenant can't set tier)
+print("  ✓ tenant response carries NO tier key and no tier service tags")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 64d: tenant response owner-only (tier absent)"
+else FAIL=$((FAIL+1)); echo "  ✗ 64d: tenant saw tier: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JT" "$BASE/api/admin/orgs")
+TT_ID=$(python3 -c "import json;print([x['id'] for x in json.load(open('/tmp/body.json'))['orgs'] if x['name']=='Tier Tenant Co'][0])")
+check "admin deletes tier tenant → 200" 200 $(code -b "$JT" -X DELETE "$BASE/api/admin/orgs/$TT_ID")
+
+echo "-- 64e. Tier flows to account on sold-lead auto-provision (client → org) --"
+S=$(code -b "$JT" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Sold Tier Co","clientType":"residential","tier":"tier2"}' "$BASE/api/clients")
+check "owner creates a lead with tier2 → 201" 201 "$S"
+SOLD_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+STAGES=$(code -b "$JT" "$BASE/api/settings" >/dev/null; python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
+S=$(code -b "$JT" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"stage\":\"$STAGES\"}" "$BASE/api/clients/$SOLD_ID")
+check "owner moves lead to final ($STAGES) stage → 200 (auto-provisions)" 200 "$S"
+S=$(code -b "$JT" "$BASE/api/admin/orgs")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+prov = [x for x in d['orgs'] if x.get('provisionedFromClient')=='$SOLD_ID']
+assert prov, [x for x in d['orgs'] if 'Sold' in x['name']]
+assert prov[0].get('tier') == 'tier2', prov[0]
+print("  ✓ auto-provisioned account carries the sold lead's tier2")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 64e: tier flowed to account on auto-provision"
+else FAIL=$((FAIL+1)); echo "  ✗ 64e: auto-provision tier missing: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+
+echo "-- 64f. Source guard: tier wired end-to-end --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+types=open('src/types.ts').read()
+api=open('server/api.ts').read()
+clientmodal=open('src/ClientModal.tsx').read()
+accounts=open('src/Accounts.tsx').read()
+assert "tier?: PackageTier" in types
+assert "PackageTier = \"\" | \"tier1\" | \"tier2\" | \"tier3\" | \"tier4\"" in api
+assert "TIER_SERVICE_TAGS[tier] ?? []" in api or "TIER_SERVICE_TAGS[ownerTier" in api
+assert "tier: row.tier ?? \"\"" in api or "tier: row.tier ?? \"\"," in api
+assert "ownerOrg &&" in clientmodal and "Package tier" in clientmodal
+assert "chip-tier" in accounts and "Package tier" in accounts
+print("  ✓ 64f: tier source guards present (types/api/modal/accounts)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 64f: source guards present"
+else FAIL=$((FAIL+1)); echo "  ✗ 64f: source guard missing"; cat "$PASS_TMP"; fi
+rm -f "$JTT"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
