@@ -548,6 +548,12 @@ function toClient(row: ClientRow, ownerOrg = false) {
           // means an account was built). OWNER-only, the same rule as the
           // payment/agreement keys above: tenant responses never carry it.
           provisionedOrgId: row.provisioned_org_id,
+          // Owner 2026-08-26 incident guard — a sold client whose account
+          // (org) no longer exists. Mirrors the live bug where deleted client
+          // accounts left orphaned Sold records behind that still inflated
+          // "Sold MRR" and the Finance subscription MRR. OWNER-only; used by
+          // the Finance subscription-MRR computation to skip dead accounts.
+          orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id),
         }
       : {}),
     createdAt: row.created_at,
@@ -3105,7 +3111,12 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
             .query(
               `SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients
                WHERE org_id = ? AND lost = 0 AND archived = 0
-                 AND LOWER(TRIM(stage)) = LOWER(TRIM(?))`,
+                 AND LOWER(TRIM(stage)) = LOWER(TRIM(?))
+                 -- Owner 2026-08-26 incident guard: a sold client whose
+                 -- account (org) no longer exists must NOT count toward Sold
+                 -- MRR. Only a genuinely active sold deal contributes.
+                 AND (provisioned_org_id = 0
+                      OR provisioned_org_id IN (SELECT id FROM orgs))`,
             )
             .get(orgId, terminalStage) as { v: number })
         : { v: 0 };

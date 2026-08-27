@@ -8180,6 +8180,164 @@ if [ -n "$NEWEST_JS62" ] && [ -f "$NEWEST_JS62" ]; then
 else
   FAIL=$((FAIL+1)); echo "  ✗ dist build not found for 62 bundle surface check"
 fi
+echo "== 63. MRR active-sold-only lock (owner 2026-08-26 incident guard): dashboard Sold MRR + Finance Subscription MRR count only genuinely active sold clients =="
+# The live incident (owner 2026-08-26): orphaned Sold records — provisionedOrgId
+# pointing to a deleted client account — were still counted in the dashboard
+# "Sold MRR" (clientMrr) and the Finance subscription MRR even though their
+# client accounts were gone and they were invisible in the UI. This section
+# LOCKS the rule on a throwaway owner server (fresh DB). We fabricate the exact
+# failure class (a Sold record whose org no longer exists) by direct DB insert
+# (the same raw bun:sqlite pattern as §24/§30), then prove clientMrr and the
+# Finance MRR (mirroring the client-side computation from /api/clients) exclude
+# it — alongside lost / archived / deleted-account clients.
+MOCK63=$(mktemp -d)
+start_crm 3031 "$MOCK63/db" "$MOCK63/srv.log" "$MOCK63/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET -u RESEND_API_KEY -u RESEND_URL -u TEST_EMAIL_TO
+B63=http://localhost:3031
+J63=$(mktemp)
+S=$(code -c "$J63" -b "$J63" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B63/api/auth/login")
+check "63a: owner login → 200" 200 "$S"
+code -b "$J63" "$B63/api/settings" > /dev/null
+TERM63=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+echo "     (owner terminal stage=\"$TERM63\")"
+echo "-- 63a. Active sold client is the ONLY thing that counts (baseline) --"
+S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Active MRR Co\",\"clientType\":\"commercial\",\"dealValue\":400,\"monthlyAmount\":40,\"stage\":\"$TERM63\"}" "$B63/api/clients")
+check "63a: create ACTIVE sold client (deal 400 / mo 40) → 201" 201 "$S"
+ACTIVE63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63a: dashboard Sold MRR = 400 (the active sold deal counts)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63a: clientMrr != 400: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 63b. Archived sold client EXCLUDED --"
+S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"stage\":\"$TERM63\"}" "$B63/api/clients")
+check "63b: create ARCH-eligible sold client (deal 500) → 201" 201 "$S"
+ARCH63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J63" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"stage\":\"$TERM63\",\"archived\":true}" "$B63/api/clients/$ARCH63_ID")
+check "63b: archive the sold client → 200" 200 "$S"
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63b: clientMrr stays 400 — archived sold deal (500) NOT counted"
+else FAIL=$((FAIL+1)); echo "  ✗ 63b: archived inflated MRR: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 63c. Lost sold client EXCLUDED --"
+S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Lost MRR Co\",\"clientType\":\"commercial\",\"dealValue\":600,\"stage\":\"$TERM63\"}" "$B63/api/clients")
+check "63c: create LOST-eligible sold client (deal 600) → 201" 201 "$S"
+LOST63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J63" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Lost MRR Co\",\"clientType\":\"commercial\",\"dealValue\":600,\"stage\":\"$TERM63\",\"lost\":true,\"lostReason\":\"Competitor\"}" "$B63/api/clients/$LOST63_ID")
+check "63c: mark the sold client lost → 200" 200 "$S"
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63c: clientMrr stays 400 — lost sold deal (600) NOT counted"
+else FAIL=$((FAIL+1)); echo "  ✗ 63c: lost inflated MRR: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 63d. Deleted account: deleting the client account removes its Sold record → no lingering MRR --"
+S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Del MRR Co\",\"clientType\":\"commercial\",\"dealValue\":800,\"stage\":\"Leads\"}" "$B63/api/clients")
+check "63d: create Del in Leads (deal 800) → 201" 201 "$S"
+DEL63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J63" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Del MRR Co\",\"clientType\":\"commercial\",\"dealValue\":800,\"stage\":\"$TERM63\"}" "$B63/api/clients/$DEL63_ID")
+check "63d: move Del to Sold (auto-provisions an account) → 200" 200 "$S"
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-1200)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr = 1200 (400 active + 800 Del, both live accounts)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63d: expected 1200: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$J63" "$B63/api/admin/orgs")
+DEL_ORG63=$(python3 -c "import json;d=json.load(open('/tmp/body.json'))['orgs'];print([o['id'] for o in d if o['name']=='Del MRR Co'][0])")
+S=$(code -b "$J63" -X DELETE "$B63/api/admin/orgs/$DEL_ORG63")
+check "63d: delete Del's client account (org $DEL_ORG63) → 200 (removes the linked Sold record)" 200 "$S"
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr back to 400 — the deleted account's deal (800) no longer counts"
+else FAIL=$((FAIL+1)); echo "  ✗ 63d: deleted account still inflating MRR: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$J63" "$B63/api/clients?archived=1")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))['clients']
+assert not any(c['companyName']=='Del MRR Co' for c in d), 'Del Sold record must be gone'
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63d: Del's Sold record deleted entirely (no lingering data)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63d: Del Sold record still present: $(cat /tmp/body.json)"; fi
+echo "-- 63e. ORPHANED sold client (provisionedOrgId → nonexistent org) EXCLUDED from Sold MRR and Finance MRR --"
+cat > "$MOCK63/inject.ts" <<TS
+import { Database } from "bun:sqlite";
+const db = new Database(process.env.DATA_DIR + "/crm.db");
+const owner = db.query("SELECT org_id FROM users WHERE role='admin' ORDER BY id LIMIT 1").get() as { org_id: number };
+const r = db.query("INSERT INTO clients (org_id, company_name, client_type, deal_value, monthly_amount, stage, provisioned_org_id) VALUES (?, ?, 'commercial', 700, 123, ?, 987654321)").run(owner.org_id, "Orphan MRR Co", process.env.TERM63 ?? "Sold");
+console.log("ORPHAN_ID " + r.lastInsertRowid);
+TS
+ORPHAN63_ID=$(DATA_DIR="$MOCK63/db" TERM63="$TERM63" bun "$MOCK63/inject.ts" 2>/dev/null | grep '^ORPHAN_ID ' | awk '{print $2}')
+[ -n "$ORPHAN63_ID" ] && { PASS=$((PASS+1)); echo "  ✓ 63e: orphaned Sold record fabricated (id=$ORPHAN63_ID, provisionedOrgId→nonexistent org)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 63e: orphan inject failed"; }
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63e: clientMrr stays 400 — orphaned sold deal (700) NOT counted (KEY incident guard)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63e: orphan inflated Sold MRR (the live bug): $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$J63" "$B63/api/clients?archived=1")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))['clients']
+o=[c for c in d if c['companyName']=='Orphan MRR Co']
+assert len(o)==1 and o[0]['orphanedAccount'] is True, o
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63e: API flags the orphan with orphanedAccount=true (owner-only surface)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63e: orphan not flagged: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# Finance Subscription MRR — mirror the client-side computation (Finance.tsx):
+# sum of monthlyAmount over ACTIVE (not lost, not archived, not orphanedAccount).
+S=$(code -b "$J63" "$B63/api/clients?archived=1")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))['clients']
+active=[c for c in d if not c.get('lost') and not c.get('archived') and not c.get('orphanedAccount')]
+mrr=sum(c.get('monthlyAmount') or 0 for c in active)
+assert abs(mrr-40)<0.001, (mrr, [(c['companyName'], c.get('monthlyAmount')) for c in active])
+assert not any(c['companyName']=='Orphan MRR Co' for c in active), 'orphan must be excluded from the Finance active set'
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63e: Finance Subscription MRR = 40 — the orphaned record's monthlyAmount (123) excluded"
+else FAIL=$((FAIL+1)); echo "  ✗ 63e: Finance MRR includes the orphan: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 63f. Source guard: Finance subscription-MRR filter + server orphan guard wired --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+fin=open('src/Finance.tsx').read()
+types=open('src/types.ts').read()
+api=open('server/api.ts').read()
+assert '!c.orphanedAccount' in fin, 'Finance active filter must exclude orphanedAccount'
+assert 'orphanedAccount?: boolean' in types, 'Client type must carry orphanedAccount'
+assert 'orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id)' in api, 'server must compute orphanedAccount'
+assert 'AND (provisioned_org_id = 0' in api and 'IN (SELECT id FROM orgs)' in api, 'clientMrr query must exclude orphaned records'
+print('  ✓ 63f: Finance MRR filter + server orphan guard present')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63f: source guards present"
+else FAIL=$((FAIL+1)); echo "  ✗ 63f: source guard missing"; cat "$PASS_TMP"; fi
+stop_crm "$MOCK63/srv.pid"; sleep 0.3
+rm -rf "$MOCK63" "$J63"
+echo "  ✓ 63: MRR active-sold-only lock verified (throwaway owner server torn down)"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
