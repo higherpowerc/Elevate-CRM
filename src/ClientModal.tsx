@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
-import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, money, type PackageTier } from "./types";
+import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, type PackageTier } from "./types";
 import { CLIENT_TIMEZONES, timezoneLabel } from "./timezone";
 import { usePii, blurPii, PII_FIELD_KEYS } from "./pii";
 import {
@@ -876,21 +876,35 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
             </div>
           </div>
           {/* Owner 2026-08-27 — LEAD INFORMATION: deal value + package tier
-              surfaced as a clear read-only summary in the record's info
-              window, visible at every step of the lead process (Leads /
-              Onboarding / Sold — the modal is shared across all stages).
-              OWNER-only: both are owner concepts (deal value is the owner's
-              projected deal; the tier is owner-only data). The tier stays
-              editable via the selector below and deal value via its intake
-              field, so the summary always reflects the live values. */}
+              surfaced in the record's info window, visible at every step of
+              the lead process (Leads / Onboarding / Sold — the modal is shared
+              across all stages). OWNER-only: both are owner concepts (deal
+              value is the owner's projected deal; the tier is owner-only
+              data). Fix 2026-08-27: the deal value here is an EDITABLE input
+              (it was read-only and no intake field wrote dealValue, so a value
+              entered at intake was silently lost — stored 0). It binds to
+              form.dealValue and ships with the same save path; the tier stays
+              editable via the selector below. Tenants never see this block. */}
           {ownerOrg && (
             <div className="intake-block lead-info" aria-label="Lead information">
               <div className="lead-info-title">Lead information</div>
               <div className="form-grid intake-grid">
-                <div className="field">
-                  <span className="field-label">Deal value</span>
-                  <div className="lead-info-value">{money(form.dealValue)}</div>
-                </div>
+                <label className="field">
+                  <span className="field-label">Deal value ($)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    placeholder="0"
+                    value={form.dealValue === 0 ? "" : String(form.dealValue)}
+                    onChange={(e) => set("dealValue", e.target.value === "" ? 0 : Number(e.target.value))}
+                    aria-label="Deal value in dollars"
+                  />
+                  <span className="field-hint">
+                    The projected deal for this lead — it shows on the Leads row, the Lead information panel and
+                    the Client accounts Deal value column.
+                  </span>
+                </label>
                 <div className="field">
                   <span className="field-label">Package tier</span>
                   <div className="lead-info-value">

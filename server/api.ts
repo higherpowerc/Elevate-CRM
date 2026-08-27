@@ -2901,6 +2901,19 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       sets.push("tier = ?");
       params.push(t === "" ? "" : t);
     }
+    // Owner 2026-08-27 — the Client accounts hub renames an account: the org
+    // name IS the account name shown in the table's Clients cell. The linked
+    // owner-org client record is renamed by the same edit (PUT /api/clients/:id
+    // from the UI) so both sides stay in step. Non-empty, <=200 chars (the same
+    // cap the Create-account form and validateClient use). Owner-only route
+    // (requireAdmin); the owner workspace itself is already guarded above.
+    if (body.name !== undefined && body.name !== null) {
+      const n = String(body.name).trim();
+      if (!n) return err("Account name cannot be empty.", 400);
+      if (n.length > 200) return err("Account name must be under 201 characters.", 400);
+      sets.push("name = ?");
+      params.push(n);
+    }
     if (sets.length === 0) return err("Nothing to update.", 400);
     params.push(id);
     db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);

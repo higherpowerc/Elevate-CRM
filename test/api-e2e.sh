@@ -8582,6 +8582,200 @@ then PASS=$((PASS+1)); echo "  ✓ 65d: scheduling UI surfaces converted values"
 else FAIL=$((FAIL+1)); echo "  ✗ 65d: scheduling UI conversion missing"; cat "$PASS_TMP"; fi
 rm -f "$JTTZ"
 
+echo "== 66. Account management hub: owner edits a linked account (name/phone/deal value), deal value at intake, agreement generation (owner 2026-08-27) =="
+# Self-contained like sections 45/50: a fresh throwaway CRM server on :3017
+# (own DB) POSTs emails to a mock Resend endpoint on :3230, which records every
+# request as JSONL. The MAIN server on $BASE is untouched. Ports 3017/3230 are
+# free (the suite uses 3002-3015 + 3195-3221). Covers the owner's reported Joe
+# Palotto bug: a deal value entered at lead intake was silently lost (no
+# editable intake field), and the Client accounts table had no way to set or
+# edit an account's name / phone / deal value or generate a fresh agreement.
+MOCK66=$(mktemp -d)
+MOCK66_EMAILS="$MOCK66/emails.jsonl"
+: > "$MOCK66_EMAILS"
+cat > "$MOCK66/resend.ts" <<'TS'
+import { appendFileSync } from "node:fs";
+const PORT = 3230;
+const OUT = process.env.MOCK66_OUT ?? "";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock66-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock66 resend on " + PORT);
+TS
+MOCK66_OUT="$MOCK66_EMAILS" nohup bun "$MOCK66/resend.ts" > "$MOCK66/resend.log" 2>&1 &
+MOCK66_PID=$!
+i=0; until curl -sf http://127.0.0.1:3230/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+curl -sf http://127.0.0.1:3230/health >/dev/null 2>&1 && { PASS=$((PASS+1)); echo "  ✓ mock Resend up on :3230"; } || { FAIL=$((FAIL+1)); echo "  ✗ mock Resend failed"; }
+start_crm 3017 "$MOCK66/db" "$MOCK66/srv.log" "$MOCK66/srv.pid" -u STRIPE_SECRET_KEY -u TEST_EMAIL_TO RESEND_API_KEY=test-key-66 RESEND_URL=http://127.0.0.1:3230
+B66=http://localhost:3017
+JA66=$(mktemp)   # owner session
+JT66=$(mktemp)   # tenant session (isolation checks)
+S=$(code -c "$JA66" -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B66/api/auth/login")
+check "66a: owner login → 200" 200 "$S"
+
+echo "-- 66a. Deal value entered at lead intake is STORED (the reported root cause) --"
+S=$(code -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Palotto Electric","contactName":"Joe Palotto","email":"joe@palotto.example","phone":"+1 555 8080","industry":"Electrical","clientType":"commercial","dealValue":3500,"stage":"Leads"}' "$B66/api/clients")
+check "66a: owner creates a lead WITH a deal value at intake → 201" 201 "$S"
+P66_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['dealValue'] == 3500, c['dealValue']
+print("  ✓ create response carries dealValue 3500")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66a: intake deal value persisted on create"
+else FAIL=$((FAIL+1)); echo "  ✗ 66a: create lost the deal value: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$JA66" "$B66/api/clients/$P66_ID")
+check "66a: owner GET the lead → 200" 200 "$S"
+grep -q '"dealValue":3500' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ stored deal value survives a re-read (was silently 0 before the fix)"; } || { FAIL=$((FAIL+1)); echo "  ✗ dealValue lost on GET: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA66" "$B66/api/clients?q=Palotto")
+check "66a: owner list (the Leads row) → 200" 200 "$S"
+grep -q '"dealValue":3500' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ the Leads row / API list returns the stored deal value"; } || { FAIL=$((FAIL+1)); echo "  ✗ list dealValue: $(cat /tmp/body.json)"; }
+
+echo "-- 66b. Account-management path: owner edits the LINKED client record; the account reflects it --"
+S=$(code -b "$JA66" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Palotto Electric","contactName":"Joe Palotto","email":"joe@palotto.example","phone":"+1 555 8080","industry":"Electrical","clientType":"commercial","dealValue":3500,"stage":"Sold","nextAction":"","notes":"sold"}' \
+  "$B66/api/clients/$P66_ID")
+check "66b: move the lead into Sold → 200 (auto-provisions the workspace)" 200 "$S"
+S=$(code -b "$JA66" "$B66/api/admin/orgs")
+check "66b: admin orgs → 200" 200 "$S"
+ORG66=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); m=[o['id'] for o in d['orgs'] if o.get('provisionedFromClient') == $P66_ID]; print(m[0] if m else '')")
+[ -n "$ORG66" ] && { PASS=$((PASS+1)); echo "  ✓ workspace auto-provisioned (org $ORG66 links to the sold lead via provisionedFromClient)"; } || { FAIL=$((FAIL+1)); echo "  ✗ no linked org for the sold lead"; }
+# The Edit-account save: PUT the owner-org client (partial body — name/phone/deal).
+S=$(code -b "$JA66" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Palotto Electric LLC","clientType":"commercial","phone":"+1 555 9999","dealValue":4800}' \
+  "$B66/api/clients/$P66_ID")
+check "66b: owner PUT linked client (companyName/phone/dealValue) → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+c = json.load(open('/tmp/body.json'))['client']
+assert c['companyName'] == 'Palotto Electric LLC', c['companyName']
+assert c['phone'] == '+1 555 9999', c['phone']
+assert c['dealValue'] == 4800, c['dealValue']
+print("  ✓ linked client record updated: name + phone + deal value 4800")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66b: account edit persisted (name / phone / deal value)"
+else FAIL=$((FAIL+1)); echo "  ✗ 66b: edit not persisted: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# … and rename the org so the Clients cell follows (the new PATCH name support).
+S=$(code -b "$JA66" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"name":"Palotto Electric LLC"}' "$B66/api/admin/orgs/$ORG66")
+check "66b: owner PATCH org name → 200" 200 "$S"
+grep -q '"name":"Palotto Electric LLC"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ account (org) renamed — the Clients cell follows"; } || { FAIL=$((FAIL+1)); echo "  ✗ org rename: $(cat /tmp/body.json)"; }
+S=$(code -b "$JA66" "$B66/api/admin/orgs")
+if python3 - "$ORG66" <<'PY' 2>"$PASS_TMP"
+import json, sys
+org = int(sys.argv[1])
+d = json.load(open('/tmp/body.json'))
+o = [x for x in d['orgs'] if x['id'] == org]
+assert len(o) == 1 and o[0]['name'] == 'Palotto Electric LLC', o
+print("  ✓ orgs list shows the new account name")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66b: renamed account visible in the accounts list"
+else FAIL=$((FAIL+1)); echo "  ✗ 66b: org list name wrong: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# The account row's Deal value join (client.provisionedOrgId == org.id) reads 4800.
+S=$(code -b "$JA66" "$B66/api/clients?archived=1")
+if python3 - "$ORG66" <<'PY' 2>"$PASS_TMP"
+import json, sys
+org = int(sys.argv[1])
+d = json.load(open('/tmp/body.json'))
+linked = [c for c in d['clients'] if c.get('provisionedOrgId') == org]
+assert len(linked) == 1, linked
+assert linked[0]['dealValue'] == 4800, linked[0]['dealValue']
+assert linked[0]['companyName'] == 'Palotto Electric LLC', linked[0]['companyName']
+assert linked[0]['phone'] == '+1 555 9999', linked[0]['phone']
+print("  ✓ the account's Deal-value join (provisionedOrgId == org) reads the NEW values")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66b: Deal value column join reflects the edit"
+else FAIL=$((FAIL+1)); echo "  ✗ 66b: join stale: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+
+echo "-- 66c. Isolation: tenants can neither edit the owner's client nor rename owner accounts --"
+S=$(code -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Isolation Tenant 66","email":"iso66@example.com","password":"isotenant66pass"}' "$B66/api/admin/orgs")
+check "66c: owner provisions a tenant org → 201" 201 "$S"
+S=$(code -c "$JT66" -b "$JT66" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"iso66@example.com","password":"isotenant66pass"}' "$B66/api/auth/login")
+check "66c: tenant login → 200" 200 "$S"
+S=$(code -b "$JT66" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Tenant Private Co","clientType":"commercial","dealValue":77,"stage":"Prospect"}' "$B66/api/clients")
+check "66c: tenant creates its own client → 201" 201 "$S"
+T66_CLIENT=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA66" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Hijack Try","clientType":"commercial","dealValue":1}' "$B66/api/clients/$T66_CLIENT")
+check "66c: owner PUT to a TENANT's client → 404 (org-scoped find)" 404 "$S"
+S=$(code -b "$JT66" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Hijack Try","clientType":"commercial","dealValue":1}' "$B66/api/clients/$P66_ID")
+check "66c: tenant PUT to the owner's linked client → 404 (org-scoped find)" 404 "$S"
+S=$(code -b "$JT66" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"name":"Owned"}' "$B66/api/admin/orgs/$ORG66")
+check "66c: tenant PATCH account name → 403 (owner-only admin route)" 403 "$S"
+S=$(code -b "$JT66" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$P66_ID}" "$B66/api/agreements/send")
+check "66c: tenant POST agreements/send → 403" 403 "$S"
+S=$(code -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$T66_CLIENT}" "$B66/api/agreements/send")
+check "66c: owner agreements/send for a TENANT client id → 404 (no cross-org envelope)" 404 "$S"
+S=$(code -b "$JA66" "$B66/api/clients/$P66_ID")
+grep -q '"companyName":"Palotto Electric LLC"' /tmp/body.json && grep -q '"dealValue":4800' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ the owner's linked record is untouched by every tenant attempt"; } || { FAIL=$((FAIL+1)); echo "  ✗ record damaged: $(cat /tmp/body.json)"; }
+
+echo "-- 66d. Generate new agreement for the LINKED client (the upgrade path) --"
+S=$(code -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$P66_ID}" "$B66/api/agreements/send")
+check "66d: POST /api/agreements/send (linked client) → 200" 200 "$S"
+grep -q '"signUrl"' /tmp/body.json && grep -q '"token"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ fresh sign token + signUrl minted"; } || { FAIL=$((FAIL+1)); echo "  ✗ no signUrl/token: $(cat /tmp/body.json)"; }
+grep -q '"emailStatus":"sent"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ agreement email accepted by the mail endpoint (emailStatus sent)"; } || { FAIL=$((FAIL+1)); echo "  ✗ emailStatus: $(cat /tmp/body.json)"; }
+grep -qF 'joe@palotto.example' "$MOCK66_EMAILS" && { PASS=$((PASS+1)); echo "  ✓ mock Resend captured the agreement email to the linked client's address"; } || { FAIL=$((FAIL+1)); echo "  ✗ no captured email: $(cat "$MOCK66_EMAILS")"; }
+
+echo "-- 66e. Rename guards + the no-email agreement error --"
+S=$(code -b "$JA66" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"name":"   "}' "$B66/api/admin/orgs/$ORG66")
+check "66e: PATCH account with a blank name → 400" 400 "$S"
+LONG66=$(python3 -c "print('x'*201)")
+S=$(code -b "$JA66" -X PATCH -H 'Content-Type: application/json' \
+  -d "{\"name\":\"$LONG66\"}" "$B66/api/admin/orgs/$ORG66")
+check "66e: PATCH account with a 201-char name → 400" 400 "$S"
+S=$(code -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"NoEmail 66 Co","clientType":"commercial","dealValue":900,"stage":"Leads"}' "$B66/api/clients")
+check "66e: owner creates a no-email client → 201" 201 "$S"
+NE66=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$JA66" -X POST -H 'Content-Type: application/json' \
+  -d "{\"clientId\":$NE66}" "$B66/api/agreements/send")
+check "66e: agreement for a no-email client → 400" 400 "$S"
+grep -q 'no email address' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ the existing no-email error is surfaced verbatim"; } || { FAIL=$((FAIL+1)); echo "  ✗ error text: $(cat /tmp/body.json)"; }
+
+echo "-- 66f. UI wiring (source guard) --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+acc = open('src/Accounts.tsx').read()
+assert '"Edit account"' in acc
+assert 'api.sendAgreement(' in acc                                  # Generate new agreement
+assert 'adminUpdateOrg(editing.id, { name: companyName })' in acc   # org rename in step
+assert 'api.updateClient(editingLinked.id' in acc                   # linked-client PUT
+assert 'No linked client record.' in acc                            # disabled-fields note
+assert 'clientByOrg' in acc                                         # provisionedOrgId join
+cm = open('src/ClientModal.tsx').read()
+assert 'Deal value ($)' in cm
+assert 'set("dealValue"' in cm                                      # editable intake binding
+assert 'type="number"' in cm
+print("  ✓ Accounts.tsx edit modal + ClientModal.tsx editable deal value wired")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66f: account-edit UI + intake deal value present in source"
+else FAIL=$((FAIL+1)); echo "  ✗ 66f: UI wiring missing"; cat "$PASS_TMP"; fi
+
+stop_crm "$MOCK66/srv.pid"
+kill "$MOCK66_PID" 2>/dev/null
+rm -rf "$MOCK66" "$JA66" "$JT66"
+
 rm -f "$JTT"
 
 echo "RESULT: $PASS passed, $FAIL failed"
