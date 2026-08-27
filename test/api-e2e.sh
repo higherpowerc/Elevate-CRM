@@ -9173,11 +9173,22 @@ check "70b: create Hub Unsigned Co (terminal, no agreement, mo 20) → 201" 201 
 UNSIGNED70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Hub Midfunnel Co\",\"contactName\":\"D\",\"email\":\"mid70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":60,\"dealValue\":600,\"stage\":\"$FIRST70\"}" "$B70/api/clients")
-check "70b: create Hub Midfunnel Co (FIRST stage, signed+paid, mo 60) → 201" 201 "$S"
+check "70b: create Hub Midfunnel Co (FIRST stage, mo 60) → 201" 201 "$S"
 MID70=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 sign70 "$MID70"
 S=$(code -b "$J70" -X POST "$B70/api/clients/$MID70/payment-paid")
-check "70b: Hub Midfunnel Co payment received (but funnel incomplete)" 200 "$S"
+check "70b: Hub Midfunnel Co payment received" 200 "$S"
+# API reality check: the e-sign flow AUTO-ADVANCES a signed record to the
+# terminal stage (§25c boot-backfill semantics), so signing alone can never
+# leave a record mid-funnel. The one way a signed+paid record ends up outside
+# the terminal stage is the OWNER moving it back — do exactly that, which is
+# the case the soldStage clause of the contracted definition guards.
+S=$(code -b "$J70" "$B70/api/clients/$MID70")
+MIDSTAGE70=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['stage'])")
+if [ "$MIDSTAGE70" = "$TERM70" ]; then PASS=$((PASS+1)); echo "  ✓ 70b: signing auto-advanced the record to the terminal stage (\"$TERM70\")"; else FAIL=$((FAIL+1)); echo "  ✗ 70b: expected signed record auto-advanced to $TERM70, got $MIDSTAGE70"; fi
+S=$(code -b "$J70" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Hub Midfunnel Co\",\"clientType\":\"commercial\",\"stage\":\"$FIRST70\"}" "$B70/api/clients/$MID70")
+check "70b: owner parks the signed+paid record back in the FIRST stage → 200" 200 "$S"
 S=$(code -b "$J70" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Hub Lost Co\",\"contactName\":\"E\",\"email\":\"lost70@hub.example\",\"clientType\":\"commercial\",\"monthlyAmount\":50,\"dealValue\":500,\"stage\":\"$TERM70\"}" "$B70/api/clients")
 check "70b: create Hub Lost Co (terminal, signed+paid, mo 50) → 201" 201 "$S"
@@ -9222,7 +9233,7 @@ by = {c['companyName']: c for c in d}
 excl = {
   'Hub Signed Unpaid Co': 'not paid',
   'Hub Unsigned Co': 'agreement not signed',
-  'Hub Midfunnel Co': 'funnel incomplete (not soldStage)',
+  'Hub Midfunnel Co': 'parked mid-funnel (not soldStage)',
   'Hub Lost Co': 'lost',
   'Hub Orphan Co': 'orphanedAccount',
 }
@@ -9232,7 +9243,7 @@ for name, why in excl.items():
               and not c.get('orphanedAccount') and c.get('agreementStatus') == 'signed'
               and c.get('paymentStatus') == 'paid')
     assert not counts, (name, why, c)
-assert by['Hub Midfunnel Co'].get('soldStage') is False, 'mid-funnel record must NOT be soldStage'
+assert by['Hub Midfunnel Co'].get('soldStage') is False, 'signed+paid record parked mid-funnel must NOT be soldStage'
 assert by['Hub Active Co'].get('soldStage') is True, 'terminal record must be soldStage'
 print("  ✓ each excluded client fails the definition for exactly the expected reason")
 PY
