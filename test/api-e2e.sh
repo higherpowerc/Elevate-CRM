@@ -4066,15 +4066,23 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ dist css not found for 37 admin-layout check"
 fi
 if [ -n "$NEWEST_JS37" ]; then
-  if grep -Fq 'width:"24%"' "$NEWEST_JS37" && grep -Fq 'width:"8%"' "$NEWEST_JS37" && grep -Fq 'width:"10%"' "$NEWEST_JS37" && grep -Fq 'width:"12%"' "$NEWEST_JS37" && grep -Fq 'width:"15%"' "$NEWEST_JS37" && grep -Fq 'width:"31%"' "$NEWEST_JS37" && ! grep -Fq 'width:"7%"' "$NEWEST_JS37" && ! grep -Fq 'Billing $' "$NEWEST_JS37"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table is 6 columns (Clients 24 | Members 8 | Records 10 | Created 12 | Billing 15 | Actions 31) — old Billing $ gone"
+  # Owner 2026-08-26 — the accounts table now has SEVEN columns: the monthly
+  # subscription VALUE is re-surfaced in the "Billing cycle" column (value line
+  # above the date) and a new right-aligned "Deal value" column joins the
+  # account to its linked client's dealValue. Widths 23/7/9/11/13/10/27.
+  # (No global "24% absent" anti-check: the owner Leads/Onboarding tables
+  # (PR #78) legitimately use 24%, so it persists in the shared bundle; the
+  # source-level checks below, scoped to src/Accounts.tsx, verify the old
+  # Accounts widths are gone.)
+  if grep -Fq 'width:"23%"' "$NEWEST_JS37" && grep -Fq 'width:"7%"' "$NEWEST_JS37" && grep -Fq 'width:"9%"' "$NEWEST_JS37" && grep -Fq 'width:"11%"' "$NEWEST_JS37" && grep -Fq 'width:"13%"' "$NEWEST_JS37" && grep -Fq 'width:"10%"' "$NEWEST_JS37" && grep -Fq 'width:"27%"' "$NEWEST_JS37"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: accounts table is 7 columns (Clients 23 | Members 7 | Records 9 | Created 11 | Billing 13 | Deal 10 | Actions 27)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 6-col colgroup widths missing or Billing remnants in $NEWEST_JS37"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts 7-col colgroup widths missing in $NEWEST_JS37"
   fi
-  if grep -Fq 'width: "24%"' src/Accounts.tsx && grep -Fq 'width: "8%"' src/Accounts.tsx && grep -Fq 'width: "10%"' src/Accounts.tsx && grep -Fq 'width: "12%"' src/Accounts.tsx && grep -Fq 'width: "15%"' src/Accounts.tsx && grep -Fq 'width: "31%"' src/Accounts.tsx; then
-    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup is the 6-col layout (24/8/10/12/15/31)"
+  if grep -Fq 'width: "23%"' src/Accounts.tsx && grep -Fq 'width: "7%"' src/Accounts.tsx && grep -Fq 'width: "9%"' src/Accounts.tsx && grep -Fq 'width: "11%"' src/Accounts.tsx && grep -Fq 'width: "13%"' src/Accounts.tsx && grep -Fq 'width: "10%"' src/Accounts.tsx && grep -Fq 'width: "27%"' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx colgroup is the 7-col layout (23/7/9/11/13/10/27)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 6-col colgroup missing from src/Accounts.tsx"
+    FAIL=$((FAIL+1)); echo "  ✗ source: Accounts 7-col colgroup missing from src/Accounts.tsx"
   fi
   # PR #78 (Sales-Flow UI) re-shaped the OWNER's client tables: the owner Leads
   # tab is now 4 columns (30/27/20/23) and Onboarding is 6 columns — so "23%" is
@@ -4082,8 +4090,8 @@ if [ -n "$NEWEST_JS37" ]; then
   # Admin-width check to the ACCOUNTS table (src/Accounts.tsx, where the old
   # Admin cols lived) instead of the global bundle, so the stale-admin-layout
   # guard still fires without false-positiving on the new client tables.
-  if ! grep -Fq 'width: "33%"' src/Accounts.tsx && ! grep -Fq 'width: "23%"' src/Accounts.tsx; then
-    PASS=$((PASS+1)); echo "  ✓ source: old equal-split Admin colgroup widths are gone from the Accounts table (5-col)"
+  if ! grep -Fq 'width: "33%"' src/Accounts.tsx; then
+    PASS=$((PASS+1)); echo "  ✓ source: old equal-split Admin colgroup widths (33%) are gone from the Accounts table"
   else
     FAIL=$((FAIL+1)); echo "  ✗ source: old equal-split Admin colgroup widths still present in src/Accounts.tsx"
   fi
@@ -4494,10 +4502,10 @@ if ! grep -Fq 'Billing $' src/Accounts.tsx && ! grep -Fq 'Billing $' src/Admin.t
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: 'Billing $' header still present in src/Accounts.tsx / src/Admin.tsx"
 fi
-if ! grep -Fq 'monthlySubscriptionAmount' src/Accounts.tsx && ! grep -Fq 'monthlySubscriptionAmount' src/Admin.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: no monthlySubscriptionAmount edit call in the account UI (server PATCH still covered by 33h)"
+if grep -Fq 'monthlySubscriptionAmount' src/Accounts.tsx && ! grep -Fq 'monthlySubscriptionAmount' src/Admin.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: monthly subscription VALUE surfaced in Accounts.tsx billing-cycle value line; Admin.tsx carries no amount edit"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: monthlySubscriptionAmount still referenced in src/Accounts.tsx / src/Admin.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: monthlySubscriptionAmount usage in src/Accounts.tsx / src/Admin.tsx not as expected"
 fi
 if ! grep -Fq 'revenueModel' src/Admin.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: no revenueModel references remain in Admin"
