@@ -8467,10 +8467,15 @@ echo "-- 64g. Lead info window: deal value + package tier surfaced in the record
 if python3 - <<'PY2' 2>"$PASS_TMP"
 clientmodal=open('src/ClientModal.tsx').read()
 assert 'lead-info' in clientmodal and 'Lead information' in clientmodal   # the info panel
-assert 'Deal value' in clientmodal and 'money(form.dealValue)' in clientmodal   # deal value visibly formatted
+# 2026-08-27: the deal value in the lead-info window is an EDITABLE input
+# bound to form.dealValue (was a read-only money(form.dealValue) display —
+# the root cause of intake deal values being silently lost). Same intent:
+# the value is surfaced in the owner-only panel; section 66 covers the rest.
+assert 'Deal value ($)' in clientmodal and 'form.dealValue' in clientmodal   # deal value surfaced + bound
+assert 'set("dealValue"' in clientmodal                                   # editable binding
 assert 'Package tier' in clientmodal and 'TIER_LABELS[form.tier]' in clientmodal  # tier visibly labelled
 assert 'ownerOrg && (' in clientmodal                                    # owner-only: absent from tenant modal
-print("  ✓ 64g: lead-info window shows Deal value + Package tier, owner-only")
+print("  ✓ 64g: lead-info window shows Deal value (editable) + Package tier, owner-only")
 PY2
 then PASS=$((PASS+1)); echo "  ✓ 64g: lead info window surfaces deal value + tier (owner-only)"
 else FAIL=$((FAIL+1)); echo "  ✗ 64g: lead-info window missing"; cat "$PASS_TMP"; fi
