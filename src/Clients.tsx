@@ -21,7 +21,7 @@ import StageEditor from "./StageEditor";
  *  Owner 2026-08-20 — "orphaned" is the OUT-OF-PIPELINE safety bucket: any
  *  record whose stage is no longer in the org's stage list (isStageOrphaned)
  *  surfaces here instead of silently vanishing from every tab. */
-type Filter = "active" | "archived" | "all" | "lost" | "dnc" | "orphaned";
+export type Filter = "active" | "archived" | "all" | "lost" | "dnc" | "orphaned" | "maybe";
 
 /** Owner request 2026-08-15 — which slice of the org's ordered pipeline this
  *  pipeline view renders (positional, rename-safe — never hardcoded names):
@@ -62,6 +62,11 @@ interface Props {
    *  affordances are hidden (the server still 403s any write). Owner and org
    *  admins always pass true. */
   canEdit?: boolean;
+  /** Owner direction 2026-08-26 — deep-linked initial seg filter for this
+   *  view. The Dashboard's "Lost" card "View \u2192" routes here with "lost" so the
+   *  view opens on the Lost listing. Only read on first mount (the state below
+   *  initializes from it); null/undefined → "active". */
+  initialFilter?: Filter;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -352,7 +357,7 @@ function OwnerActionsMenu({ client, busy, onEdit, onDemo, onFlag }: {
     </div>
   );
 }
-export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, canEdit = true }: Props) {
+export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -376,7 +381,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
   /* Global privacy eye (2026-08-14 owner request) — blur client names/addresses/
      contact details in the pipeline rows while the top-nav eye is on. */
   const pii = usePii();
-  const [filter, setFilter] = useState<Filter>("active");
+  const [filter, setFilter] = useState<Filter>(initialFilter ?? "active");
   const [query, setQuery] = useState("");
   /* Owner request 2026-08-14 — stage chip filter (null = "All"). Initialized
      from the dashboard deep-link (initialStage) when this view mounts; the
@@ -493,6 +498,19 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           matchesQuery(c),
       );
     }
+    /* Owner direction 2026-08-26 — the "Maybe" bin: every lead in THIS view's
+       stage scope whose demoOutcome === 'maybe' (analogous to Lost / DNC).
+       The stage chip + search still intersect. The follow-up note is surfaced
+       in the Maybe listing below. */
+    if (filter === "maybe") {
+      return clients.filter(
+        (c) =>
+          c.demoOutcome === "maybe" &&
+          scopedStages.includes(c.stage) &&
+          (!activeStageFilter || c.stage === activeStageFilter) &&
+          matchesQuery(c),
+      );
+    }
     /* Owner 2026-08-20 — the OUT-OF-PIPELINE safety bucket: any record whose
        stage is no longer in the org's stage list surfaces here regardless of
        scope, so no record ever silently vanishes. */
@@ -509,6 +527,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       /* Owner request 2026-08-14 — lost leads are excluded from the visible
          pipeline rows (they live in the Lost section). */
       if (c.lost) return false;
+      /* Owner direction 2026-08-26 — 'maybe' leads have a home in the Maybe
+         bin (next to Active), so they are excluded from the Active / Archived
+         / All pipeline rows and counts — the same exclusion Lost uses — so a
+         maybe lead is never double-counted across two segs. */
+      if (c.demoOutcome === "maybe") return false;
       const matchFilter =
         filter === "all" ? true : filter === "archived" ? c.archived : !c.archived;
       if (!matchFilter) return false;
@@ -531,6 +554,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       for (const c of clients) {
         if (c.archived) continue;
         if (c.lost) continue; // lost leads never count toward pipeline chips
+        if (c.demoOutcome === "maybe") continue; // maybe leads live in the Maybe bin
         if (!scopedStages.includes(c.stage)) continue;
         m[c.stage] = (m[c.stage] ?? 0) + 1;
       }
@@ -919,13 +943,32 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
   /* Owner request 2026-08-14 — lost leads are excluded from the pipeline seg
      counts (Active/Archived/All); they surface on the "Lost" seg (and DNC
      carries its own list). */
+  /* Owner direction 2026-08-26 — the Maybe bin: 'maybe' leads get a clear
+     home (the Maybe seg next to Active) and are removed from the Active /
+     Archived / All contributions so nothing double-counts across segs —
+     exactly the exclusion Lost already uses. `maybe` counts every scoped
+     record whose demoOutcome === 'maybe'. */
   const counts = {
-    active: scoped.filter((c) => !c.archived && !c.lost).length,
-    archived: scoped.filter((c) => c.archived && !c.lost).length,
-    all: scoped.filter((c) => !c.lost).length,
+    active: scoped.filter((c) => !c.archived && !c.lost && c.demoOutcome !== "maybe").length,
+    archived: scoped.filter((c) => c.archived && !c.lost && c.demoOutcome !== "maybe").length,
+    all: scoped.filter((c) => !c.lost && c.demoOutcome !== "maybe").length,
     lost: scoped.filter((c) => c.lost).length,
     dnc: scoped.filter((c) => c.dnc).length,
     orphaned: clients.filter((c) => c.orphanedStage === true).length,
+    maybe: scoped.filter((c) => c.demoOutcome === "maybe").length,
+  };
+  /* Owner direction 2026-08-26 — the Maybe seg sits immediately after Active
+     (the owner asked it be "next to active"). Seg order + labels are kept
+     here so the seg row (below) and every filter stay in one place. */
+  const SEG_ORDER: Filter[] = ["active", "maybe", "archived", "all", "lost", "dnc"];
+  const SEG_LABELS: Record<Filter, string> = {
+    active: "Active",
+    maybe: "Maybe",
+    archived: "Archived",
+    all: "All",
+    lost: "Lost",
+    dnc: "DNC",
+    orphaned: "Out of pipeline",
   };
 
   /* Owner cockpit A (owner direction 2026-08-15) — the owner's LEADS tab
@@ -1016,16 +1059,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           {/* Owner request 2026-08-14 — the seg row gains "Lost" (the Lost
               section: leads marked not-interested, out of the pipeline
               counts) and "DNC" (do-not-call list with its warning). */}
-          {([...(["active", "archived", "all", "lost", "dnc"] as Filter[]), ...(ownerOrg ? (["orphaned"] as Filter[]) : [])]).map((f) => (
+          {([...SEG_ORDER, ...(ownerOrg ? (["orphaned"] as Filter[]) : [])]).map((f) => (
             <button
               key={f}
               className={filter === f ? "seg-btn active" : "seg-btn"}
               onClick={() => setFilter(f)}
             >
-              {f === "active" ? "Active" : f === "archived" ? "Archived" : f === "all" ? "All" : f === "lost" ? "Lost" : f === "dnc" ? "DNC" : "Out of pipeline"}
-              <span className="seg-count">
-                {f === "active" ? counts.active : f === "archived" ? counts.archived : f === "all" ? counts.all : f === "lost" ? counts.lost : f === "dnc" ? counts.dnc : counts.orphaned}
-              </span>
+              {SEG_LABELS[f]}
+              <span className="seg-count">{counts[f]}</span>
             </button>
           ))}
         </div>
@@ -1080,31 +1121,125 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               ? "No lost leads"
               : filter === "dnc"
                 ? "No DNC entries"
-                : filter === "orphaned"
-                  ? "No out-of-pipeline records"
-                  : scoped.length === 0
-                    ? emptyTitle
-                    : "Nothing matches"}
+                : filter === "maybe"
+                  ? "No maybe leads"
+                  : filter === "orphaned"
+                    ? "No out-of-pipeline records"
+                    : scoped.length === 0
+                      ? emptyTitle
+                      : "Nothing matches"}
           </p>
           <p className="empty-sub">
             {filter === "lost"
               ? "Leads you mark as lost show up here — they stay out of your pipeline counts."
               : filter === "dnc"
                 ? "Leads with a do-not-contact flag show up here with their warning."
-                : filter === "orphaned"
-                  ? "Records whose stage is no longer in your pipeline show up here instead of silently disappearing — edit them to move them back into a current stage."
-                  : scoped.length === 0
-                    ? emptySub
-                    : "Try a different search or filter."}
+                : filter === "maybe"
+                  ? "Leads you marked Maybe show up here with their follow-up note — clear the Maybe flag (or edit) to send them back to the pipeline."
+                  : filter === "orphaned"
+                    ? "Records whose stage is no longer in your pipeline show up here instead of silently disappearing — edit them to move them back into a current stage."
+                    : scoped.length === 0
+                      ? emptySub
+                      : "Try a different search or filter."}
           </p>
           {/* Live-test finding 2026-08-17 — same entry-point rule for the
               empty state: no add-lead CTA on the Onboarding tab. Out-of-
               pipeline (orphaned) is a repair surface, not a creation one. */}
-          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && filter !== "orphaned" && scope !== "middle" && (
+          {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && filter !== "maybe" && filter !== "orphaned" && scope !== "middle" && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {emptyCta}
             </button>
           )}
+        </div>
+      ) : filter === "maybe" ? (
+        /* Owner direction 2026-08-26 — the Maybe bin: lists every lead in
+           THIS view's stage scope whose demoOutcome === 'maybe', with the
+           follow-up note surfaced so the owner sees the context for each one.
+           'Clear maybe' sends the lead back to the pipeline (demoOutcome =
+           ''), so the owner can resolve an undecided lead. Shares the stage
+           chip filter, the search box and the pii eye with the other segs.
+           Like the Lost/DNC rows, the Stage column is hidden on the owner's
+           Leads tab (owner-leads layout) and kept for tenants. Owner-facing:
+           demoOutcome is owner-Leads-only, so tenants have no maybe leads. */
+        <div className="card table-wrap">
+          <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
+            <colgroup>
+              <col style={{ width: ownerLeadsTab ? "26%" : "22%" }} />
+              {!ownerLeadsTab && <col style={{ width: "12%" }} />}
+              <col style={{ width: ownerLeadsTab ? "40%" : "44%" }} />
+              <col style={{ width: ownerLeadsTab ? "34%" : "22%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>{ownerOrg ? "Business name" : "Client"}</th>
+                {!ownerLeadsTab && <th>Stage</th>}
+                <th>Follow-up note</th>
+                <th className="actions-th">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => (
+                <tr key={c.id} className={c.archived ? "row-archived" : ""}>
+                  <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Client"}>
+                    <div className="cell-company">
+                      <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
+                        {primaryName(ownerOrg, c)}
+                      </span>
+                      {c.lost && <span className="chip chip-lost">Lost</span>}
+                      {c.dnc && <span className="chip chip-dnc">DNC</span>}
+                      {c.archived && <span className="chip chip-archived">archived</span>}
+                    </div>
+                    {c.industry && <div className="cell-sub">{c.industry}</div>}
+                  </td>
+                  {!ownerLeadsTab && (
+                    <td data-label="Stage" className="lost-dnc-stage-cell">
+                      <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
+                    </td>
+                  )}
+                  <td data-label="Follow-up note">
+                    <span className="cell-muted" title={c.followUpNote}>
+                      {c.followUpNote || "—"}
+                    </span>
+                  </td>
+                  <td data-label="Actions">
+                    <div className="row-actions">
+                      {canEdit && (
+                        <button
+                          className="icon-btn"
+                          title="Edit"
+                          aria-label={`Edit ${c.companyName}`}
+                          onClick={() => setModal({ mode: "edit", client: c })}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      {canEdit && (
+                        <button
+                          className="icon-btn"
+                          title="Clear maybe — send back to the pipeline"
+                          aria-label={`Clear maybe on ${c.companyName}`}
+                          onClick={() => handleDemoOutcome(c, "")}
+                          disabled={busy}
+                        >
+                          Clear maybe
+                        </button>
+                      )}
+                      {canEdit && (
+                        <button
+                          className="icon-btn danger"
+                          title="Delete"
+                          aria-label={`Delete ${c.companyName}`}
+                          onClick={() => setDeleting(c)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : filter === "lost" || filter === "dnc" ? (
         /* Owner request 2026-08-14 — the Lost section / DNC list. Lost rows

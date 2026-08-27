@@ -14,6 +14,11 @@ interface Props {
    *  stage's chip pre-selected; the empty-state CTA (no stage) opens the
    *  owner's Leads on "All". */
   onGoToStage: (stage?: string) => void;
+  /** Owner direction 2026-08-26 — the Dashboard "Lost" KPI card's "View →"
+   *  deep-link. Hands control to App, which switches to the owner Leads view
+   *  with its "Lost" filter active (the Lost listing). Owner-only; tenants
+   *  never render the Lost card, so they never call this. */
+  onGoToLost: () => void;
   /** The tenant's ordered pipeline stages (drives the breakdown grid + KPI). */
   stages: Stage[];
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
@@ -67,7 +72,7 @@ function EyeOffIcon() {
   );
 }
 
-export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Props) {
+export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = false }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,44 +154,13 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
     };
   }, [ownerOrg]);
 
-  /* Owner direction 2026-08-26 — the Dashboard Lost window actions. A client
-     id in flight (so the row's buttons disable while that one request runs).
-     Restore un-losts (soft → back to its previous/pipeline stage, which is
-     unchanged on the record); Delete is a hard delete (removed entirely).
-     Both then refetch the dashboard so the window + every KPI reconcile in
-     one shot. Org-scoped like the rest of this page (a member can only ever
-     touch their own rows). */
-  const [lostBusy, setLostBusy] = useState<number | null>(null);
-  async function restoreLost(l: NonNullable<DashboardData["lostClients"]>[number]) {
-    setLostBusy(l.id);
-    setError(null);
-    try {
-      /* The server requires companyName + clientType on every PUT (it writes a
-         column only when present in the body), so Restore spreads the lost
-         record with lost flipped off — same payload shape the rest of the app
-         uses. Un-flagging also clears the lost reason server-side. */
-      await api.updateClient(l.id, { ...l, lost: false } as Parameters<typeof api.updateClient>[1]);
-      const d = await api.dashboard();
-      setData(d);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not restore this client.");
-    } finally {
-      setLostBusy(null);
-    }
-  }
-  async function deleteLost(cid: number) {
-    setLostBusy(cid);
-    setError(null);
-    try {
-      await api.deleteClient(cid);
-      const d = await api.dashboard();
-      setData(d);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not delete this lost client.");
-    } finally {
-      setLostBusy(null);
-    }
-  }
+  /* Owner direction 2026-08-26 — the Dashboard Lost KPI card is read-only:
+     it shows ONLY the lost count + a "View →" deep-link to the Lost listing
+     (the owner Leads view, Lost filter). Restore / delete of a lost client
+     happens on that Lost listing (the Clients segs / edit modal) — never in
+     this card. Restore/delete here were removed by owner direction 2026-08-26
+     so the card "looks just like the others". The server-side lostClients
+     payload is unchanged (still org-scoped; tenants never receive it). */
 
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return <div className="skeleton-block" aria-label="Loading dashboard" />;
@@ -398,41 +372,24 @@ export default function Dashboard({ onGoToStage, stages, ownerOrg = false }: Pro
           </div>
           {/* Owner direction 2026-08-26 — the "Lost" window became a KPI card
               in this row, placed immediately after Sold (owner asked it "look
-              just like the others" and sit next to Sold). It always renders as
-              a count like the other cards; when lost clients exist, compact
-              Restore/Delete rows appear inside the card. Owner-only — tenants
-              never render it, and lostClients is org-scoped server-side. */}
+              just like the others" and sit next to Sold). It renders exactly
+              like the sibling count cards: kpi-label "Lost", the lost count
+              as the kpi-value, a note, and a "View →" link that opens the
+              Lost listing (owner Leads view, Lost filter). No inline list, no
+              Restore/Delete here — restore/delete live on the Lost listing.
+              Owner-only — tenants never render it, and lostClients is
+              org-scoped server-side. */}
           <div className="card kpi">
             <span className="kpi-label">Lost</span>
             <span className="kpi-value">{(data.lostClients ?? []).length}</span>
             <span className="kpi-note">kept on record · restorable</span>
-            {(data.lostClients ?? []).length > 0 && (
-              <ul className="lost-kpi-list">
-                {(data.lostClients ?? []).map((l) => (
-                  <li key={l.id} className="lost-kpi-item">
-                    <span className={`chip${blurPii(pii)}`}>{l.companyName}</span>
-                    <span className="lost-kpi-actions">
-                      <button
-                        className="icon-btn"
-                        title="Restore — back to its pipeline stage"
-                        onClick={() => restoreLost(l)}
-                        disabled={lostBusy === l.id}
-                      >
-                        {lostBusy === l.id ? "Restoring…" : "Restore"}
-                      </button>
-                      <button
-                        className="icon-btn danger"
-                        title="Delete permanently — cannot be undone"
-                        onClick={() => deleteLost(l.id)}
-                        disabled={lostBusy === l.id}
-                      >
-                        {lostBusy === l.id ? "Deleting…" : "Delete"}
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <button
+              className="link-btn"
+              onClick={onGoToLost}
+              aria-label="View lost leads"
+            >
+              View →
+            </button>
           </div>
         </div>
       ) : (
