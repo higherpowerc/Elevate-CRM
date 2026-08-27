@@ -613,20 +613,48 @@ function findAppointmentByToken(token: string): AppointmentRow | null {
   if (typeof token !== "string" || token === "" || token.length > 200) return null;
   return db.query("SELECT * FROM appointments WHERE token = ?").get(token) as AppointmentRow | null;
 }
+/** A DEMO-CALL appointment is an appointments row created by the
+ *  POST /api/clients/:id/demo-call route. The schema has no type/kind column —
+ *  the route always writes the title `Demo call — <company>`, so that title
+ *  prefix IS the marker (owner 2026-08-27: demo calls are reminded 1 hour
+ *  before the call and never by the day-before sweep; every other appointment
+ *  keeps the day-before reminder). DEMO_TITLE_LIKE is the SQL form of the same
+ *  discriminator — an ASCII prefix, so it matches regardless of the em-dash
+ *  suffix the route appends. */
+const DEMO_TITLE_PREFIX = "Demo call — ";
+const DEMO_TITLE_LIKE = "Demo call%";
 async function maybeSendAppointmentReminders(req: Request): Promise<number> {
   const appUrl = appUrlFrom(req);
   const now = new Date();
   const from = fmtSlot(now);
-  const to = fmtSlot(new Date(now.getTime() + 26 * 3600 * 1000));
-  const rows = db
-    .query(
-      `SELECT a.*, c.company_name AS client_name, c.email AS client_email
-         FROM appointments a LEFT JOIN clients c ON c.id = a.client_id
-        WHERE a.status IN ('scheduled','confirmed')
-          AND a.reminder_sent = 0
-          AND a.scheduled_at >= ? AND a.scheduled_at <= ?`,
-    )
-    .all(from, to) as (AppointmentRow & { client_name: string | null; client_email: string | null })[];
+  // Both reminder windows are computed exactly the way the day-before window
+  // always has been: local wall-clock "YYYY-MM-DDTHH:MM" strings compared
+  // lexicographically (appointments are stored as local MST wall-clocks;
+  // Arizona has no DST, so fixed hour offsets on the wall clock are exact —
+  // the client-timezone conversion from the PR #105 work is display-only).
+  // Owner 2026-08-27: the sweep runs TWO DISJOINT windows — demo-call rows
+  // are due within 1 HOUR of the call; every other row keeps the 26-hour
+  // day-before window. A demo call therefore never receives the day-before
+  // reminder, and reminder_sent stays 0 until its own window opens.
+  const toHour = fmtSlot(new Date(now.getTime() + 1 * 3600 * 1000));
+  const toDay = fmtSlot(new Date(now.getTime() + 26 * 3600 * 1000));
+  const selectDue = (titleClause: string, to: string) =>
+    db
+      .query(
+        `SELECT a.*, c.company_name AS client_name, c.email AS client_email
+           FROM appointments a LEFT JOIN clients c ON c.id = a.client_id
+          WHERE a.status IN ('scheduled','confirmed')
+            AND a.reminder_sent = 0
+            AND a.scheduled_at >= ? AND a.scheduled_at <= ?
+            AND a.title ${titleClause}`,
+      )
+      .all(from, to) as (AppointmentRow & { client_name: string | null; client_email: string | null })[];
+  const rows = [
+    // demo calls: reminder due when the call is within the next hour
+    ...selectDue(`LIKE '${DEMO_TITLE_LIKE}'`, toHour),
+    // everything else: the unchanged day-before window
+    ...selectDue(`NOT LIKE '${DEMO_TITLE_LIKE}'`, toDay),
+  ];
   let sent = 0;
   for (const a of rows) {
     const email = (a.client_email ?? "").trim();
@@ -639,6 +667,8 @@ async function maybeSendAppointmentReminders(req: Request): Promise<number> {
       scheduledAt: a.scheduled_at,
       confirmUrl: `${appUrl}/appointment/${token}/confirm`,
       rescheduleUrl: `${appUrl}/appointment/${token}/reschedule`,
+      // demo calls are reminded "in 1 hour"; everything else "tomorrow"
+      reminderKind: a.title.startsWith(DEMO_TITLE_PREFIX) ? "hour" : "day",
     });
     db.query(
       "UPDATE appointments SET reminder_sent = 1, updated_at = datetime('now') WHERE id = ?",
@@ -3942,7 +3972,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const meetingLink = typeof body.meetingLink === "string" ? body.meetingLink.trim() : "";
     const duration =
       Number.isFinite(Number(body.duration)) && Number(body.duration) > 0 ? Math.round(Number(body.duration)) : 30;
-    const title = `Demo call — ${client.company_name}`;
+    const title = `${DEMO_TITLE_PREFIX}${client.company_name}`;
     // Reschedule fix (owner 2026-08-22): a client may hold at most ONE active
     // (status='scheduled') demo appointment. Before inserting the new one,
     // cancel any prior scheduled appointment(s) for THIS client + org so a

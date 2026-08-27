@@ -8878,6 +8878,127 @@ S=$(code -X POST -H 'Content-Type: application/json' \
 check "67b: reset with bogus token → 400 (never 401 on the reset page)" 400 "$S"
 kill "$MOCK67_PID" 2>/dev/null
 rm -rf "$MOCK67"
+echo "== 68. Demo-call reminder timing (owner 2026-08-27): demo calls are reminded 1 HOUR before the call — never by the day-before sweep — while every other appointment keeps the day-before reminder =="
+# A demo-call appointment is the appointments row the "Schedule Demo" route
+# (POST /api/clients/:id/demo-call) writes with title `Demo call — <company>`
+# (the schema has no type column — that title prefix IS the marker). The sweep
+# now runs two disjoint windows: demo rows are due within 1h of the call;
+# non-demo rows keep the 26h day-before window. Self-contained: throwaway CRM
+# on :3032 (own DB, no TEST_EMAIL_TO redirect — real lead addresses) POSTs
+# email to a mock Resend on :3231 (records JSONL). Ports free (suite uses
+# 3002-3026 + 3031; mocks 3195-3225 + 3230).
+APP_DIR68="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MOCK68=$(mktemp -d)
+MOCK68_EMAILS="$MOCK68/emails.jsonl"
+: > "$MOCK68_EMAILS"
+cat > "$MOCK68/resend.ts" <<'TS68'
+import { appendFileSync } from "node:fs";
+const PORT = 3231;
+const OUT = process.env.MOCK68_OUT ?? "/tmp/mock68-emails.jsonl";
+const server = Bun.serve({
+  port: PORT,
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/health") return new Response("ok");
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      appendFileSync(OUT, JSON.stringify(body) + "\n");
+      return Response.json({ id: "mock68-" + Math.random().toString(36).slice(2) });
+    }
+    return new Response("nope", { status: 404 });
+  },
+});
+console.log("mock68 resend on " + PORT);
+TS68
+MOCK68_OUT="$MOCK68_EMAILS" nohup bun "$MOCK68/resend.ts" > "$MOCK68/resend.log" 2>&1 &
+MOCK68_PID=$!
+i=0; until curl -sf http://127.0.0.1:3231/health >/dev/null 2>&1; do i=$((i+1)); [ "$i" -gt 50 ] && break; sleep 0.2; done
+if curl -sf http://127.0.0.1:3231/health >/dev/null 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ 68: mock Resend endpoint up on :3231"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 68: mock Resend endpoint failed to start"
+fi
+start_crm 3032 "$MOCK68/db" "$MOCK68/srv.log" "$MOCK68/srv.pid" -u TEST_EMAIL_TO RESEND_API_KEY=test-key-68 RESEND_URL=http://127.0.0.1:3231
+J68=$(mktemp)
+S=$(code -c "$J68" -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "http://localhost:3032/api/auth/login")
+check "68: owner login → 200" 200 "$S"
+# (a) demo call inside the 1-hour window: the sweep reminders it with the
+#     1-hour subject (NOT the day-before one) and marks it sent.
+S=$(code -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Demo68 Co","contactName":"Dana","email":"demo68@example.com","clientType":"commercial","dealValue":500,"stage":"Leads"}' "http://localhost:3032/api/clients")
+check "68a: owner creates demo-call lead → 201" 201 "$S"
+LEAD68=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+SLOT68A=$(python3 -c "import datetime;print((datetime.datetime.now()+datetime.timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M'))")
+S=$(code -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d "{\"scheduledAt\":\"$SLOT68A\",\"meetingLink\":\"https://meet.example/demo68\"}" "http://localhost:3032/api/clients/$LEAD68/demo-call")
+check "68a: owner schedules demo call 30 min out → 201" 201 "$S"
+if grep -q '"emailStatus":"sent"' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 68a: immediate demo-call confirmation still emailed at scheduling"; else FAIL=$((FAIL+1)); echo "  ✗ 68a: immediate confirmation missing: $(cat /tmp/body.json)"; fi
+: > "$MOCK68_EMAILS"   # capture only what the SWEEP sends from here on
+S=$(code -b "$J68" -X POST "http://localhost:3032/api/appointments/reminders")
+check "68a: force reminder sweep → 200" 200 "$S"
+if grep -q '"sent":1' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 68a: sweep reminded exactly the 1h-out demo call (sent=1)"; else FAIL=$((FAIL+1)); echo "  ✗ 68a: sweep sent != 1: $(cat /tmp/body.json)"; fi
+sleep 1
+if python3 - "$MOCK68_EMAILS" <<'PY68A' 2>"$MOCK68/remind.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+mine = [e for e in lines if (e.get("to") or []) == ["demo68@example.com"]]
+assert mine, [(e.get("to"), e.get("subject")) for e in lines]
+e = mine[0]
+assert e["subject"] == "Your Revzenta appointment is in 1 hour", e["subject"]
+t = e["text"]
+assert "in 1 hour" in t, t
+assert "/appointment/" in t and "/confirm" in t and "/reschedule" in t, t
+print("ok")
+PY68A
+then PASS=$((PASS+1)); echo "  ✓ 68a: demo call got the 1-HOUR reminder (confirm + reschedule links, not the tomorrow subject)"; else FAIL=$((FAIL+1)); echo "  ✗ 68a: 1-hour reminder email missing/incorrect:"; cat "$MOCK68/remind.err"; fi
+if python3 -c "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);r=c.execute(\"SELECT reminder_sent FROM appointments WHERE title LIKE 'Demo call%'\").fetchone()[0];assert r==1, r" "$MOCK68/db/crm.db"; then PASS=$((PASS+1)); echo "  ✓ 68a: demo appointment flagged reminder_sent (once-only)"; else FAIL=$((FAIL+1)); echo "  ✗ 68a: demo appointment reminder_sent not set"; fi
+# (b) demo call 24 h out — inside the old 26h window, outside the 1h window:
+#     the day-before sweep must SKIP it and reminder_sent must stay 0.
+S=$(code -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Demo68 Later","contactName":"Lou","email":"demo68later@example.com","clientType":"commercial","dealValue":400,"stage":"Leads"}' "http://localhost:3032/api/clients")
+check "68b: owner creates second demo lead → 201" 201 "$S"
+LEAD68B=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+SLOT68B=$(python3 -c "import datetime;print((datetime.datetime.now()+datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M'))")
+S=$(code -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d "{\"scheduledAt\":\"$SLOT68B\"}" "http://localhost:3032/api/clients/$LEAD68B/demo-call")
+check "68b: owner schedules demo call 24 h out → 201" 201 "$S"
+: > "$MOCK68_EMAILS"
+S=$(code -b "$J68" -X POST "http://localhost:3032/api/appointments/reminders")
+check "68b: force reminder sweep → 200" 200 "$S"
+if grep -q '"sent":0' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 68b: day-before sweep skipped the 24h-out demo call (sent=0)"; else FAIL=$((FAIL+1)); echo "  ✗ 68b: sweep sent != 0 — demo call received a day-before reminder: $(cat /tmp/body.json)"; fi
+sleep 1
+if [ ! -s "$MOCK68_EMAILS" ]; then PASS=$((PASS+1)); echo "  ✓ 68b: no reminder email sent for the 24h-out demo call"; else FAIL=$((FAIL+1)); echo "  ✗ 68b: unexpected email(s):"; cat "$MOCK68_EMAILS"; fi
+if python3 -c "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);r=c.execute(\"SELECT reminder_sent FROM appointments WHERE title LIKE 'Demo call%Later'\").fetchone()[0];assert r==0, r" "$MOCK68/db/crm.db"; then PASS=$((PASS+1)); echo "  ✓ 68b: 24h-out demo call still unsent (reminder_sent=0 — window not open)"; else FAIL=$((FAIL+1)); echo "  ✗ 68b: 24h-out demo call was marked reminded by the day-before branch"; fi
+# (c) control: a NON-demo appointment 24 h out is STILL reminded day-before
+#     (the create-time lazy sweep sends it; "is tomorrow" subject unchanged).
+S=$(code -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"Remind68 Co","contactName":"Remy","email":"remind68@example.com","clientType":"commercial","dealValue":900,"stage":"Leads"}' "http://localhost:3032/api/clients")
+check "68c: owner creates control client → 201" 201 "$S"
+CID68=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J68" -X POST -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Check68 Call\",\"scheduledAt\":\"$SLOT68B\",\"clientId\":$CID68,\"duration\":30}" "http://localhost:3032/api/appointments")
+check "68c: owner creates non-demo appointment 24 h out → 201" 201 "$S"
+sleep 1
+if python3 - "$MOCK68_EMAILS" <<'PY68C' 2>"$MOCK68/remind2.err"
+import json, sys
+lines = [json.loads(l) for l in open(sys.argv[1])]
+mine = [e for e in lines if (e.get("to") or []) == ["remind68@example.com"]]
+assert mine, [(e.get("to"), e.get("subject")) for e in lines]
+e = mine[0]
+assert e["subject"] == "Your Revzenta appointment is tomorrow", e["subject"]
+t = e["text"]
+assert "/appointment/" in t and "/confirm" in t and "/reschedule" in t, t
+assert "in 1 hour" not in e["subject"], e["subject"]
+print("ok")
+PY68C
+then PASS=$((PASS+1)); echo "  ✓ 68c: non-demo appointment still gets the day-before reminder"; else FAIL=$((FAIL+1)); echo "  ✗ 68c: day-before reminder missing/incorrect for non-demo appointment:"; cat "$MOCK68/remind2.err"; fi
+S=$(code -b "$J68" -X POST "http://localhost:3032/api/appointments/reminders")
+check "68c: re-sweep is once-only → 200" 200 "$S"
+if grep -q '"sent":0' /tmp/body.json; then PASS=$((PASS+1)); echo "  ✓ 68c: second sweep re-sends nothing (once-only)"; else FAIL=$((FAIL+1)); echo "  ✗ 68c: re-sweep sent != 0: $(cat /tmp/body.json)"; fi
+stop_crm "$MOCK68/srv.pid"
+kill "$MOCK68_PID" 2>/dev/null
+rm -rf "$MOCK68" "$J68"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
