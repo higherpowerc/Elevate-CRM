@@ -93,13 +93,21 @@ export default function App() {
   const piiTitle = piiHidden ? "Show client details" : "Hide client details";
 
   useEffect(() => {
+    /* Owner bug 2026-08-27 (§67): a 401 from any API call (including the boot
+     * /api/auth/me when signed out) signs the shell back out, but it must NOT
+     * sabotage a password reset. The old handler wiped `resetToken`
+     * unconditionally — a signed-out visitor opening the emailed
+     * `#/reset?token=…` link lost the token to this handler the moment the
+     * boot me() 401'd, and got the login card instead of the reset form. Now:
+     * a token still live in the URL hash survives (the emailed link IS the
+     * credential), and a dying session also leaves a #/reset hash alone. */
     const onUnauthorized = () => {
       setUser((u) => {
-        if (u) window.location.hash = "";
+        if (u && !window.location.hash.startsWith("#/reset")) window.location.hash = "";
         return null;
       });
       setImpersonating(false);
-      setResetToken(null);
+      if (!resetTokenFromHash()) setResetToken(null);
     };
     window.addEventListener("crm:unauthorized", onUnauthorized);
     api
@@ -306,21 +314,27 @@ export default function App() {
     );
   }
 
+  /* Owner bug 2026-08-27 (§67): the reset page renders whenever a live
+   * `#/reset?token=…` token is in the URL — SIGNED-IN OR NOT. The branch used
+   * to sit inside `if (!user)`, so an authenticated user opening the emailed
+   * link landed in the app shell and never saw the form. Onward routing:
+   *  • signed out → "Sign in" after a successful reset clears the hash and
+   *    returns to the normal login card;
+   *  • signed in  → back into the app shell (the reset changed only a
+   *    password; their session is untouched). */
+  if (resetToken) {
+    return (
+      <ResetPassword
+        token={resetToken}
+        onDone={() => {
+          window.location.hash = "";
+          setResetToken(null);
+        }}
+      />
+    );
+  }
+
   if (!user) {
-    // 3k — the reset page replaces the sign-in card while the URL hash carries
-    // a token (`#/reset?token=…`). "Sign in" after a successful reset clears
-    // the hash and returns to the normal login card.
-    if (resetToken) {
-      return (
-        <ResetPassword
-          token={resetToken}
-          onDone={() => {
-            window.location.hash = "";
-            setResetToken(null);
-          }}
-        />
-      );
-    }
     return (
       <Login
         onLogin={(u) => {
