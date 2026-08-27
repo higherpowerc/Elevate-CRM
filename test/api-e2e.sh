@@ -8372,7 +8372,7 @@ else FAIL=$((FAIL+1)); echo "  ✗ 64a: create tier/tags wrong: $(cat /tmp/body.
 
 echo "-- 64b. Owner edits the client tier → round-trip + tags update --"
 S=$(code -b "$JT" -X PUT -H 'Content-Type: application/json' \
-  -d '{"tier":"tier4"}' "$BASE/api/clients/$TIERED_ID")
+  -d '{"companyName":"Tiered Co","clientType":"residential","tier":"tier4"}' "$BASE/api/clients/$TIERED_ID")
 check "owner updates client tier2→tier4 → 200" 200 "$S"
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
@@ -8433,13 +8433,13 @@ check "owner creates a lead with tier2 → 201" 201 "$S"
 SOLD_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 STAGES=$(code -b "$JT" "$BASE/api/settings" >/dev/null; python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
 S=$(code -b "$JT" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"stage\":\"$STAGES\"}" "$BASE/api/clients/$SOLD_ID")
+  -d "{\"companyName\":\"Sold Tier Co\",\"clientType\":\"residential\",\"stage\":\"$STAGES\"}" "$BASE/api/clients/$SOLD_ID")
 check "owner moves lead to final ($STAGES) stage → 200 (auto-provisions)" 200 "$S"
 S=$(code -b "$JT" "$BASE/api/admin/orgs")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d = json.load(open('/tmp/body.json'))
-prov = [x for x in d['orgs'] if x.get('provisionedFromClient')=='$SOLD_ID']
+prov = [x for x in d['orgs'] if x.get('provisionedFromClientName')=='Sold Tier Co']
 assert prov, [x for x in d['orgs'] if 'Sold' in x['name']]
 assert prov[0].get('tier') == 'tier2', prov[0]
 print("  ✓ auto-provisioned account carries the sold lead's tier2")
