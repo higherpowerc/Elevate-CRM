@@ -9171,7 +9171,9 @@ for f in ['src/Tasks.tsx', 'src/Finance.tsx', 'src/Settings.tsx',
     assert 'confirmLabel="' not in open(f).read(), f
 # (C) Owner 2026-08-28: the sold-unbuilt rows no longer carry a deal-value
 # money note either.
-assert 'money(c.dealValue)' not in cd, 'sold-unbuilt deal-value note must be gone (owner 2026-08-28)'
+# The ONLY money(c.dealValue) left in the directory is the TENANT sold-directory
+# Deal cell (tenant-facing, untouched) — the owner sold-unbuilt note is gone.
+assert cd.count('money(c.dealValue)') == 1, 'sold-unbuilt deal-value note must be gone; the tenant directory Deal cell stays (owner 2026-08-28)'
 print("ok")
 PY
 then PASS=$((PASS+1)); echo "  ✓ 69a: table cleanup + 'Active client accounts' + Confirm buttons + deal-value money displays removed"
