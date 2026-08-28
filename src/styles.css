@@ -855,27 +855,42 @@ legend.field-label {
   flex-direction: column;
 }
 
+/* Owner 2026-08-28 — LEFT SIDEBAR layout ("Put the navigation menu on the
+   left side of the screen"). .shell is the row: the sticky .nav sidebar on
+   the left, .content (impersonate banner + main + footer) flowing to its
+   right. Sizing lives in the "Left sidebar chrome" section below, after the
+   wide-monitor queries, so the cascade is explicit. */
+.shell {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .nav {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: rgba(10, 10, 12, 0.82);
+  background: rgba(10, 10, 12, 0.92);
   backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
 }
 
 .nav-inner {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 24px;
-  height: 62px;
   display: flex;
-  align-items: center;
-  gap: 26px;
+  flex-direction: column;
 }
 
-/* Fit the header without horizontal scroll on ~1024-1200px desktops
-   (owner request 2026-08-14: everything viewable, no right scrollbar). */
+/* Top-bar tightening (owner request 2026-08-14: everything viewable, no
+   right scrollbar). Since the 2026-08-28 left-sidebar rework these rules
+   mostly serve the <=960px fallback where the sidebar collapses back into
+   a sticky top bar; the e2e suite (38b) pins these exact strings. */
 @media (max-width: 1200px) {
   .nav-inner {
     gap: 14px;
@@ -1061,6 +1076,9 @@ legend.field-label {
   margin: 0 auto;
   padding: 8px 24px;
   width: 100%;
+  position: sticky;
+  top: 0;
+  z-index: 45;
   font-size: 13.5px;
   font-weight: 500;
   color: #241a04;
@@ -1068,26 +1086,18 @@ legend.field-label {
   border-bottom: 1px solid rgba(36, 26, 4, 0.25);
 }
 
-/* ── Wide monitors: use the screen (owner 2026-08-28) ──────────
-   The chrome was pinned to a hard 1180px centered column, so on the
-   owner's 34" curved monitor (2560x1440 / 3440x1440) every page — and
-   the 12-tab top menu above it — stayed narrow and the menu overflowed
-   into a horizontal scroll. The app chrome (.nav-inner / .main /
-   .impersonate-banner) now grows with the viewport in steps, still
-   hard-capped so text lines never get absurd:
-     < 1440px  -> 1180px  (unchanged — laptops/small desktops, tenant
-                           navs pixel-identical, internal-scroll menu
-                           fallback intact)
+/* ── Wide monitors: use the screen (owner 2026-08-28, #114) ────
+   .main and .impersonate-banner grow with the viewport in steps, still
+   hard-capped so text lines never get absurd. Since the left-sidebar
+   rework they measure against the CONTENT COLUMN (viewport minus the
+   sidebar), so a sidebar no longer costs the page its width:
+     < 1440px  -> 1180px  (unchanged — laptops/small desktops)
      >= 1440px -> 1480px
-     >= 1920px -> 1840px  (full-size 1080p monitors: the owner's 12-tab
-                           menu fits without internal scrolling)
-     >= 2560px -> 2160px  (2K + 34" curved/ultra-wide: the layout and
-                           menu use the screen; tables spread out)
-   Width only — tab styling, gaps, and the owner/tenant scoping of the
-   2026-08-15/08-28 sweeps are untouched. Placed after the banner rule
-   so it wins the cascade for all three selectors. */
+     >= 1920px -> 1840px  (full-size 1080p monitors)
+     >= 2560px -> 2160px  (2K + 34" curved/ultra-wide: tables spread out)
+   .nav-inner is intentionally absent: the nav is a fixed-width sidebar
+   now, not a centered column. */
 @media (min-width: 1440px) {
-  .nav-inner,
   .main,
   .impersonate-banner {
     max-width: 1480px;
@@ -1095,7 +1105,6 @@ legend.field-label {
 }
 
 @media (min-width: 1920px) {
-  .nav-inner,
   .main,
   .impersonate-banner {
     max-width: 1840px;
@@ -1103,10 +1112,148 @@ legend.field-label {
 }
 
 @media (min-width: 2560px) {
-  .nav-inner,
   .main,
   .impersonate-banner {
     max-width: 2160px;
+  }
+}
+
+/* ── Left sidebar chrome (owner 2026-08-28) ──────────────────
+   "Put the navigation menu on the left side of the screen." The nav is a
+   vertical sidebar pinned to the left edge (brand on top, tabs under it,
+   session controls anchored to the bottom); the page flows in a column to
+   its right. Selectors are .nav-prefixed so they win the cascade over the
+   top-bar tightening queries above, which now serve the <=960px fallback
+   (e2e 38b pins their strings). Tab set, labels, order, active styling:
+   unchanged. */
+.nav {
+  align-self: flex-start;
+  height: 100vh;
+  width: 232px;
+  flex: none;
+  display: flex;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav .nav-inner {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  min-width: 0;
+  height: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 18px 14px;
+}
+
+.nav .brand {
+  padding: 4px 6px 2px;
+}
+
+.nav .brand-text {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.nav .tabs {
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.nav .tab {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+}
+
+.nav .nav-right {
+  margin: auto 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.nav .nav-right .eye-btn {
+  align-self: flex-start;
+}
+
+.nav .nav-user {
+  max-width: 100%;
+}
+
+/* Laptops: slim the sidebar so tables keep their room (content keeps its
+   own internal-scroll guards; breakpoints below 960 are untouched). */
+@media (max-width: 1280px) {
+  .nav {
+    width: 196px;
+  }
+}
+
+/* ── Narrow fallback (<=960px): the sidebar collapses back into a sticky
+   top bar — brand + horizontally scrollable tabs + session controls in
+   one row — so phones and tablets keep the pre-sidebar behavior. No
+   hamburger state to regress; the tabs row is internally scrollable (the
+   same owner-approved mechanism as before). */
+@media (max-width: 960px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .nav {
+    height: auto;
+    width: 100%;
+    overflow: visible;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .nav .nav-inner {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+  }
+
+  .nav .tabs {
+    flex: 1 1 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+  }
+
+  .nav .tab {
+    width: auto;
+    white-space: nowrap;
+    padding: 8px 10px;
+  }
+
+  .nav .nav-right {
+    margin: 0 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .nav .nav-user {
+    display: none;
+  }
+
+  .impersonate-banner {
+    position: static;
+  }
+
+  .main {
+    padding: 24px 16px 48px;
   }
 }
 
