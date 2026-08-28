@@ -899,7 +899,19 @@ legend.field-label {
    tab. Tenant workspaces (5-6 tabs) fit at all widths, so the tightening is
    owner-scoped (.owner-workspace) and client-account headers stay
    pixel-identical. The tabs row also becomes internally scrollable (min-width
-   0 + overflow-x) so no page-level horizontal scroll can ever return. */
+   0 + overflow-x) so no page-level horizontal scroll can ever return.
+
+   Owner 2026-08-28: the tab set kept growing (Appointments, Documents, … —
+   12 tabs) and now overflows even ~1900px-wide viewports, which put a
+   PAGE-level horizontal scrollbar back on every owner tab (measured
+   docScrollW 1853 vs 1500 viewport). The tabs row is therefore internally
+   scrollable at EVERY width now — the same mechanism the 2026-08-15
+   owner-approved sweep introduced; still owner-scoped, tenant navs are
+   untouched, and at widths where the tabs fit nothing visibly changes. */
+.owner-workspace .tabs {
+  min-width: 0;
+  overflow-x: auto;
+}
 @media (max-width: 1320px) {
   .owner-workspace .nav-inner {
     gap: 14px;
@@ -4178,9 +4190,12 @@ legend.field-label {
 /* ── Owner 2026-08-27 — Client accounts table cleanup (Accounts.tsx) ─────
    Every data point owns a clearly-labeled column and NOTHING truncates: the
    shared .table ellipsis/nowrap behavior is intentionally not used here —
-   names, emails and passwords wrap fully instead. Strictly scoped to
-   `.accounts-table` so every OTHER table keeps the shared .cell-* rules
-   untouched. */
+   names and emails wrap fully instead. Strictly scoped to `.accounts-table`
+   so every OTHER table keeps the shared .cell-* rules untouched.
+   Owner 2026-08-28 privacy fix: the PASSWORD column is gone (a client's
+   password is private to the client — one-time handoff via the modals only),
+   so the table is TWELVE columns and the password-only styling
+   (.accounts-table .acc-note code) was removed with it. */
 .accounts-table {
   table-layout: auto;
 }
@@ -4202,7 +4217,7 @@ legend.field-label {
    spilled into Deal value. FIX: columns size to their content (auto layout,
    no fixed colgroup) + wrap guards so nothing can spill. Scoped strictly to
    .accounts-table — every other table keeps the shared .table behavior. */
-/* Long UNBROKEN values (emails, temp passwords, names) wrap inside their own
+/* Long UNBROKEN values (emails, account names) wrap inside their own
    column via the targeted rules below (.acc-name/.acc-line/.acc-note carry
    word-break: break-word). A blanket overflow-wrap:anywhere on every cell was
    tried and REVERTED: it drives every column's min-content to ~0, so dates
@@ -4236,19 +4251,28 @@ legend.field-label {
 .accounts-table .acc-strong {
   font-weight: 600;
 }
-/* Phone/Email/Password keep a small floor so long unbroken strings wrap into
+/* Phone/Email keep a small floor so long unbroken strings wrap into
    readable chunks instead of 4-character slivers on tight viewports. */
 .accounts-table .acc-line {
   min-width: 9ch;
 }
+/* Owner bug 2026-08-28 — COLUMN MISALIGNMENT (the "phone shows email,
+   email shows password" report): the PREVIOUS version of this rule applied
+   display: block to the elements THEMSELVES — and .acc-line sits ON the
+   Phone/Email <td> (.acc-name is the span inside the Account td). A
+   block-displayed table cell leaves the column grid, so every value from
+   Phone onward painted one column LEFT of its header. The td keeps its
+   native table-cell display; only the .acc-name SPAN stays display:block. */
 .accounts-table .acc-name,
-.accounts-table .acc-line {
-  display: block;
+.accounts-table td.acc-line {
   overflow: visible;
   white-space: normal;
   text-overflow: clip;
   word-break: break-word;
   line-height: 1.45;
+}
+.accounts-table .acc-name {
+  display: block;
 }
 .accounts-table .acc-note {
   display: block;
@@ -4256,14 +4280,6 @@ legend.field-label {
   color: var(--muted);
   line-height: 1.45;
   word-break: break-word;
-}
-.accounts-table .acc-note code {
-  background: rgba(242, 241, 236, 0.07);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 0 6px;
-  font-size: 11.5px;
-  color: var(--lime);
 }
 .accounts-table .acc-muted {
   color: var(--muted);
