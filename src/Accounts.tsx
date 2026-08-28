@@ -114,6 +114,10 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
 
   /* Delete-tenant confirm */
   const [deleting, setDeleting] = useState<Org | null>(null);
+  /* Owner 2026-08-27 — Inactive clients: the org whose "Mark inactive" /
+     "Restore" is in flight (spinner on that row's button). */
+  const [markingOrgId, setMarkingOrgId] = useState<number | null>(null);
+  const [restoringOrgId, setRestoringOrgId] = useState<number | null>(null);
   /* Owner request 2026-08-25 — billing cycle date per client account: an
      inline-editable "Billing cycle" column on the Client accounts table. */
   const [editingBillingOrgId, setEditingBillingOrgId] = useState<number | null>(null);
@@ -169,6 +173,51 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
      delete / edit affordances. The server API /api/admin/orgs is UNCHANGED —
      it still returns the full list; this is a UI-side filter only. */
   const visibleOrgs = orgs ? orgs.filter((o) => o.id !== ownerOrgId) : null;
+
+  /* Owner 2026-08-27 — INACTIVE CLIENTS window (backlog cb1c9700): canceled
+     accounts no longer sit in the Active table with a status chip. They are
+     split out into their OWN "Inactive clients" window right under the Active
+     client accounts table: still listed (data RETAINED — never hard-deleted by
+     marking inactive), but clearly separate from the active accounts, not
+     counted in the active table's count, and restorable. "Inactive" reuses the
+     org lifecycle status 'canceled' (the exact state the self-serve
+     /api/settings/cancel stamps), so tenant logins are blocked while inactive
+     and the linked client record carries canceledAccount for Finance. */
+  const activeOrgs = visibleOrgs ? visibleOrgs.filter((o) => o.status !== "canceled") : null;
+  const inactiveOrgs = visibleOrgs ? visibleOrgs.filter((o) => o.status === "canceled") : null;
+
+  /** Mark inactive (owner 2026-08-27): the row leaves "Active client accounts"
+   *  and appears under "Inactive clients" with all data retained. Reversible
+   *  (Restore) so no confirm modal — the same semantics as the client's own
+   *  self-serve cancel, minus the session clear (the OWNER session stays). */
+  async function handleMarkInactive(o: Org) {
+    setMarkingOrgId(o.id);
+    setError(null);
+    try {
+      await api.adminCancelOrg(o.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not mark this account inactive.");
+    } finally {
+      setMarkingOrgId(null);
+    }
+  }
+
+  /** Restore from the Inactive clients window: back to 'active' (retention
+   *  stamps cleared server-side), the row returns to Active client accounts
+   *  and the client can sign in again. */
+  async function handleRestore(o: Org) {
+    setRestoringOrgId(o.id);
+    setError(null);
+    try {
+      await api.adminRestoreOrg(o.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not restore this account.");
+    } finally {
+      setRestoringOrgId(null);
+    }
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -532,15 +581,17 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
           <div className="admin-card-head">
             <h3 className="admin-card-title">Active client accounts</h3>
             <p className="admin-card-sub">
-              {visibleOrgs ? `${visibleOrgs.length} workspace${visibleOrgs.length === 1 ? "" : "s"}` : "Loading…"}
+              {activeOrgs ? `${activeOrgs.length} active workspace${activeOrgs.length === 1 ? "" : "s"}` : "Loading…"}
             </p>
           </div>
-          {!visibleOrgs ? (
+          {!activeOrgs ? (
             <div className="skeleton-block" aria-label="Loading client accounts" />
-          ) : visibleOrgs.length === 0 ? (
+          ) : activeOrgs.length === 0 ? (
             <div className="empty">
-              <p className="empty-title">No client accounts yet</p>
-              <p className="empty-sub">Create the first client account to provision a workspace.</p>
+              <p className="empty-title">No active client accounts</p>
+              <p className="empty-sub">
+                Create a client account below, or restore one from the Inactive clients window.
+              </p>
             </div>
           ) : (
             <table className="table accounts-table">
@@ -573,7 +624,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {visibleOrgs.map((o) => {
+                {activeOrgs.map((o) => {
                   /* The linked owner-org client record (provisionedOrgId join)
                      — feeds the Phone and Deal value columns. */
                   const linked = clientByOrg[o.id];
@@ -595,14 +646,11 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         )}
                       </td>
                       <td data-label="Status">
-                        {o.status === "canceled" ? (
-                          <span
-                            className="chip chip-archived"
-                            title={o.retentionUntil ? `Canceled — data retained until ${o.retentionUntil.slice(0, 10)}` : "Canceled — data retained 30 days"}
-                          >
-                            canceled
-                          </span>
-                        ) : o.provisionedFromClient ? (
+                        {/* Rows here are ALL active (canceled accounts live in
+                            the Inactive clients window below) — the only
+                            statuses an active row carries are the
+                            auto-provisioned chip or a dash. */}
+                        {o.provisionedFromClient ? (
                           <>
                             <span
                               className="chip chip-provisioned"
@@ -739,6 +787,19 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           >
                             Edit
                           </button>
+                          {/* Owner 2026-08-27 (Inactive clients, cb1c9700) —
+                              cancel the account WITHOUT deleting: the row
+                              moves to the Inactive clients window below with
+                              all data retained; Restore brings it back. */}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            title="Cancel this account — the client loses login access and the account moves to Inactive clients with all data retained"
+                            aria-label={`Mark ${o.name} inactive`}
+                            disabled={markingOrgId !== null || restoringOrgId !== null}
+                            onClick={() => handleMarkInactive(o)}
+                          >
+                            {markingOrgId === o.id ? "Marking…" : "Mark inactive"}
+                          </button>
                           <button
                             className="icon-btn danger"
                             title="Delete this client account"
@@ -757,6 +818,142 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
             </table>
           )}
         </div>
+      </div>
+
+      {/* Owner 2026-08-27 — INACTIVE CLIENTS window (backlog cb1c9700): a
+          SEPARATE window under the Active client accounts table. Accounts the
+          owner marked inactive (canceled) live here — NOT mixed into the
+          active table. Data is RETAINED (the tenant's CRM, users, records all
+          stay); the client's logins are blocked while inactive. Actions:
+          Restore (back to active, symmetric) and Delete (the hard tear-down,
+          confirm-guarded). Owner-only: rendered in the owner's Clients tab
+          only, fed by the owner-only /api/admin/orgs + cancel/restore
+          endpoints. */}
+      <div className="card table-wrap admin-table accounts-inactive">
+        <div className="admin-card-head">
+          <h3 className="admin-card-title">Inactive clients</h3>
+          <p className="admin-card-sub">
+            {inactiveOrgs
+              ? `${inactiveOrgs.length} inactive account${inactiveOrgs.length === 1 ? "" : "s"} — data retained, logins blocked`
+              : "Loading…"}
+          </p>
+        </div>
+        {!inactiveOrgs ? (
+          <div className="skeleton-block" aria-label="Loading inactive clients" />
+        ) : inactiveOrgs.length === 0 ? (
+          <div className="empty">
+            <p className="empty-title">No inactive clients</p>
+            <p className="empty-sub">
+              Accounts you mark inactive (canceled) are kept here with all of their data — nothing is deleted.
+            </p>
+          </div>
+        ) : (
+          <table className="table accounts-table">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Package</th>
+                <th>Status</th>
+                <th>Email</th>
+                <th>Members</th>
+                <th className="num">Client records</th>
+                <th className="num">Subscription</th>
+                <th className="num">Deal value</th>
+                <th>Canceled</th>
+                <th>Data retained until</th>
+                <th className="actions-th">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inactiveOrgs.map((o) => {
+                const linked = clientByOrg[o.id];
+                return (
+                  <tr key={o.id} className="row-inactive">
+                    <td className="acc-strong" data-label="Account">
+                      <span className={`acc-name${blurPii(pii)}`} title={o.name}>
+                        {o.name}
+                      </span>
+                    </td>
+                    <td data-label="Package">
+                      {o.tier ? (
+                        <span className="chip chip-tier" title={TIER_LABELS[o.tier] ?? o.tier}>
+                          {TIER_SHORT_LABELS[o.tier] ?? o.tier}
+                        </span>
+                      ) : (
+                        <span className="acc-muted">&mdash;</span>
+                      )}
+                    </td>
+                    <td data-label="Status">
+                      <span
+                        className="chip chip-archived"
+                        title="Inactive — the account is canceled, its data is retained and its logins are blocked"
+                      >
+                        inactive
+                      </span>
+                    </td>
+                    <td className="acc-line" data-label="Email">
+                      {o.loginEmail ? (
+                        <span className={blurPii(pii)}>{o.loginEmail}</span>
+                      ) : (
+                        <span className="acc-muted">&mdash;</span>
+                      )}
+                    </td>
+                    <td className="num" data-label="Members">
+                      {o.userCount}
+                    </td>
+                    <td className="num" data-label="Client records">
+                      {o.clientCount}
+                    </td>
+                    <td className="num" data-label="Subscription" title="Monthly subscription value">
+                      {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
+                        `${money(o.monthlySubscriptionAmount)}/mo`
+                      ) : (
+                        <span className="acc-muted">&mdash;</span>
+                      )}
+                    </td>
+                    <td className="num" data-label="Deal value">
+                      {linked?.dealValue ? (
+                        money(linked.dealValue)
+                      ) : (
+                        <span className="acc-muted">&mdash;</span>
+                      )}
+                    </td>
+                    <td data-label="Canceled">{o.canceledAt ? fmtDate(o.canceledAt) : <span className="acc-muted">&mdash;</span>}</td>
+                    <td data-label="Data retained until">
+                      {o.retentionUntil ? (
+                        fmtDate(o.retentionUntil)
+                      ) : (
+                        <span className="acc-muted">&mdash;</span>
+                      )}
+                    </td>
+                    <td data-label="Actions">
+                      <div className="row-actions">
+                        <button
+                          className="btn btn-primary btn-sm"
+                          title="Reactivate this account — it returns to Active client accounts and the client can sign in again"
+                          aria-label={`Restore ${o.name}`}
+                          disabled={markingOrgId !== null || restoringOrgId !== null}
+                          onClick={() => handleRestore(o)}
+                        >
+                          {restoringOrgId === o.id ? "Restoring…" : "Restore"}
+                        </button>
+                        <button
+                          className="icon-btn danger"
+                          title="Permanently delete this inactive account and all of its data"
+                          aria-label={`Delete ${o.name}`}
+                          disabled={markingOrgId !== null || restoringOrgId !== null}
+                          onClick={() => setDeleting(o)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {deleting && (

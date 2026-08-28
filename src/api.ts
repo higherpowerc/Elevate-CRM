@@ -219,6 +219,20 @@ export const api = {
     }),
   adminDeleteOrg: (id: number) =>
     request<{ ok: true }>(`/api/admin/orgs/${id}`, { method: "DELETE" }),
+  /* Owner 2026-08-27 — INACTIVE CLIENTS window (backlog cb1c9700): the owner
+     marks a client account inactive ("Mark inactive" on its active row) or
+     restores it from the Inactive clients window. The server reuses the org
+     lifecycle (status 'canceled' + canceled_at + retention_until — the same
+     stamps as the self-serve cancel): data is RETAINED, tenant logins are
+     blocked while inactive, and the account stops counting as active.
+     Owner-only; members get 403. */
+  adminCancelOrg: (id: number) =>
+    request<{ ok: true; orgId: number; canceledAt: string; retentionUntil: string }>(
+      `/api/admin/orgs/${id}/cancel`,
+      { method: "POST" },
+    ),
+  adminRestoreOrg: (id: number) =>
+    request<{ ok: true; orgId: number }>(`/api/admin/orgs/${id}/restore`, { method: "POST" }),
   /* Owner request 2026-08-14 — owner edits a client account's billing: the
      monthly subscription amount they pay (USD >= 0). Owner direction
      2026-08-15 — the per-account revenue-model selector is REMOVED (one

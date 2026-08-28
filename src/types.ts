@@ -239,6 +239,12 @@ export interface Client {
    *  behind). OWNER-only; the Finance subscription-MRR computation skips these
    *  so an orphaned/dead record can never inflate MRR. */
   orphanedAccount?: boolean;
+  /** Owner 2026-08-27 — INACTIVE CLIENTS window (backlog cb1c9700): true when
+   *  the linked account (org) is marked INACTIVE (canceled, data retained) and
+   *  sits in the Clients tab's "Inactive clients" window. OWNER-only, the SAME
+   *  rule as orphanedAccount; the Finance active-client filters mirror this so
+   *  an inactive account never counts as active. */
+  canceledAccount?: boolean;
   /** Owner 2026-08-27 (Finance active-client fix, backlog 61e598ec) — true
    *  when this record sits in its org's TERMINAL ("Sold") pipeline stage, i.e.
    *  the lead flow is complete. Feeds the Finance cockpit's contracted
