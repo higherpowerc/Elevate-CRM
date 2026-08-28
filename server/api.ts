@@ -555,6 +555,15 @@ function toClient(row: ClientRow, ownerOrg = false) {
           // "Sold MRR" and the Finance subscription MRR. OWNER-only; used by
           // the Finance subscription-MRR computation to skip dead accounts.
           orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id),
+          // Owner 2026-08-27 — INACTIVE CLIENTS window (backlog cb1c9700):
+          // true when the linked account (org) is marked INACTIVE (canceled).
+          // The owner retains the account + all of its data (the Clients tab
+          // lists it in the "Inactive clients" window) instead of hard-deleting
+          // it. OWNER-only, the SAME rule as orphanedAccount above; the Finance
+          // cockpit mirrors this flag so an inactive account never counts as
+          // active there either.
+          canceledAccount:
+            row.provisioned_org_id !== 0 && getOrg(row.provisioned_org_id)?.status === "canceled",
           // Owner 2026-08-27 (Finance active-client fix, backlog 61e598ec) —
           // true when this record sits in its org's TERMINAL ("Sold") pipeline
           // stage, i.e. the lead flow is COMPLETE. Feeds the Finance cockpit's
@@ -3016,6 +3025,51 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ ok: true, orgId: org.id, email: target.email, password });
   }
 
+  /* Owner 2026-08-27 — INACTIVE CLIENTS window (backlog cb1c9700): the owner
+     marks a client account inactive ("Mark inactive" on its active row). This
+     REUSES the existing org lifecycle (status 'active' | 'canceled' +
+     canceled_at + retention_until — the exact stamps the self-serve
+     /api/settings/cancel writes): nothing is hard-deleted — the account and
+     ALL of its data are retained, its users are locked out (login + every
+     authed route blocks canceled orgs), and it stops counting as active (the
+     owner's Clients tab moves the row into the "Inactive clients" window; the
+     linked owner client record carries canceledAccount so the Finance active
+     filters skip it too). The owner workspace can never be marked inactive. */
+  const adminCancelMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)\/cancel$/);
+  if (adminCancelMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminCancelMatch[1]);
+    if (isOwnerOrg(id)) return err("The owner workspace cannot be canceled.", 403);
+    const org = getOrg(id);
+    if (!org) return err("Org not found.", 404);
+    if (org.status === "canceled") return err("This account is already canceled.", 400);
+    db.query(
+      "UPDATE orgs SET status = 'canceled', canceled_at = datetime('now'), retention_until = datetime('now', '+30 days') WHERE id = ?",
+    ).run(id);
+    const updated = getOrg(id);
+    return json({
+      ok: true,
+      orgId: id,
+      canceledAt: updated?.canceled_at ?? "",
+      retentionUntil: updated?.retention_until ?? "",
+    });
+  }
+  /* Symmetric restore (the "Restore" action in the Inactive clients window):
+     back to 'active', retention stamps cleared — the account returns to the
+     Active client accounts table and its users can sign in again
+     (requireAuth blocks only WHILE status = 'canceled'). */
+  const adminRestoreMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)\/restore$/);
+  if (adminRestoreMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminRestoreMatch[1]);
+    const org = getOrg(id);
+    if (!org) return err("Org not found.", 404);
+    if (org.status !== "canceled") return err("This account is not canceled.", 400);
+    db.query("UPDATE orgs SET status = 'active', canceled_at = '', retention_until = '' WHERE id = ?").run(id);
+    return json({ ok: true, orgId: id });
+  }
   /* Phase 3d — owner impersonation: swap the admin's session for the target
      tenant's member user. This is a pure session swap — no new users/orgs,
      no password changes — and because the new session IS the tenant's user,
@@ -3298,8 +3352,13 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
                  -- Owner 2026-08-26 incident guard: a sold client whose
                  -- account (org) no longer exists must NOT count toward Sold
                  -- MRR. Only a genuinely active sold deal contributes.
+                 -- Owner 2026-08-27 (Inactive clients, cb1c9700): the same for
+                 -- an account the owner marked INACTIVE (canceled, retained) —
+                 -- it is not an active sold deal while it sits in the
+                 -- "Inactive clients" window.
                  AND (provisioned_org_id = 0
-                      OR provisioned_org_id IN (SELECT id FROM orgs))`,
+                      OR provisioned_org_id IN (SELECT id FROM orgs
+                                                WHERE status != 'canceled'))`,
             )
             .get(orgId, terminalStage) as { v: number })
         : { v: 0 };

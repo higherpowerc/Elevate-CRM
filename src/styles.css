@@ -4212,6 +4212,17 @@ legend.field-label {
 .accounts-table .row-actions {
   flex-wrap: wrap;
 }
+
+/* Owner 2026-08-27 — Inactive clients window (backlog cb1c9700): a separate
+   window under the Active client accounts table. Inactive (canceled) rows are
+   slightly muted — retained data, blocked logins — but every column stays
+   readable; the same .accounts-table wrap guards apply (no overlap). */
+.accounts-inactive .row-inactive td {
+  color: var(--muted, #a9a9b3);
+}
+.accounts-inactive .row-inactive .acc-name {
+  color: inherit;
+}
 .accounts-table .chip {
   white-space: normal;
 }

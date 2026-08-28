@@ -134,7 +134,11 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
    *  completed ALL lead-flow stages (it sits in the org's terminal "Sold"
    *  stage — `soldStage`, server-computed), the agreement is SIGNED, and the
    *  payment is RECEIVED (`paymentStatus === "paid"`). Lost / archived /
-   *  orphaned records never count. The MRR figure uses the SAME filter as the
+   *  orphaned records never count — and neither does an account the owner
+   *  marked INACTIVE (canceled, retained in the Clients tab's "Inactive
+   *  clients" window, 2026-08-27): while inactive its linked record carries
+   *  `canceledAccount` and is excluded, restore flips it back. The MRR figure
+   *  uses the SAME filter as the
    *  "Active clients on a plan" count — the money and the count must tell the
    *  same story (MRR = money actually under contract). Complements (does not
    *  replace) the dashboard's "Sold MRR" KPI, which is deal-value based. */
@@ -146,6 +150,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
         !c.lost &&
         !c.archived &&
         !c.orphanedAccount &&
+        !c.canceledAccount &&
         c.agreementStatus === "signed" &&
         c.paymentStatus === "paid",
     );
@@ -296,7 +301,7 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
   const payingClients = useMemo(() => {
     if (!ownerOrg) return [];
     return clients
-      .filter((c) => c.soldStage === true && !c.lost && !c.archived && !c.orphanedAccount)
+      .filter((c) => c.soldStage === true && !c.lost && !c.archived && !c.orphanedAccount && !c.canceledAccount)
       .sort((a, b) => a.companyName.localeCompare(b.companyName));
   }, [ownerOrg, clients]);
 

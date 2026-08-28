@@ -4469,10 +4469,13 @@ if grep -Fq 'const visibleOrgs = orgs' src/Accounts.tsx && grep -Fq 'o.id !== ow
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Accounts owner-org filter missing from src/Accounts.tsx"
 fi
-if grep -Fq 'visibleOrgs.length' src/Accounts.tsx && grep -Fq 'visibleOrgs.length === 0' src/Accounts.tsx && grep -Fq 'visibleOrgs.map' src/Accounts.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: filtered list drives the workspaces count, empty state and table rows"
+# Owner 2026-08-27 (Inactive clients, cb1c9700): the list SPLIT — activeOrgs
+# drives the "Active client accounts" count/empty/rows and inactiveOrgs drives
+# the separate "Inactive clients" window under it.
+if grep -Fq 'activeOrgs.length' src/Accounts.tsx && grep -Fq 'activeOrgs.length === 0' src/Accounts.tsx && grep -Fq 'activeOrgs.map' src/Accounts.tsx && grep -Fq 'inactiveOrgs.map' src/Accounts.tsx && ! grep -Fq 'visibleOrgs.map' src/Accounts.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: active/inactive split drives the counts, empty states and both table rows"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: visibleOrgs not wired to count/empty/rows in src/Accounts.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: active/inactive split not wired to count/empty/rows in src/Accounts.tsx"
 fi
 if ! grep -Fq 'chip-owner' src/Accounts.tsx && ! grep -Fq 'The owner workspace cannot be deleted' src/Accounts.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: owner-row chip + owner-row billing/action branches removed (row itself filtered out)"
@@ -8357,7 +8360,8 @@ api=open('server/api.ts').read()
 assert '!c.orphanedAccount' in fin, 'Finance active filter must exclude orphanedAccount'
 assert 'orphanedAccount?: boolean' in types, 'Client type must carry orphanedAccount'
 assert 'orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id)' in api, 'server must compute orphanedAccount'
-assert 'AND (provisioned_org_id = 0' in api and 'IN (SELECT id FROM orgs)' in api, 'clientMrr query must exclude orphaned records'
+assert 'AND (provisioned_org_id = 0' in api and 'IN (SELECT id FROM orgs' in api, 'clientMrr query must exclude orphaned records'
+assert "WHERE status != 'canceled'" in api, 'clientMrr query must also exclude INACTIVE (canceled) accounts (72)'
 print('  ✓ 63f: Finance MRR filter + server orphan guard present')
 PY
 then PASS=$((PASS+1)); echo "  ✓ 63f: source guards present"
@@ -9393,6 +9397,247 @@ rm -f "$JT71"
 echo "  ✓ 71: paying-clients hub verified"
 
 
+echo "== 72. Inactive clients window (owner 2026-08-27, backlog cb1c9700): mark-inactive + restore + retention =="
+# Owner direction: canceled client accounts live in their OWN "Inactive clients"
+# window under/near "Active client accounts" — SEPARATE, never mixed into the
+# active table. Marking inactive REPLACES the old hard-delete cancel path: the
+# account and ALL of its data are RETAINED, tenant logins block while inactive,
+# restore is symmetric, and hard-delete stays available from the window.
+# Data-model decision: REUSES the existing org lifecycle status 'active' |
+# 'canceled' (+ canceled_at + retention_until — the exact stamps the self-serve
+# /api/settings/cancel writes). No parallel flag. "Inactive must not count as
+# active anywhere" is enforced in both places that define active money:
+#   · the linked owner client record carries canceledAccount (owner-only,
+#     computed from the linked org's status) — the Finance cockpit's contracted
+#     active-client filters skip it;
+#   · the dashboard Sold-MRR query (the §63 lock) now also skips canceled orgs.
+# Fresh throwaway server — the §63/§70 pattern (Stripe/Resend keys stripped).
+MOCK72=$(mktemp -d)
+start_crm 3033 "$MOCK72/db" "$MOCK72/srv.log" "$MOCK72/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET -u RESEND_API_KEY -u RESEND_URL -u TEST_EMAIL_TO
+B72=http://localhost:3033
+J72=$(mktemp)
+S=$(code -c "$J72" -b "$J72" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B72/api/auth/login")
+check "72a: owner login → 200" 200 "$S"
+# The owner org id: /api/auth/me (user.orgId) — the login body nests it too.
+code -b "$J72" "$B72/api/auth/me" > /dev/null
+OWNER_ORG72=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['user']['orgId'])")
+code -b "$J72" "$B72/api/settings" > /dev/null
+TERM72=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
+
+echo "-- 72b. Guards: owner-only endpoints, owner workspace protected, unknown org 404 --"
+check "72b: cancel without cookie → 401" 401 $(code -X POST "$B72/api/admin/orgs/2/cancel")
+check "72b: restore without cookie → 401" 401 $(code -X POST "$B72/api/admin/orgs/2/restore")
+check "72b: owner marks own workspace inactive → 403" 403 $(code -b "$J72" -X POST "$B72/api/admin/orgs/$OWNER_ORG72/cancel")
+grep -q "owner workspace cannot be canceled" /tmp/body.json && echo "  ✓ 72b: clear owner-guard message" || echo "  XX 72b owner-guard body: $(cat /tmp/body.json)"
+check "72b: cancel unknown org → 404" 404 $(code -b "$J72" -X POST "$B72/api/admin/orgs/999001/cancel")
+check "72b: restore unknown org → 404" 404 $(code -b "$J72" -X POST "$B72/api/admin/orgs/999001/restore")
+
+echo "-- 72c. Seed: fully-contracted sold client + its provisioned account (§69b/§70 pattern) --"
+S=$(code -b "$J72" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Inactive Test Co\",\"contactName\":\"Ida Nactive\",\"email\":\"ida72@inactive.example\",\"clientType\":\"commercial\",\"monthlyAmount\":45,\"dealValue\":450,\"stage\":\"$TERM72\"}" "$B72/api/clients")
+check "72c: create Inactive Test Co (terminal stage) → 201" 201 "$S"
+C72=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+S=$(code -b "$J72" -X POST "$B72/api/admin/clients/$C72/provision")
+check "72c: owner provisions the client's account → 200" 200 "$S"
+ORG72=$(grep -o '"orgId":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
+if [ -n "$ORG72" ] && [ "$ORG72" != "0" ]; then PASS=$((PASS+1)); echo "  ✓ 72c: account built (org $ORG72)"; else FAIL=$((FAIL+1)); echo "  ✗ 72c: no orgId from provision: $(cat /tmp/body.json)"; fi
+# The REAL e-sign flow (the §70 helper): mint the agreement, redeem the token.
+code -b "$J72" -X POST -H 'Content-Type: application/json' -d "{\"clientId\":$C72}" "$B72/api/agreements/send" > /dev/null
+TOKEN72=$(python3 -c "import json;u=json.load(open('/tmp/body.json')).get('signUrl','');print(u.rsplit('/sign/',1)[1] if '/sign/' in u else '')")
+if [ -n "$TOKEN72" ]; then PASS=$((PASS+1)); echo "  ✓ 72c: sign link minted"; else FAIL=$((FAIL+1)); echo "  ✗ 72c: no signUrl: $(cat /tmp/body.json)"; fi
+check "72c: redeem sign token → 200" 200 $(code -b "$J72" -X POST -H 'Content-Type: application/json' -d '{"action":"sign","name":"Ida Nactive","consent":true}' "$B72/api/sign/$TOKEN72")
+S=$(code -b "$J72" -X POST "$B72/api/clients/$C72/payment-paid")
+check "72c: payment received → 200 (fully contracted)" 200 "$S"
+# Tenant credentials come from the owner-only admin list (tempPassword), BEFORE
+# the first login clears it.
+S=$(code -b "$J72" "$B72/api/admin/orgs")
+check "72c: orgs list → 200" 200 "$S"
+TEMAIL72=$(C72="$C72" ORG72="$ORG72" python3 -c "
+import json, os
+o = [x for x in json.load(open('/tmp/body.json'))['orgs'] if x['id'] == int(os.environ['ORG72'])][0]
+assert o.get('loginEmail'), o
+print(o['loginEmail'])")
+TPASS72=$(C72="$C72" ORG72="$ORG72" python3 -c "
+import json, os
+o = [x for x in json.load(open('/tmp/body.json'))['orgs'] if x['id'] == int(os.environ['ORG72'])][0]
+assert o.get('tempPassword'), 'fresh provision must carry an undelivered temp password'
+print(o['tempPassword'])")
+JT72=$(mktemp)
+S=$(code -c "$JT72" -b "$JT72" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$TEMAIL72\",\"password\":\"$TPASS72\"}" "$B72/api/auth/login")
+check "72c: tenant login → 200 (active account)" 200 "$S"
+check "72c: tenant session works → 200" 200 $(code -b "$JT72" "$B72/api/clients")
+echo "-- 72d. Isolation: tenants (members AND admins) can never touch the owner lifecycle --"
+check "72d: tenant cancel attempt → 403" 403 $(code -b "$JT72" -X POST "$B72/api/admin/orgs/$ORG72/cancel")
+check "72d: tenant restore attempt → 403" 403 $(code -b "$JT72" -X POST "$B72/api/admin/orgs/$ORG72/restore")
+check "72d: tenant GET admin orgs → 403" 403 $(code -b "$JT72" "$B72/api/admin/orgs")
+
+echo "-- 72e. Baseline (active): account in the active set, MRR 450, finance-active 1 --"
+S=$(code -b "$J72" "$B72/api/dashboard")
+check "72e: dashboard → 200" 200 "$S"
+MRR72=$(python3 -c "import json;print(json.load(open('/tmp/body.json')).get('clientMrr'))")
+if [ "$MRR72" = "450" ]; then PASS=$((PASS+1)); echo "  ✓ 72e: dashboard Sold MRR = 450 (deal value of the active sold deal)"; else FAIL=$((FAIL+1)); echo "  ✗ 72e: Sold MRR baseline: got $MRR72"; fi
+S=$(code -b "$J72" "$B72/api/clients?archived=1")
+check "72e: owner clients → 200" 200 "$S"
+if python3 - "$C72" <<'PY' 2>"$PASS_TMP"
+import json, sys
+cid = int(sys.argv[1])
+c = [x for x in json.load(open('/tmp/body.json'))['clients'] if x['id'] == cid][0]
+assert c.get('soldStage') is True and c.get('agreementStatus') == 'signed' and c.get('paymentStatus') == 'paid', c
+assert not c.get('lost') and not c.get('archived') and not c.get('orphanedAccount'), c
+assert c.get('canceledAccount') is False, "active account must NOT be flagged canceled"
+active = [x for x in json.load(open('/tmp/body.json'))['clients']
+          if x.get('soldStage') is True and not x.get('lost') and not x.get('archived')
+          and not x.get('orphanedAccount') and not x.get('canceledAccount')
+          and x.get('agreementStatus') == 'signed' and x.get('paymentStatus') == 'paid']
+assert len(active) == 1 and active[0]['id'] == cid, active
+print("  ✓ 72e: finance mirror — activeCount = 1 · Subscription MRR = 45 (canceledAccount false)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72e: finance mirror failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+
+echo "-- 72f. Mark inactive: retained + stamped, out of the active set --"
+S=$(code -b "$J72" -X POST "$B72/api/admin/orgs/$ORG72/cancel")
+check "72f: owner marks the account inactive → 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert d.get('ok') is True, d
+assert d.get('canceledAt'), d
+assert d.get('retentionUntil'), d
+print("  ✓ 72f: response stamps canceledAt + retentionUntil (30-day retention)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72f: cancel response failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+check "72f: double cancel → 400" 400 $(code -b "$J72" -X POST "$B72/api/admin/orgs/$ORG72/cancel")
+grep -q "already canceled" /tmp/body.json && echo "  ✓ 72f: clear already-canceled message" || echo "  XX 72f double-cancel body: $(cat /tmp/body.json)"
+S=$(code -b "$J72" "$B72/api/admin/orgs")
+check "72f: orgs list after cancel → 200" 200 "$S"
+if python3 - "$ORG72" "$C72" <<'PY' 2>"$PASS_TMP"
+import json, sys
+oid, cid = int(sys.argv[1]), int(sys.argv[2])
+o = [x for x in json.load(open('/tmp/body.json'))['orgs'] if x['id'] == oid][0]
+assert o['status'] == 'canceled', o
+assert o.get('canceledAt') and o.get('retentionUntil'), o
+# RETENTION: the account stays listed with its users + login intact (own
+# window, not gone). A provisioned org starts with no client records of its
+# own (the sold record lives in the OWNER org, linked) — the retained data
+# proof is the org row itself + its member account.
+assert o['userCount'] >= 1, f"users lost on cancel: {o}"
+assert o.get('loginEmail'), f"login retained: {o}"
+print("  ✓ 72f: account STILL listed (retained) as canceled with data + retention stamps — moves to the Inactive clients window, not deleted")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72f: retention assertions failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+
+echo "-- 72g. Inactive ≠ active: dashboard MRR 0, finance mirror 0 (only canceledAccount flips), tenant blocked --"
+S=$(code -b "$J72" "$B72/api/dashboard")
+MRR72=$(python3 -c "import json;print(json.load(open('/tmp/body.json')).get('clientMrr'))")
+if [ "$MRR72" = "0" ]; then PASS=$((PASS+1)); echo "  ✓ 72g: dashboard Sold MRR = 0 while inactive (§63 lock extended to canceled orgs)"; else FAIL=$((FAIL+1)); echo "  ✗ 72g: Sold MRR while inactive: got $MRR72"; fi
+S=$(code -b "$J72" "$B72/api/clients?archived=1")
+check "72g: owner clients → 200" 200 "$S"
+if python3 - "$C72" <<'PY' 2>"$PASS_TMP"
+import json, sys
+cid = int(sys.argv[1])
+c = [x for x in json.load(open('/tmp/body.json'))['clients'] if x['id'] == cid][0]
+# The ONLY thing that changed: the linked account is inactive. Every other
+# active-defining fact still holds — the canceledAccount flag is what removes it.
+assert c.get('canceledAccount') is True, c
+assert c.get('soldStage') is True and c.get('agreementStatus') == 'signed' and c.get('paymentStatus') == 'paid', c
+assert not c.get('lost') and not c.get('archived') and not c.get('orphanedAccount'), c
+active = [x for x in json.load(open('/tmp/body.json'))['clients']
+          if x.get('soldStage') is True and not x.get('lost') and not x.get('archived')
+          and not x.get('orphanedAccount') and not x.get('canceledAccount')
+          and x.get('agreementStatus') == 'signed' and x.get('paymentStatus') == 'paid']
+assert len(active) == 0, active
+print("  ✓ 72g: finance mirror — activeCount = 0 while inactive (canceledAccount true, everything else unchanged)")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72g: finance mirror failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+check "72g: inactive org's existing session blocked → 403" 403 $(code -b "$JT72" "$B72/api/clients")
+check "72g: inactive org's login blocked → 403" 403 $(code -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$TEMAIL72\",\"password\":\"$TPASS72\"}" "$B72/api/auth/login")
+grep -q "account_canceled" /tmp/body.json && echo "  ✓ 72g: login shows the account_canceled guard" || echo "  XX 72g login body: $(cat /tmp/body.json)"
+
+echo "-- 72h. Restore: symmetric — back to active, stamps cleared, tenant unblocked --"
+S=$(code -b "$J72" -X POST "$B72/api/admin/orgs/$ORG72/restore")
+check "72h: owner restores the account → 200" 200 "$S"
+check "72h: restore non-canceled → 400" 400 $(code -b "$J72" -X POST "$B72/api/admin/orgs/$ORG72/restore")
+grep -q "not canceled" /tmp/body.json && echo "  ✓ 72h: clear not-canceled message" || echo "  XX 72h restore body: $(cat /tmp/body.json)"
+S=$(code -b "$J72" "$B72/api/admin/orgs")
+if python3 - "$ORG72" <<'PY' 2>"$PASS_TMP"
+import json, sys
+oid = int(sys.argv[1])
+o = [x for x in json.load(open('/tmp/body.json'))['orgs'] if x['id'] == oid][0]
+assert o['status'] == 'active', o
+assert o.get('canceledAt', 'x') in ('', None), o
+assert o.get('retentionUntil', 'x') in ('', None), o
+print("  ✓ 72h: account back in the active set — status active, retention stamps cleared")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72h: restore assertions failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+JT72B=$(mktemp)
+S=$(code -c "$JT72B" -b "$JT72B" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$TEMAIL72\",\"password\":\"$TPASS72\"}" "$B72/api/auth/login")
+check "72h: tenant login after restore → 200" 200 "$S"
+check "72h: tenant session works again → 200" 200 $(code -b "$JT72B" "$B72/api/clients")
+S=$(code -b "$J72" "$B72/api/dashboard")
+MRR72=$(python3 -c "import json;print(json.load(open('/tmp/body.json')).get('clientMrr'))")
+if [ "$MRR72" = "450" ]; then PASS=$((PASS+1)); echo "  ✓ 72h: dashboard Sold MRR back to 450 after restore"; else FAIL=$((FAIL+1)); echo "  ✗ 72h: Sold MRR after restore: got $MRR72"; fi
+S=$(code -b "$J72" "$B72/api/clients?archived=1")
+if python3 - "$C72" <<'PY' 2>"$PASS_TMP"
+import json, sys
+cid = int(sys.argv[1])
+c = [x for x in json.load(open('/tmp/body.json'))['clients'] if x['id'] == cid][0]
+assert c.get('canceledAccount') is False, c
+active = [x for x in json.load(open('/tmp/body.json'))['clients']
+          if x.get('soldStage') is True and not x.get('lost') and not x.get('archived')
+          and not x.get('orphanedAccount') and not x.get('canceledAccount')
+          and x.get('agreementStatus') == 'signed' and x.get('paymentStatus') == 'paid']
+assert len(active) == 1 and active[0]['id'] == cid, active
+print("  ✓ 72h: finance mirror — activeCount = 1 · Subscription MRR = 45 again")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72h: finance mirror failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+
+echo "-- 72i. Hard delete stays available FROM the inactive state (§69 cascade symmetry) --"
+S=$(code -b "$J72" -X POST "$B72/api/admin/orgs/$ORG72/cancel")
+check "72i: mark inactive again → 200" 200 "$S"
+S=$(code -b "$J72" -X DELETE "$B72/api/admin/orgs/$ORG72")
+check "72i: owner hard-deletes the inactive account → 200" 200 "$S"
+S=$(code -b "$J72" "$B72/api/admin/orgs")
+if python3 - "$ORG72" <<'PY' 2>"$PASS_TMP"
+import json, sys
+oid = int(sys.argv[1])
+ids = [x['id'] for x in json.load(open('/tmp/body.json'))['orgs']]
+assert oid not in ids, "ghost account survived the delete"
+print("  ✓ 72i: the inactive account is gone after the explicit hard delete")
+PY
+then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 72i: post-delete assertions failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+check "72i: linked sold client removed by the cascade → 404" 404 $(code -b "$J72" "$B72/api/clients/$C72")
+
+echo "-- 72j. Source guards: the window is a SEPARATE surface, Finance mirrors the flag --"
+if python3 - <<'PY' 2>"$PASS_TMP"
+acc = open('src/Accounts.tsx').read()
+# The separate window: its own heading + its own table, NOT an extra column.
+assert '>Inactive clients</h3>' in acc, 'missing the Inactive clients window heading'
+assert 'activeOrgs' in acc and 'inactiveOrgs' in acc, 'missing the active/inactive split'
+assert 'activeOrgs.map' in acc and 'inactiveOrgs.map' in acc, 'both tables must render their own list'
+assert 'visibleOrgs.map' not in acc, 'the active table must NOT render the mixed list'
+assert 'Mark inactive' in acc, 'missing the mark-inactive action on active rows'
+assert 'adminCancelOrg' in acc and 'adminRestoreOrg' in acc, 'missing the lifecycle API calls'
+# The old canceled chip must not leak back into the ACTIVE table rows —
+# slice BETWEEN the two window headings (the split constants above the JSX
+# legitimately mention the status).
+active_sec = acc[acc.index('Active client accounts</h3>'):acc.index('Inactive clients</h3>')]
+assert 'o.status === "canceled"' not in active_sec, 'active table must not special-case canceled rows'
+api = open('src/api.ts').read()
+assert '/cancel' in api and '/restore' in api, 'missing the admin lifecycle endpoints in the api client'
+fin = open('src/Finance.tsx').read()
+assert fin.count('!c.canceledAccount') >= 2, 'Finance must exclude canceled accounts in BOTH active filters'
+print("ok")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 72j: source guards — separate Inactive clients window + mark-inactive/Restore + Finance mirror"
+else FAIL=$((FAIL+1)); echo "  ✗ 72j: source guards failed:"; cat "$PASS_TMP" 2>/dev/null; fi
+
+stop_crm "$MOCK72/srv.pid"; sleep 0.3
+rm -rf "$MOCK72" "$JT72" "$JT72B"
+echo "  ✓ 72: inactive-clients window verified"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 
