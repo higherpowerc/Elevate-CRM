@@ -141,7 +141,9 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
    *  uses the SAME filter as the
    *  "Active clients on a plan" count — the money and the count must tell the
    *  same story (MRR = money actually under contract). Complements (does not
-   *  replace) the dashboard's "Sold MRR" KPI, which is deal-value based. */
+   *  replace) the dashboard's "Sold MRR" KPI — owner 2026-08-28 that card is
+   *  subscription-based too, over the same active-sold population WITHOUT the
+   *  signed + paid gates this stricter figure keeps. */
   const subscriptionMrr = useMemo(() => {
     if (!ownerOrg) return { mrr: 0, activeCount: 0 };
     const active = clients.filter(
@@ -316,7 +318,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
   /* Inline-edit drafts, keyed by client id (fall back to the stored values). */
   const [hubTiers, setHubTiers] = useState<Record<number, string>>({});
   const [hubMonthly, setHubMonthly] = useState<Record<number, string>>({});
-  const [hubDeal, setHubDeal] = useState<Record<number, string>>({});
   /* Per-row payment-link amount + interval (default: the subscription level). */
   const [hubLinkAmounts, setHubLinkAmounts] = useState<Record<number, string>>({});
   const [hubLinkIntervals, setHubLinkIntervals] = useState<Record<number, "month" | "one_time">>({});
@@ -330,25 +331,22 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
    *  carries (omitted keys never clobber stored values). companyName +
    *  clientType are required by the server's validator on every PUT; the hub
    *  renders for the owner workspace only (ownerOrg), so tenants never reach
-   *  it. `override` lets the tier select save its NEW value on change. */
-  async function handleHubSave(c: Client, override?: { tier?: string; monthly?: string; deal?: string }) {
+   *  it. `override` lets the tier select save its NEW value on change.
+   *  Owner 2026-08-28: deal value has no real equation — the hub no longer
+   *  edits it (the record editor keeps the field; Lead Opportunities needs
+   *  it), and this PUT simply never sends dealValue, so a stored deal value
+   *  can never be clobbered from here. */
+  async function handleHubSave(c: Client, override?: { tier?: string; monthly?: string }) {
     const tier = override?.tier ?? hubTiers[c.id] ?? c.tier ?? "";
     const monthlyRaw = (override?.monthly ?? hubMonthly[c.id] ?? (c.monthlyAmount ? String(c.monthlyAmount) : "")).trim();
-    const dealRaw = (override?.deal ?? hubDeal[c.id] ?? String(c.dealValue ?? 0)).trim();
     const monthly = monthlyRaw === "" ? 0 : Number(monthlyRaw);
-    const deal = dealRaw === "" ? 0 : Number(dealRaw);
     if (!Number.isFinite(monthly) || monthly < 0) {
       setHubNotice({ kind: "warn", text: `Subscription for ${c.companyName} must be a non-negative number.` });
       return;
     }
-    if (!Number.isFinite(deal) || deal < 0) {
-      setHubNotice({ kind: "warn", text: `Deal value for ${c.companyName} must be a non-negative number.` });
-      return;
-    }
     const changed =
       tier !== (c.tier ?? "") ||
-      monthly !== (Number(c.monthlyAmount) || 0) ||
-      deal !== (Number(c.dealValue) || 0);
+      monthly !== (Number(c.monthlyAmount) || 0);
     if (!changed) return;
     setHubSavingId(c.id);
     setHubNotice(null);
@@ -358,7 +356,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
         clientType: c.clientType,
         ...(tier !== (c.tier ?? "") ? { tier: tier as NonNullable<Client["tier"]> } : {}),
         ...(monthly !== (Number(c.monthlyAmount) || 0) ? { monthlyAmount: monthly } : {}),
-        ...(deal !== (Number(c.dealValue) || 0) ? { dealValue: deal } : {}),
       });
       setHubNotice({ kind: "success", text: `Saved changes for ${c.companyName}.` });
       await load();
@@ -851,7 +848,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
                     <th>Client</th>
                     <th>Package tier</th>
                     <th className="num">Subscription/mo</th>
-                    <th className="num">Deal value</th>
                     <th>Payment</th>
                     <th>Bill</th>
                   </tr>
@@ -896,24 +892,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
                               aria-label={`Subscription level for ${c.companyName}`}
                               value={hubMonthly[c.id] ?? (c.monthlyAmount ? String(c.monthlyAmount) : "")}
                               onChange={(e) => setHubMonthly((m) => ({ ...m, [c.id]: e.target.value }))}
-                              onBlur={() => handleHubSave(c)}
-                              disabled={hubSavingId === c.id}
-                            />
-                          </div>
-                        </td>
-                        <td data-label="Deal value" className="num">
-                          <div className="inv-add-amount hub-money">
-                            <span className="inv-dollar" aria-hidden="true">
-                              $
-                            </span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              inputMode="decimal"
-                              aria-label={`Deal value for ${c.companyName}`}
-                              value={hubDeal[c.id] ?? String(c.dealValue ?? 0)}
-                              onChange={(e) => setHubDeal((m) => ({ ...m, [c.id]: e.target.value }))}
                               onBlur={() => handleHubSave(c)}
                               disabled={hubSavingId === c.id}
                             />

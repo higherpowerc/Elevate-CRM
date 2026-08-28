@@ -3342,11 +3342,20 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       })),
     };
     // Owner-only Client MRR + account count (members never receive these keys).
-    // Owner direction 2026-08-15: Client MRR = SUM of deal values on the
-    // owner's OWN client records in the terminal (last/"Sold") pipeline stage,
-    // excluding lost and archived records — "total for paying clients sold".
-    // The per-account billing amount (orgs.monthly_subscription_amount) no
-    // longer feeds MRR (Phase 5 billing prep only).
+    // Owner direction 2026-08-28 ("deal value has no real equation — remove
+    // deal value — Sold MRR equals the total monthly clients who have
+    // subscribed to do business"): Client MRR = SUM of each actively-sold
+    // record's MONTHLY SUBSCRIPTION amount — no deal value anywhere. Per
+    // record the subscription resolves instance-consistently with the
+    // Client-accounts money view: the linked account's
+    // orgs.monthly_subscription_amount (provisioned_org_id join) when the
+    // account carries one, falling back to the client record's own
+    // monthly_amount when it does not. Same actively-sold population as
+    // before: terminal (last/"Sold") pipeline stage, not lost, not archived,
+    // NOT orphaned and NOT canceled — but deliberately WITHOUT the Finance
+    // tab's stricter signed-agreement + payment-received gates (this card is
+    // "clients subscribed to do business"; Finance MRR stays money under
+    // contract — the two cards remain distinct).
     if (isOwnerSession(auth)) {
       const mrrOrg = getOrg(orgId);
       const mrrStages = mrrOrg ? parseStages(mrrOrg.stages) : [...DEFAULT_STAGES];
@@ -3354,15 +3363,24 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       const mrr = terminalStage
         ? (db
             .query(
-              `SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients
+              `SELECT COALESCE(SUM(
+                 CASE
+                   WHEN clients.provisioned_org_id != 0 THEN
+                     COALESCE((SELECT o.monthly_subscription_amount FROM orgs o
+                               WHERE o.id = clients.provisioned_org_id
+                                 AND o.status != 'canceled'
+                                 AND o.monthly_subscription_amount > 0),
+                              clients.monthly_amount)
+                   ELSE clients.monthly_amount
+                 END), 0) AS v FROM clients
                WHERE org_id = ? AND lost = 0 AND archived = 0
                  AND LOWER(TRIM(stage)) = LOWER(TRIM(?))
                  -- Owner 2026-08-26 incident guard: a sold client whose
                  -- account (org) no longer exists must NOT count toward Sold
-                 -- MRR. Only a genuinely active sold deal contributes.
+                 -- MRR. Only a genuinely active sold subscription contributes.
                  -- Owner 2026-08-27 (Inactive clients, cb1c9700): the same for
                  -- an account the owner marked INACTIVE (canceled, retained) —
-                 -- it is not an active sold deal while it sits in the
+                 -- it is not an active sold subscription while it sits in the
                  -- "Inactive clients" window.
                  AND (provisioned_org_id = 0
                       OR provisioned_org_id IN (SELECT id FROM orgs

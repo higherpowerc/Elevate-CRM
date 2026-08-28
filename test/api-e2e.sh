@@ -3547,13 +3547,15 @@ d = json.load(open('/tmp/body.json'))
 assert 'clientMrr' in d and 'orgCount' in d, "owner must see clientMrr + orgCount"
 assert d['orgCount'] >= 4, d.get('orgCount')  # owner + med spa + sales + plain (plus any earlier leftovers)
 assert 'salesThisMonth' in d and 'subscriptionsTotal' in d and 'revenueModel' in d
-# Owner direction 2026-08-15: clientMrr is the SUM of the owner's OWN client
-# records' deal values in the terminal/"Sold" stage (lost/archived excluded).
-# Earlier sections (3g-3 / 32) already leave real sold records, so capture the
-# baseline and assert deltas. Billing amounts must NOT be part of the figure.
+# Owner direction 2026-08-28: clientMrr is the SUM of the owner's OWN sold
+# records' MONTHLY SUBSCRIPTION amounts (linked account's billing amount,
+# falling back to the record's monthly_amount) in the terminal/"Sold" stage
+# (lost/archived excluded) — deal value NEVER feeds it. Earlier sections
+# (3g-3 / 32) already leave real sold records, so capture the baseline and
+# assert deltas.
 open('/tmp/mrr_base33', 'w').write(repr(d['clientMrr']))
 open('/tmp/owner_before33.json', 'w').write(json.dumps({'salesThisMonth': d['salesThisMonth'], 'subscriptionsTotal': d['subscriptionsTotal']}))
-print("  ✓ 33h: owner dashboard clientMrr baseline=%s (deal-value sum, NOT billing amounts), orgCount present, own money keys too" % d['clientMrr'])
+print("  ✓ 33h: owner dashboard clientMrr baseline=%s (subscription sum, deal value ignored), orgCount present, own money keys too" % d['clientMrr'])
 PY
 MRR_BASE33=$(cat /tmp/mrr_base33)
 S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
@@ -3564,25 +3566,25 @@ if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 d = json.load(open('/tmp/body.json'))
 assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
-print("  ✓ 33h2: PATCHing a billing amount does NOT change clientMrr (still %s)" % os.environ['MRR_BASE33'])
+print("  ✓ 33h2: PATCHing that org's billing amount does NOT change clientMrr (still %s — no sold record is linked to it)" % os.environ['MRR_BASE33'])
 PY
-then PASS=$((PASS+1)); echo "  ✓ 33h2: billing amount does not feed MRR"
+then PASS=$((PASS+1)); echo "  ✓ 33h2: a billing amount with no linked sold record cannot feed MRR"
 else FAIL=$((FAIL+1)); echo "  ✗ 33h2: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 # Deal-value MRR: only terminal-stage, non-lost, non-archived owner records count.
 code -b "$JAR33" "$BASE/api/settings" > /dev/null
 TERM33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
 S=$(code -b "$JAR33" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"MRR Deal Co","clientType":"commercial","contactName":"D","email":"deal33@x.com","dealValue":250,"stage":"Leads"}' "$BASE/api/clients")
-check "33h3: owner creates client record dealValue=250 in a non-terminal stage" 201 "$S"
+  -d '{"companyName":"MRR Deal Co","clientType":"commercial","contactName":"D","email":"deal33@x.com","dealValue":250,"monthlyAmount":0,"stage":"Leads"}' "$BASE/api/clients")
+check "33h3: owner creates client record dealValue=250 / monthly 0 in a non-terminal stage" 201 "$S"
 MRRCLI33=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$JAR33" "$BASE/api/dashboard")
 if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 d = json.load(open('/tmp/body.json'))
 assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
-print("  ✓ 33h4: non-terminal-stage deal value excluded from clientMrr (still %s)" % os.environ['MRR_BASE33'])
+print("  ✓ 33h4: non-terminal-stage record excluded from clientMrr (still %s)" % os.environ['MRR_BASE33'])
 PY
-then PASS=$((PASS+1)); echo "  ✓ 33h4: non-terminal deal value excluded from MRR"
+then PASS=$((PASS+1)); echo "  ✓ 33h4: non-terminal record excluded from MRR"
 else FAIL=$((FAIL+1)); echo "  ✗ 33h4: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\"}" "$BASE/api/clients/$MRRCLI33")
@@ -3591,11 +3593,44 @@ S=$(code -b "$JAR33" "$BASE/api/dashboard")
 if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 d = json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 250)) < 0.001, d.get('clientMrr')
-print("  ✓ 33h6: clientMrr=%s — terminal-stage deal value counts (baseline+250)" % d['clientMrr'])
+# KEY owner 2026-08-28 assertion: the record sits in the terminal stage with
+# dealValue 250 but monthly 0 (its fresh provisioned account has no billing
+# amount either) — the deal value must contribute NOTHING.
+assert abs(d['clientMrr'] - float(os.environ['MRR_BASE33'])) < 0.001, d.get('clientMrr')
+print("  ✓ 33h6: clientMrr=%s — sold-stage DEAL VALUE (250) no longer counts (monthly 0)" % d['clientMrr'])
 PY
-then PASS=$((PASS+1)); echo "  ✓ 33h6: sold-stage deal value included in MRR"
+then PASS=$((PASS+1)); echo "  ✓ 33h6: sold-stage deal value ignored by MRR"
 else FAIL=$((FAIL+1)); echo "  ✗ 33h6: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# Give the record its own monthly subscription amount → the fallback path (the
+# fresh provisioned account carries no billing amount) feeds MRR with it.
+S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"MRR Deal Co","clientType":"commercial","monthlyAmount":125}' "$BASE/api/clients/$MRRCLI33")
+check "33h6a: owner sets the sold record's monthlyAmount → 125" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 125)) < 0.001, d.get('clientMrr')
+print("  ✓ 33h6a: clientMrr=%s — the record's monthly_amount (125) feeds MRR (baseline+125)" % d['clientMrr'])
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h6a: record monthly_amount feeds MRR (fallback path)"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h6a: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# Now set the LINKED ACCOUNT's billing amount → it wins over the record's own
+# monthly amount (instance-consistent with the Client-accounts money view).
+code -b "$JAR33" "$BASE/api/admin/orgs" > /dev/null
+MRROrg33=$(python3 -c "import json;d=json.load(open('/tmp/body.json'))['orgs'];print([o['id'] for o in d if o.get('provisionedFromClientName')=='MRR Deal Co'][0])")
+S=$(code -b "$JAR33" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":60}' "$BASE/api/admin/orgs/$MRROrg33")
+check "33h6b: owner PATCHes the linked account's billing amount → 60" 200 "$S"
+S=$(code -b "$JAR33" "$BASE/api/dashboard")
+if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+d = json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 60)) < 0.001, d.get('clientMrr')
+print("  ✓ 33h6b: clientMrr=%s — the account's monthly_subscription_amount (60) WINS (baseline+60)" % d['clientMrr'])
+PY
+then PASS=$((PASS+1)); echo "  ✓ 33h6b: account billing amount feeds MRR (org-primary path)"
+else FAIL=$((FAIL+1)); echo "  ✗ 33h6b: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 S=$(code -b "$JAR33" -X PUT -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"MRR Deal Co\",\"clientType\":\"commercial\",\"dealValue\":250,\"stage\":\"$TERM33\",\"lost\":true,\"lostReason\":\"Deal fell through\"}" "$BASE/api/clients/$MRRCLI33")
 check "33h7: owner marks the sold record lost" 200 "$S"
@@ -3630,8 +3665,8 @@ S=$(code -b "$JAR33" "$BASE/api/dashboard")
 if MRR_BASE33="$MRR_BASE33" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 d = json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 250)) < 0.001, d.get('clientMrr')
-print("  ✓ 33h13: clientMrr back to baseline+250 after un-archive")
+assert abs(d['clientMrr'] - (float(os.environ['MRR_BASE33']) + 60)) < 0.001, d.get('clientMrr')
+print("  ✓ 33h13: clientMrr back to baseline+60 after un-archive")
 PY
 then PASS=$((PASS+1)); echo "  ✓ 33h13: un-archive restores the value in MRR"
 else FAIL=$((FAIL+1)); echo "  ✗ 33h13: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
@@ -3685,11 +3720,11 @@ python3 - <<'PY'
 import json
 d = json.load(open('/tmp/body.json'))
 base = float(open('/tmp/mrr_base33').read())
-assert abs(d['clientMrr'] - (base + 250)) < 0.001, d.get('clientMrr')
+assert abs(d['clientMrr'] - (base + 60)) < 0.001, d.get('clientMrr')
 before = json.load(open('/tmp/owner_before33.json'))
 assert d['salesThisMonth'] == before['salesThisMonth'], (d['salesThisMonth'], before['salesThisMonth'])
 assert d['subscriptionsTotal'] == before['subscriptionsTotal'], (d['subscriptionsTotal'], before['subscriptionsTotal'])
-print("  ✓ 33n3: owner MRR (baseline+250) + own totals untouched by tenant activity (isolation)")
+print("  ✓ 33n3: owner MRR (baseline+60) + own totals untouched by tenant activity (isolation)")
 PY
 S=$(code -b "$JARMED" -X PATCH -H 'Content-Type: application/json' \
   -d '{"monthlySubscriptionAmount":1}' "$BASE/api/admin/orgs/$MED33")
@@ -3798,8 +3833,8 @@ S=$(code -b "$JAR35" -X POST -H 'Content-Type: application/json' \
 check "35c: owner creates a MIDDLE-stage lead (the Onboarding-KPI source)" 201 "$S"
 C2_35=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$JAR35" -X POST -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Cockpit Sold Co\",\"clientType\":\"commercial\",\"dealValue\":333,\"stage\":\"$TERM35\"}" "$BASE/api/clients")
-check "35d: owner creates a TERMINAL-stage client (the Sold-MRR source)" 201 "$S"
+  -d "{\"companyName\":\"Cockpit Sold Co\",\"clientType\":\"commercial\",\"dealValue\":444,\"monthlyAmount\":333,\"stage\":\"$TERM35\"}" "$BASE/api/clients")
+check "35d: owner creates a TERMINAL-stage client (the Sold-MRR source: monthly 333 / deal 444)" 201 "$S"
 C3_35=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 code -b "$JAR35" "$BASE/api/dashboard" > /dev/null
 if python3 - <<'PY' 2>"$PASS_TMP"
@@ -3817,14 +3852,15 @@ assert d['stageCounts'][first] < total_all, "first-stage count must differ from 
 # "Onboarding" KPI = the MIDDLE stage count (between first and terminal).
 assert mid is None or d['stageCounts'][mid] == base['stageCounts'][mid] + 1, d['stageCounts']
 # "Sold MRR" (clientMrr, shown beside projected pipeline) = terminal-stage
-# deal-value sum — exactly +333 for the sold client.
+# SUBSCRIPTION sum (owner 2026-08-28) — exactly +333 (the record's monthly
+# amount); its deal value 444 must NOT move the figure.
 assert abs(d['clientMrr'] - (base['clientMrr'] + 333)) < 0.001, (d['clientMrr'], base['clientMrr'])
 # projectedPipeline (OWNER, direction 2026-08-15) = FIRST-stage deal values
 # only — the +222 middle-stage and +333 terminal-stage deals must NOT appear
 # (that money is the Onboarding/Sold MRR figures). Positional: uses the
 # owner's actual first stage name, whatever it is.
 assert abs(d['projectedPipeline'] - (base['projectedPipeline'] + 111)) < 0.001, d['projectedPipeline']
-print("  ✓ API values the owner KPIs render: Active leads = first stage only; Onboarding = middle stage; Sold MRR = terminal deal sum (+333); projected pipeline = first-stage deal sum only (+111)")
+print("  ✓ API values the owner KPIs render: Active leads = first stage only; Onboarding = middle stage; Sold MRR = terminal subscription sum (+333, deal 444 ignored); projected pipeline = first-stage deal sum only (+111)")
 PY
 then
   PASS=$((PASS+1)); echo "  ✓ 35e: owner-cockpit API surface correct (first-stage Active leads, middle-stage Onboarding, sold-stage MRR)"
@@ -8075,7 +8111,7 @@ echo "== 61. Client lifecycle: Lost state + delete-account removes sold client (
 # the account deletes the source Sold record too (hard delete) so it leaves
 # the owner's pipeline / Sold KPIs entirely.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
-  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","clientType":"commercial","dealValue":7777,"stage":"Leads","notes":"61a"}' "$BASE/api/clients")
+  -d '{"companyName":"Lost Lifecycle Co","contactName":"Rev Owner","email":"lifecycle@example.com","clientType":"commercial","dealValue":7777,"monthlyAmount":500,"stage":"Leads","notes":"61a"}' "$BASE/api/clients")
 check "61a: create lifecycle lead → 201" 201 "$S"
 LC_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
@@ -8100,7 +8136,7 @@ S=$(code -b "$JAR" "$BASE/api/dashboard")
 SOLD_LIFECYCLE_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['stageCounts'].get('Sold',0))")
 MRR_LIFECYCLE_AFTER=$(python3 -c "import json; d=json.load(open('/tmp/body.json')); print(d['clientMrr'])")
 [ "$SOLD_LIFECYCLE_BEFORE" -eq "$((SOLD_LIFECYCLE_AFTER + 1))" ] && echo "  ✓ 61a: Sold count dropped by 1 (${SOLD_LIFECYCLE_BEFORE} → ${SOLD_LIFECYCLE_AFTER})" || echo "  ✗ 61a: Sold count ${SOLD_LIFECYCLE_BEFORE} → ${SOLD_LIFECYCLE_AFTER}"
-[ "$MRR_LIFECYCLE_BEFORE" -eq "$((MRR_LIFECYCLE_AFTER + 7777))" ] && echo "  ✓ 61a: Client MRR dropped by deal value (${MRR_LIFECYCLE_BEFORE} → ${MRR_LIFECYCLE_AFTER})" || echo "  ✗ 61a: MRR ${MRR_LIFECYCLE_BEFORE} → ${MRR_LIFECYCLE_AFTER}"
+[ "$MRR_LIFECYCLE_BEFORE" -eq "$((MRR_LIFECYCLE_AFTER + 500))" ] && echo "  ✓ 61a: Client MRR dropped by the record's monthly subscription 500 (${MRR_LIFECYCLE_BEFORE} → ${MRR_LIFECYCLE_AFTER})" || echo "  ✗ 61a: MRR ${MRR_LIFECYCLE_BEFORE} → ${MRR_LIFECYCLE_AFTER}"
 
 # --- 61b. Mark lost: moves client OUT of active pipeline into the Lost set ---
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -8252,7 +8288,7 @@ check "63a: owner login → 200" 200 "$S"
 code -b "$J63" "$B63/api/settings" > /dev/null
 TERM63=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
 echo "     (owner terminal stage=\"$TERM63\")"
-echo "-- 63a. Active sold client is the ONLY thing that counts (baseline) --"
+echo "-- 63a. Active sold client's SUBSCRIPTION is what counts (baseline) --"
 S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Active MRR Co\",\"clientType\":\"commercial\",\"dealValue\":400,\"monthlyAmount\":40,\"stage\":\"$TERM63\"}" "$B63/api/clients")
 check "63a: create ACTIVE sold client (deal 400 / mo 40) → 201" 201 "$S"
@@ -8261,58 +8297,72 @@ S=$(code -b "$J63" "$B63/api/dashboard")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d=json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+assert abs(d['clientMrr']-40)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63a: dashboard Sold MRR = 400 (the active sold deal counts)"
-else FAIL=$((FAIL+1)); echo "  ✗ 63a: clientMrr != 400: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+then PASS=$((PASS+1)); echo "  ✓ 63a: dashboard Sold MRR = 40 (the sold client's monthly subscription counts — its 400 deal value does NOT)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63a: clientMrr != 40: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 echo "-- 63b. Archived sold client EXCLUDED --"
 S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"stage\":\"$TERM63\"}" "$B63/api/clients")
-check "63b: create ARCH-eligible sold client (deal 500) → 201" 201 "$S"
+  -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"monthlyAmount\":50,\"stage\":\"$TERM63\"}" "$B63/api/clients")
+check "63b: create ARCH-eligible sold client (deal 500 / mo 50) → 201" 201 "$S"
 ARCH63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$J63" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"stage\":\"$TERM63\",\"archived\":true}" "$B63/api/clients/$ARCH63_ID")
+  -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"monthlyAmount\":50,\"stage\":\"$TERM63\",\"archived\":true}" "$B63/api/clients/$ARCH63_ID")
 check "63b: archive the sold client → 200" 200 "$S"
 S=$(code -b "$J63" "$B63/api/dashboard")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d=json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+assert abs(d['clientMrr']-40)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63b: clientMrr stays 400 — archived sold deal (500) NOT counted"
+then PASS=$((PASS+1)); echo "  ✓ 63b: clientMrr stays 40 — archived sold subscription (50) NOT counted"
 else FAIL=$((FAIL+1)); echo "  ✗ 63b: archived inflated MRR: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 echo "-- 63c. Lost sold client EXCLUDED --"
 S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Lost MRR Co\",\"clientType\":\"commercial\",\"dealValue\":600,\"stage\":\"$TERM63\"}" "$B63/api/clients")
-check "63c: create LOST-eligible sold client (deal 600) → 201" 201 "$S"
+  -d "{\"companyName\":\"Lost MRR Co\",\"clientType\":\"commercial\",\"dealValue\":600,\"monthlyAmount\":60,\"stage\":\"$TERM63\"}" "$B63/api/clients")
+check "63c: create LOST-eligible sold client (deal 600 / mo 60) → 201" 201 "$S"
 LOST63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$J63" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Lost MRR Co\",\"clientType\":\"commercial\",\"dealValue\":600,\"stage\":\"$TERM63\",\"lost\":true,\"lostReason\":\"Competitor\"}" "$B63/api/clients/$LOST63_ID")
+  -d "{\"companyName\":\"Lost MRR Co\",\"clientType\":\"commercial\",\"dealValue\":600,\"monthlyAmount\":60,\"stage\":\"$TERM63\",\"lost\":true,\"lostReason\":\"Competitor\"}" "$B63/api/clients/$LOST63_ID")
 check "63c: mark the sold client lost → 200" 200 "$S"
 S=$(code -b "$J63" "$B63/api/dashboard")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d=json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+assert abs(d['clientMrr']-40)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63c: clientMrr stays 400 — lost sold deal (600) NOT counted"
+then PASS=$((PASS+1)); echo "  ✓ 63c: clientMrr stays 40 — lost sold subscription (60) NOT counted"
 else FAIL=$((FAIL+1)); echo "  ✗ 63c: lost inflated MRR: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 echo "-- 63d. Deleted account: deleting the client account removes its Sold record → no lingering MRR --"
 S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Del MRR Co\",\"clientType\":\"commercial\",\"dealValue\":800,\"stage\":\"Leads\"}" "$B63/api/clients")
-check "63d: create Del in Leads (deal 800) → 201" 201 "$S"
+  -d "{\"companyName\":\"Del MRR Co\",\"clientType\":\"commercial\",\"dealValue\":800,\"monthlyAmount\":80,\"stage\":\"Leads\"}" "$B63/api/clients")
+check "63d: create Del in Leads (deal 800 / mo 80) → 201" 201 "$S"
 DEL63_ID=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
 S=$(code -b "$J63" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Del MRR Co\",\"clientType\":\"commercial\",\"dealValue\":800,\"stage\":\"$TERM63\"}" "$B63/api/clients/$DEL63_ID")
+  -d "{\"companyName\":\"Del MRR Co\",\"clientType\":\"commercial\",\"dealValue\":800,\"monthlyAmount\":80,\"stage\":\"$TERM63\"}" "$B63/api/clients/$DEL63_ID")
 check "63d: move Del to Sold (auto-provisions an account) → 200" 200 "$S"
 S=$(code -b "$J63" "$B63/api/dashboard")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d=json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr']-1200)<0.001, d.get('clientMrr')
+assert abs(d['clientMrr']-120)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr = 1200 (400 active + 800 Del, both live accounts)"
-else FAIL=$((FAIL+1)); echo "  ✗ 63d: expected 1200: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr = 120 (40 Active + Del's monthly 80 via the fallback — the fresh account has no billing amount yet)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63d: expected 120: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# Set the LINKED ACCOUNT's billing amount → it wins over the record's own 80.
+S=$(code -b "$J63" "$B63/api/admin/orgs")
+DEL_ORG63_PRE=$(python3 -c "import json;d=json.load(open('/tmp/body.json'))['orgs'];print([o['id'] for o in d if o['name']=='Del MRR Co'][0])")
+S=$(code -b "$J63" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":90}' "$B63/api/admin/orgs/$DEL_ORG63_PRE")
+check "63d: owner PATCHes Del's account billing amount → 90" 200 "$S"
+S=$(code -b "$J63" "$B63/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d=json.load(open('/tmp/body.json'))
+assert abs(d['clientMrr']-130)<0.001, d.get('clientMrr')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr = 130 (Del now counted at its ACCOUNT's 90 — org amount wins over the record's 80)"
+else FAIL=$((FAIL+1)); echo "  ✗ 63d: expected 130: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 S=$(code -b "$J63" "$B63/api/admin/orgs")
 DEL_ORG63=$(python3 -c "import json;d=json.load(open('/tmp/body.json'))['orgs'];print([o['id'] for o in d if o['name']=='Del MRR Co'][0])")
 S=$(code -b "$J63" -X DELETE "$B63/api/admin/orgs/$DEL_ORG63")
@@ -8321,9 +8371,9 @@ S=$(code -b "$J63" "$B63/api/dashboard")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d=json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+assert abs(d['clientMrr']-40)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr back to 400 — the deleted account's deal (800) no longer counts"
+then PASS=$((PASS+1)); echo "  ✓ 63d: clientMrr back to 40 — the deleted account's subscription (90) no longer counts"
 else FAIL=$((FAIL+1)); echo "  ✗ 63d: deleted account still inflating MRR: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 S=$(code -b "$J63" "$B63/api/clients?archived=1")
 if python3 - <<'PY' 2>"$PASS_TMP"
@@ -8347,9 +8397,9 @@ S=$(code -b "$J63" "$B63/api/dashboard")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 d=json.load(open('/tmp/body.json'))
-assert abs(d['clientMrr']-400)<0.001, d.get('clientMrr')
+assert abs(d['clientMrr']-40)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63e: clientMrr stays 400 — orphaned sold deal (700) NOT counted (KEY incident guard)"
+then PASS=$((PASS+1)); echo "  ✓ 63e: clientMrr stays 40 — orphaned sold subscription (123) NOT counted (KEY incident guard)"
 else FAIL=$((FAIL+1)); echo "  ✗ 63e: orphan inflated Sold MRR (the live bug): $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
 S=$(code -b "$J63" "$B63/api/clients?archived=1")
 if python3 - <<'PY' 2>"$PASS_TMP"
@@ -8383,7 +8433,11 @@ assert 'orphanedAccount?: boolean' in types, 'Client type must carry orphanedAcc
 assert 'orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id)' in api, 'server must compute orphanedAccount'
 assert 'AND (provisioned_org_id = 0' in api and 'IN (SELECT id FROM orgs' in api, 'clientMrr query must exclude orphaned records'
 assert "WHERE status != 'canceled'" in api, 'clientMrr query must also exclude INACTIVE (canceled) accounts (72)'
-print('  ✓ 63f: Finance MRR filter + server orphan guard present')
+# Owner 2026-08-28: the clientMrr query sums SUBSCRIPTION amounts, not deal_value.
+seg = api[api.index('Client MRR + account count'):api.index('resp.clientMrr')]
+assert 'deal_value' not in seg, 'clientMrr must not sum deal_value anymore (owner 2026-08-28)'
+assert 'monthly_subscription_amount' in seg and 'clients.monthly_amount' in seg, 'clientMrr must sum the linked account billing amount (fallback: the record monthly_amount)'
+print('  ✓ 63f: Finance MRR filter + server orphan guard + subscription-based Sold MRR present')
 PY
 then PASS=$((PASS+1)); echo "  ✓ 63f: source guards present"
 else FAIL=$((FAIL+1)); echo "  ✗ 63f: source guard missing"; cat "$PASS_TMP"; fi
@@ -9054,7 +9108,7 @@ rm -rf "$MOCK68" "$J68"
 # list or the active count. Foreign orgs are untouched.
 echo "== 69. Accounts-table cleanup + client-delete cascade (owner 2026-08-27) =="
 
-echo "-- 69a. Source guards: 12-column cleanup (password column removed, owner 2026-08-28), heading rename, Confirm buttons, sold-unbuilt deal value --"
+echo "-- 69a. Source guards: 11-column cleanup (password column removed owner 2026-08-28; Deal value column removed owner 2026-08-28), heading rename, Confirm buttons --"
 if python3 - <<'PY'
 acc = open('src/Accounts.tsx').read()
 modal = open('src/ConfirmDeleteModal.tsx').read()
@@ -9074,8 +9128,12 @@ for col in ['data-label="Account"', 'data-label="Package"', 'data-label="Status"
             'data-label="Phone"', 'data-label="Email"',
             'data-label="Members"', 'data-label="Client records"', 'data-label="Created"',
             'data-label="Subscription"', 'data-label="Billing cycle"',
-            'data-label="Deal value"', 'data-label="Actions"']:
+            'data-label="Actions"']:
     assert col in acc, col
+# Owner 2026-08-28: deal value has no real equation — the Deal value COLUMN is
+# gone from both account tables (active + inactive); the record's deal value
+# FIELD stays (Lead Opportunities needs it) but no money column shows it.
+assert 'data-label="Deal value"' not in acc, 'Deal value column must stay out of the accounts tables (owner 2026-08-28)' 
 assert 'cell-name' not in acc and 'cell-company' not in acc
 # the money-at-a-glance subscription value survives in its own column
 assert 'monthlySubscriptionAmount' in acc
@@ -9111,11 +9169,12 @@ for f in ['src/Tasks.tsx', 'src/Finance.tsx', 'src/Settings.tsx',
           'src/ClientsDirectory.tsx', 'src/Clients.tsx', 'src/StageEditor.tsx',
           'src/Accounts.tsx']:
     assert 'confirmLabel="' not in open(f).read(), f
-# (C) the sold-unbuilt rows carry the deal value
-assert 'money(c.dealValue)' in cd
+# (C) Owner 2026-08-28: the sold-unbuilt rows no longer carry a deal-value
+# money note either.
+assert 'money(c.dealValue)' not in cd, 'sold-unbuilt deal-value note must be gone (owner 2026-08-28)'
 print("ok")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 69a: table cleanup + 'Active client accounts' + Confirm buttons + sold-unbuilt deal value wired"
+then PASS=$((PASS+1)); echo "  ✓ 69a: table cleanup + 'Active client accounts' + Confirm buttons + deal-value money displays removed"
 else FAIL=$((FAIL+1)); echo "  ✗ 69a: source guards failed:"; cat "$PASS_TMP" 2>/dev/null; fi
 
 echo "-- 69b. Client-delete cascade: deleting an owner client removes its provisioned account (symmetric with admin org delete); foreign orgs untouched --"
@@ -9390,22 +9449,24 @@ assert c.get('paymentStatus') == 'none', c.get('paymentStatus')
 print("  ✓ soldStage true, tier unset, payment none — the row the hub lists")
 PY
 [ $? -eq 0 ] && PASS=$((PASS+1)) || { FAIL=$((FAIL+1)); echo "  ✗ 71b: hub-row assertions failed:"; cat "$PASS_TMP" 2>/dev/null; }
-# THE HUB EDIT: one PUT carrying exactly what the hub sends — tier + deal
-# value + subscription level (companyName/clientType required by the
-# validator). Server persists ONLY these keys (partial-update rule).
+# THE HUB EDIT: one PUT carrying exactly what the hub sends — tier +
+# subscription level (owner 2026-08-28: the hub no longer edits deal value;
+# companyName/clientType are required by the validator). Server persists ONLY
+# these keys (partial-update rule) — the record's deal value (5000) must
+# survive untouched.
 S=$(code -b "$JT71" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"Hub Deal Co","clientType":"commercial","tier":"tier2","dealValue":6000,"monthlyAmount":250}' "$BASE/api/clients/$HUB71")
-check "71b: hub PUT (tier2 + deal 6000 + subscription 250) → 200" 200 "$S"
+  -d '{"companyName":"Hub Deal Co","clientType":"commercial","tier":"tier2","monthlyAmount":250}' "$BASE/api/clients/$HUB71")
+check "71b: hub PUT (tier2 + subscription 250) → 200" 200 "$S"
 S=$(code -b "$JT71" "$BASE/api/clients/$HUB71")
 if python3 - <<'PY' 2>"$PASS_TMP"
 import json
 c = json.load(open('/tmp/body.json'))['client']
 assert c['tier'] == 'tier2', c.get('tier')
-assert c['dealValue'] == 6000, c.get('dealValue')
+assert c['dealValue'] == 5000, c.get('dealValue')
 assert c['monthlyAmount'] == 250, c.get('monthlyAmount')
 assert c['stage'] != '', c
 assert sorted(c['services']) == ['CRM', 'Website'], c.get('services')  # tier's auto tags merged
-print("  ✓ tier/subscription/deal value persisted via the hub path; tier tags merged; nothing else clobbered")
+print("  ✓ tier/subscription persisted via the hub path; deal value (5000) untouched by the hub; tier tags merged; nothing else clobbered")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 71b: hub edit persistence failed:"; cat "$PASS_TMP" 2>/dev/null; fi
 echo "-- 71c. The hub's payment-link action keeps its gates (409 unsigned → 503 no Stripe) --"
@@ -9515,7 +9576,7 @@ echo "-- 72e. Baseline (active): account in the active set, MRR 450, finance-act
 S=$(code -b "$J72" "$B72/api/dashboard")
 check "72e: dashboard → 200" 200 "$S"
 MRR72=$(python3 -c "import json;print(json.load(open('/tmp/body.json')).get('clientMrr'))")
-if [ "$MRR72" = "450" ]; then PASS=$((PASS+1)); echo "  ✓ 72e: dashboard Sold MRR = 450 (deal value of the active sold deal)"; else FAIL=$((FAIL+1)); echo "  ✗ 72e: Sold MRR baseline: got $MRR72"; fi
+if [ "$MRR72" = "45" ]; then PASS=$((PASS+1)); echo "  ✓ 72e: dashboard Sold MRR = 45 (monthly subscription of the active sold client — deal value 450 ignored)"; else FAIL=$((FAIL+1)); echo "  ✗ 72e: Sold MRR baseline: got $MRR72"; fi
 S=$(code -b "$J72" "$B72/api/clients?archived=1")
 check "72e: owner clients → 200" 200 "$S"
 if python3 - "$C72" <<'PY' 2>"$PASS_TMP"
@@ -9617,7 +9678,7 @@ check "72h: tenant login after restore → 200" 200 "$S"
 check "72h: tenant session works again → 200" 200 $(code -b "$JT72B" "$B72/api/clients")
 S=$(code -b "$J72" "$B72/api/dashboard")
 MRR72=$(python3 -c "import json;print(json.load(open('/tmp/body.json')).get('clientMrr'))")
-if [ "$MRR72" = "450" ]; then PASS=$((PASS+1)); echo "  ✓ 72h: dashboard Sold MRR back to 450 after restore"; else FAIL=$((FAIL+1)); echo "  ✗ 72h: Sold MRR after restore: got $MRR72"; fi
+if [ "$MRR72" = "45" ]; then PASS=$((PASS+1)); echo "  ✓ 72h: dashboard Sold MRR back to 45 after restore"; else FAIL=$((FAIL+1)); echo "  ✗ 72h: Sold MRR after restore: got $MRR72"; fi
 S=$(code -b "$J72" "$B72/api/clients?archived=1")
 if python3 - "$C72" <<'PY' 2>"$PASS_TMP"
 import json, sys
