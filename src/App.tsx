@@ -352,25 +352,13 @@ export default function App() {
   return (
     <div className={isOwnerOrg ? "app owner-workspace" : "app"} style={accentStyle}>
       <PiiContext.Provider value={piiHidden}>
+        {/* Owner 2026-08-28 — nav moved to a LEFT SIDEBAR ("Put the
+            navigation menu on the left side of the screen"). .shell is a
+            row: the sticky .nav sidebar on the left, .content (impersonate
+            banner + main + footer) flowing to its right. Same tabs, same
+            controls — only their position changed. */}
+        <div className="shell">
         <header className="nav">
-        {impersonating && (
-          <div className="impersonate-banner" role="status" aria-label="Impersonation notice">
-            <span className="impersonate-icon" aria-hidden="true">
-              ⚠
-            </span>
-            <span className="impersonate-text">
-              Viewing as <strong>{orgName || "tenant"}</strong> — you are inside this client's
-              workspace. Everything you see is exactly what they see.
-            </span>
-            <button
-              className="btn btn-sm impersonate-return"
-              onClick={handleImpersonateReturn}
-              disabled={returning}
-            >
-              {returning ? "Returning…" : "Return to my dashboard"}
-            </button>
-          </div>
-        )}
         <div className="nav-inner">
           <button className="brand" onClick={() => setView("dashboard")} aria-label="Go to dashboard">
             <span className="brand-mark">{brandMark}</span>
@@ -560,6 +548,25 @@ export default function App() {
           </div>
         </div>
       </header>
+      <div className="content">
+        {impersonating && (
+          <div className="impersonate-banner" role="status" aria-label="Impersonation notice">
+            <span className="impersonate-icon" aria-hidden="true">
+              ⚠
+            </span>
+            <span className="impersonate-text">
+              Viewing as <strong>{orgName || "tenant"}</strong> — you are inside this client's
+              workspace. Everything you see is exactly what they see.
+            </span>
+            <button
+              className="btn btn-sm impersonate-return"
+              onClick={handleImpersonateReturn}
+              disabled={returning}
+            >
+              {returning ? "Returning…" : "Return to my dashboard"}
+            </button>
+          </div>
+        )}
       <main className="main">
         {effectiveView === "dashboard" ? (
           <Dashboard
@@ -636,6 +643,8 @@ export default function App() {
       <footer className="foot">
         {(orgName || "Revzenta") + " CRM"} · product build · v0.1
       </footer>
+      </div>
+      </div>
       </PiiContext.Provider>
     </div>
   );
