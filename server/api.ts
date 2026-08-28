@@ -3254,13 +3254,10 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     /* Owner request 2026-08-14/15 — MRR + vertical revenue dashboards.
        Two distinct workspaces, one endpoint:
          OWNER (role=admin): clientMrr = SUM of the OWNER's own client
-           records' deal values (clients.deal_value) in the terminal/last
-           pipeline stage ("Sold" for the owner — positionally detected,
-           renamed-safe), excluding lost and archived records — the total
-           for paying clients sold. orgCount = client-account count for the
-           "+ New client" total. The per-account billing amount
-           (orgs.monthly_subscription_amount) is Phase 5 billing prep only
-           and does NOT feed MRR (owner direction 2026-08-15).
+           records' MONTHLY SUBSCRIPTION amounts over actively-sold,
+           agreement-SIGNED records (owner 2026-08-28, details in the
+           dedicated block below). orgCount = client-account count for the
+           "+ New client" total.
          ANY ORG: its OWN business money — salesThisMonth = SUM of this
            org's invoices dated in the current calendar month (due_date,
            the settable date; invoices without a date never count),
@@ -3350,12 +3347,16 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     // Client-accounts money view: the linked account's
     // orgs.monthly_subscription_amount (provisioned_org_id join) when the
     // account carries one, falling back to the client record's own
-    // monthly_amount when it does not. Same actively-sold population as
-    // before: terminal (last/"Sold") pipeline stage, not lost, not archived,
-    // NOT orphaned and NOT canceled — but deliberately WITHOUT the Finance
-    // tab's stricter signed-agreement + payment-received gates (this card is
-    // "clients subscribed to do business"; Finance MRR stays money under
-    // contract — the two cards remain distinct).
+    // monthly_amount when it does not. Owner refinement 2026-08-28 ("Sold
+    // MRR is the total number of clients who have went through all stages
+    // of life and have agreed to everything and now they are an active
+    // client"): the population is actively-sold clients who have SIGNED
+    // their agreement ("agreed to everything") and are now active —
+    // terminal (last/"Sold") pipeline stage, agreement_status = 'signed',
+    // not lost, not archived, NOT orphaned and NOT canceled. Still NO
+    // payment-received gate — that remains what distinguishes this card
+    // from the Finance tab's stricter Subscription MRR (signed AND paid);
+    // the two cards stay distinct.
     if (isOwnerSession(auth)) {
       const mrrOrg = getOrg(orgId);
       const mrrStages = mrrOrg ? parseStages(mrrOrg.stages) : [...DEFAULT_STAGES];
@@ -3375,6 +3376,10 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
                  END), 0) AS v FROM clients
                WHERE org_id = ? AND lost = 0 AND archived = 0
                  AND LOWER(TRIM(stage)) = LOWER(TRIM(?))
+                 -- Owner 2026-08-28 refinement ("agreed to everything"):
+                 -- only a client whose agreement is SIGNED counts as sold;
+                 -- no payment-received gate (that stays Finance-only).
+                 AND agreement_status = 'signed'
                  -- Owner 2026-08-26 incident guard: a sold client whose
                  -- account (org) no longer exists must NOT count toward Sold
                  -- MRR. Only a genuinely active sold subscription contributes.
