@@ -1743,8 +1743,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             stage picker — and the owner Leads tab has no
                             Stage column at all. */}
                         <div className="stage-cell">
-                          <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
-                          {!ownerOnboardingTab && canEdit && (
+                          {/* Owner live-test 2026-08-28 — even-spacing pass:
+                              the badge and the picker showed the SAME stage
+                              name stacked in one cell (data rendered twice).
+                              Editable rows now show ONLY the picker (the
+                              selected option is the stage display); read-only
+                              rows and the owner's Onboarding tab keep the
+                              badge alone (PR #53 behavior preserved). */}
+                          {!ownerOnboardingTab && canEdit ? (
                             <select
                               className="stage-select"
                               value={c.stage}
@@ -1758,6 +1764,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                                 </option>
                               ))}
                             </select>
+                          ) : (
+                            <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
                           )}
                         </div>
                       </td>
