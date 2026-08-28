@@ -4469,10 +4469,13 @@ if grep -Fq 'const visibleOrgs = orgs' src/Accounts.tsx && grep -Fq 'o.id !== ow
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Accounts owner-org filter missing from src/Accounts.tsx"
 fi
-if grep -Fq 'visibleOrgs.length' src/Accounts.tsx && grep -Fq 'visibleOrgs.length === 0' src/Accounts.tsx && grep -Fq 'visibleOrgs.map' src/Accounts.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: filtered list drives the workspaces count, empty state and table rows"
+# Owner 2026-08-27 (Inactive clients, cb1c9700): the list SPLIT — activeOrgs
+# drives the "Active client accounts" count/empty/rows and inactiveOrgs drives
+# the separate "Inactive clients" window under it.
+if grep -Fq 'activeOrgs.length' src/Accounts.tsx && grep -Fq 'activeOrgs.length === 0' src/Accounts.tsx && grep -Fq 'activeOrgs.map' src/Accounts.tsx && grep -Fq 'inactiveOrgs.map' src/Accounts.tsx && ! grep -Fq 'visibleOrgs.map' src/Accounts.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: active/inactive split drives the counts, empty states and both table rows"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: visibleOrgs not wired to count/empty/rows in src/Accounts.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: active/inactive split not wired to count/empty/rows in src/Accounts.tsx"
 fi
 if ! grep -Fq 'chip-owner' src/Accounts.tsx && ! grep -Fq 'The owner workspace cannot be deleted' src/Accounts.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: owner-row chip + owner-row billing/action branches removed (row itself filtered out)"
@@ -8357,7 +8360,8 @@ api=open('server/api.ts').read()
 assert '!c.orphanedAccount' in fin, 'Finance active filter must exclude orphanedAccount'
 assert 'orphanedAccount?: boolean' in types, 'Client type must carry orphanedAccount'
 assert 'orphanedAccount: row.provisioned_org_id !== 0 && !getOrg(row.provisioned_org_id)' in api, 'server must compute orphanedAccount'
-assert 'AND (provisioned_org_id = 0' in api and 'IN (SELECT id FROM orgs)' in api, 'clientMrr query must exclude orphaned records'
+assert 'AND (provisioned_org_id = 0' in api and 'IN (SELECT id FROM orgs' in api, 'clientMrr query must exclude orphaned records'
+assert "WHERE status != 'canceled'" in api, 'clientMrr query must also exclude INACTIVE (canceled) accounts (72)'
 print('  ✓ 63f: Finance MRR filter + server orphan guard present')
 PY
 then PASS=$((PASS+1)); echo "  ✓ 63f: source guards present"
@@ -9415,7 +9419,9 @@ J72=$(mktemp)
 S=$(code -c "$J72" -b "$J72" -X POST -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B72/api/auth/login")
 check "72a: owner login → 200" 200 "$S"
-OWNER_ORG72=$(python3 -c "import json;print(json.load(open('/tmp/body.json')).get('orgId',0))")
+# The owner org id: /api/auth/me (user.orgId) — the login body nests it too.
+code -b "$J72" "$B72/api/auth/me" > /dev/null
+OWNER_ORG72=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['user']['orgId'])")
 code -b "$J72" "$B72/api/settings" > /dev/null
 TERM72=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[-1])")
 
@@ -9512,8 +9518,11 @@ oid, cid = int(sys.argv[1]), int(sys.argv[2])
 o = [x for x in json.load(open('/tmp/body.json'))['orgs'] if x['id'] == oid][0]
 assert o['status'] == 'canceled', o
 assert o.get('canceledAt') and o.get('retentionUntil'), o
-# RETENTION: the account stays listed with its data intact (own window, not gone)
-assert o['clientCount'] >= 1, f"data lost on cancel: {o}"
+# RETENTION: the account stays listed with its users + login intact (own
+# window, not gone). A provisioned org starts with no client records of its
+# own (the sold record lives in the OWNER org, linked) — the retained data
+# proof is the org row itself + its member account.
+assert o['userCount'] >= 1, f"users lost on cancel: {o}"
 assert o.get('loginEmail'), f"login retained: {o}"
 print("  ✓ 72f: account STILL listed (retained) as canceled with data + retention stamps — moves to the Inactive clients window, not deleted")
 PY
@@ -9612,8 +9621,10 @@ assert 'activeOrgs.map' in acc and 'inactiveOrgs.map' in acc, 'both tables must 
 assert 'visibleOrgs.map' not in acc, 'the active table must NOT render the mixed list'
 assert 'Mark inactive' in acc, 'missing the mark-inactive action on active rows'
 assert 'adminCancelOrg' in acc and 'adminRestoreOrg' in acc, 'missing the lifecycle API calls'
-# The old canceled chip must not leak back into the ACTIVE table rows.
-active_sec = acc[:acc.index('Inactive clients</h3>')]
+# The old canceled chip must not leak back into the ACTIVE table rows —
+# slice BETWEEN the two window headings (the split constants above the JSX
+# legitimately mention the status).
+active_sec = acc[acc.index('Active client accounts</h3>'):acc.index('Inactive clients</h3>')]
 assert 'o.status === "canceled"' not in active_sec, 'active table must not special-case canceled rows'
 api = open('src/api.ts').read()
 assert '/cancel' in api and '/restore' in api, 'missing the admin lifecycle endpoints in the api client'
