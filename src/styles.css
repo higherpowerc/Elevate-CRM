@@ -1068,6 +1068,48 @@ legend.field-label {
   border-bottom: 1px solid rgba(36, 26, 4, 0.25);
 }
 
+/* ── Wide monitors: use the screen (owner 2026-08-28) ──────────
+   The chrome was pinned to a hard 1180px centered column, so on the
+   owner's 34" curved monitor (2560x1440 / 3440x1440) every page — and
+   the 12-tab top menu above it — stayed narrow and the menu overflowed
+   into a horizontal scroll. The app chrome (.nav-inner / .main /
+   .impersonate-banner) now grows with the viewport in steps, still
+   hard-capped so text lines never get absurd:
+     < 1440px  -> 1180px  (unchanged — laptops/small desktops, tenant
+                           navs pixel-identical, internal-scroll menu
+                           fallback intact)
+     >= 1440px -> 1480px
+     >= 1920px -> 1840px  (full-size 1080p monitors: the owner's 12-tab
+                           menu fits without internal scrolling)
+     >= 2560px -> 2160px  (2K + 34" curved/ultra-wide: the layout and
+                           menu use the screen; tables spread out)
+   Width only — tab styling, gaps, and the owner/tenant scoping of the
+   2026-08-15/08-28 sweeps are untouched. Placed after the banner rule
+   so it wins the cascade for all three selectors. */
+@media (min-width: 1440px) {
+  .nav-inner,
+  .main,
+  .impersonate-banner {
+    max-width: 1480px;
+  }
+}
+
+@media (min-width: 1920px) {
+  .nav-inner,
+  .main,
+  .impersonate-banner {
+    max-width: 1840px;
+  }
+}
+
+@media (min-width: 2560px) {
+  .nav-inner,
+  .main,
+  .impersonate-banner {
+    max-width: 2160px;
+  }
+}
+
 .impersonate-icon {
   font-size: 15px;
   line-height: 1;
