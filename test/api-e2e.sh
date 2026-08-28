@@ -4346,13 +4346,24 @@ if [ -n "$NEWEST_JS40" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: tenant stage-breakdown card or View deep-link missing from $NEWEST_JS40"
   fi
-  # Five owner card labels ship in the bundle. 'Projected pipeline' appears
-  # exactly TWICE (owner card + tenant KPI card — one each, no owner
-  # duplicate); the owner-only labels appear exactly ONCE.
-  if [ "$(grep -oF 'Projected pipeline' "$NEWEST_JS40" | wc -l)" = "2" ]; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: 'Projected pipeline' exactly twice (owner card + tenant KPI) — no duplicate owner card"
+  # Five owner card labels ship in the bundle. 'Projected pipeline' now
+  # appears exactly ONCE (tenant KPI card only — owner direction 2026-08-28
+  # renamed the owner card to 'Lead Opportunities', which ships exactly ONCE
+  # in the owner branch; no owner duplicate).
+  if [ "$(grep -oF 'Projected pipeline' "$NEWEST_JS40" | wc -l)" = "1" ]; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: 'Projected pipeline' exactly once (tenant KPI card — owner card renamed)"
   else
-    FAIL=$((FAIL+1)); echo "  ✗ bundle: 'Projected pipeline' count != 2 in $NEWEST_JS40"
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: 'Projected pipeline' count != 1 in $NEWEST_JS40"
+  fi
+  if [ "$(grep -oF 'Lead Opportunities' "$NEWEST_JS40" | wc -l)" = "1" ]; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner card renamed to 'Lead Opportunities' (exactly once)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: 'Lead Opportunities' count != 1 in $NEWEST_JS40"
+  fi
+  if grep -Fq 'Total deal value of active leads · not revenue' "$NEWEST_JS40"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: Lead Opportunities note ships (active-leads basis)"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ bundle: Lead Opportunities note missing from $NEWEST_JS40"
   fi
   # 'Sold MRR' and 'Active leads' ship only in the owner branch (the tenant
   # branch says 'Active clients'), so they must appear exactly once each.
@@ -4396,7 +4407,13 @@ assert 'pipeline-row' not in owner_branch, 'old pipeline-row rows must be gone'
 # Five labels, each exactly once — no figure label repeats. 'Sold' and
 # 'Onboarding' are asserted as their rendered labels to avoid matching the
 # 'Sold MRR' label / 'Onboarding pipeline' aria substring.
-assert owner_branch.count('Projected pipeline') == 1, 'Projected pipeline label must appear exactly once'
+# Owner direction 2026-08-28: the owner money card is 'Lead Opportunities'
+# (exactly once) — the old 'Projected pipeline' label must be GONE from the
+# owner branch (it remains on the tenant card, outside this slice).
+assert owner_branch.count('Lead Opportunities') == 1, 'Lead Opportunities label must appear exactly once'
+assert owner_branch.count('Projected pipeline') == 0, 'owner card must NOT still say Projected pipeline (renamed Lead Opportunities)'
+assert '{leadOppNote}' in owner_branch, 'Lead Opportunities card must render the leadOppNote note'
+assert 'Total deal value of active leads · not revenue' in src, 'owner note must state the active-leads basis'
 assert owner_branch.count('Sold MRR') == 1, 'Sold MRR label must appear exactly once'
 assert owner_branch.count('>Onboarding<') == 1, 'Onboarding label must appear exactly once'
 assert owner_branch.count('>Sold<') == 1, 'Sold label must appear exactly once'
@@ -9659,6 +9676,118 @@ else FAIL=$((FAIL+1)); echo "  ✗ 72j: source guards failed:"; cat "$PASS_TMP" 
 stop_crm "$MOCK72/srv.pid"; sleep 0.3
 rm -rf "$MOCK72" "$JT72" "$JT72B"
 echo "  ✓ 72: inactive-clients window verified"
+echo "== 73. Lead Opportunities KPI = ACTIVE-lead deal value only (owner direction 2026-08-28) =="
+# The owner Dashboard money card was renamed "Projected pipeline" ->
+# "Lead Opportunities" and now must equal the total deal value of ACTIVE
+# leads — the exact Active-bin definition from the owner's Leads view: not
+# lost, not archived, and demoOutcome != 'maybe' (maybe leads live in their
+# own Maybe bin). The pre-fix bug: the owner's first-stage projected sum
+# excluded lost + archived but NOT 'maybe', so a Maybe-level deal value
+# ($3,000) surfaced on the card while the Active bin looked empty. This
+# section LOCKS the parity on a throwaway owner server (fresh DB), mirroring
+# the §63 pattern: one active + one maybe + one lost + one archived lead, all
+# in the FIRST stage, each with its own deal value — the card may show ONLY
+# the active lead's value. The tenant all-stage sum is asserted unchanged in
+# §16f2 (this section is owner-only, like the server change).
+MOCK73=$(mktemp -d)
+start_crm 3034 "$MOCK73/db" "$MOCK73/srv.log" "$MOCK73/srv.pid" -u STRIPE_SECRET_KEY -u STRIPE_WEBHOOK_SECRET -u RESEND_API_KEY -u RESEND_URL -u TEST_EMAIL_TO
+B73=http://localhost:3034
+J73=$(mktemp)
+S=$(code -c "$J73" -b "$J73" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$B73/api/auth/login")
+check "73a: owner login → 200" 200 "$S"
+S=$(code -b "$J73" "$B73/api/settings")
+check "73a: owner settings → 200" 200 "$S"
+FIRST73=$(python3 -c "import json;s=json.load(open('/tmp/body.json'))['settings']['stages'];print(s[0])")
+echo "     (owner first pipeline stage=\"$FIRST73\")"
+echo "-- 73a. Empty active bin → the card is \$0 --"
+S=$(code -b "$J73" "$B73/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert abs(d['projectedPipeline']) < 0.001, d.get('projectedPipeline')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 73a: Lead Opportunities = 0 on a fresh book (empty active bin ⇒ \$0)"
+else FAIL=$((FAIL+1)); echo "  ✗ 73a: projectedPipeline != 0 on fresh DB: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 73b. Active + maybe + lost + archived leads planted in the FIRST stage --"
+S=$(code -b "$J73" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Active Lead Co\",\"clientType\":\"commercial\",\"dealValue\":4321,\"stage\":\"$FIRST73\"}" "$B73/api/clients")
+check "73b: create ACTIVE lead (deal 4321) → 201" 201 "$S"
+ACT73=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J73" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Maybe Lead Co\",\"clientType\":\"commercial\",\"dealValue\":3000,\"stage\":\"$FIRST73\"}" "$B73/api/clients")
+check "73b: create MAYBE lead (deal 3000) → 201" 201 "$S"
+MAY73=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J73" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Maybe Lead Co\",\"clientType\":\"commercial\",\"dealValue\":3000,\"stage\":\"$FIRST73\",\"demoOutcome\":\"maybe\"}" "$B73/api/clients/$MAY73")
+check "73b: mark the lead maybe → 200" 200 "$S"
+S=$(code -b "$J73" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Lost Lead Co\",\"clientType\":\"commercial\",\"dealValue\":9999,\"stage\":\"$FIRST73\"}" "$B73/api/clients")
+check "73b: create LOST lead (deal 9999) → 201" 201 "$S"
+LOST73=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J73" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Lost Lead Co\",\"clientType\":\"commercial\",\"dealValue\":9999,\"stage\":\"$FIRST73\",\"lost\":true}" "$B73/api/clients/$LOST73")
+check "73b: mark the lead lost → 200" 200 "$S"
+S=$(code -b "$J73" -X POST -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Archived Lead Co\",\"clientType\":\"commercial\",\"dealValue\":777,\"stage\":\"$FIRST73\"}" "$B73/api/clients")
+check "73b: create ARCHIVED lead (deal 777) → 201" 201 "$S"
+ARCH73=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$J73" -X PUT -H 'Content-Type: application/json' \
+  -d "{\"companyName\":\"Archived Lead Co\",\"clientType\":\"commercial\",\"dealValue\":777,\"stage\":\"$FIRST73\",\"archived\":true}" "$B73/api/clients/$ARCH73")
+check "73b: archive the lead → 200" 200 "$S"
+echo "-- 73c. The card counts ONLY the active lead's deal value --"
+S=$(code -b "$J73" "$B73/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+# ONLY the active lead's 4321 counts — the maybe 3000, lost 9999 and
+# archived 777 deal values must ALL be excluded (the pre-fix bug let the
+# maybe lead's value through).
+assert abs(d['projectedPipeline'] - 4321) < 0.001, d.get('projectedPipeline')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 73c: Lead Opportunities = 4321 — maybe (3000) / lost (9999) / archived (777) excluded"
+else FAIL=$((FAIL+1)); echo "  ✗ 73c: projectedPipeline != 4321: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 73d. Bin parity: the maybe lead lives in the Maybe bin, NOT in Active --"
+S=$(code -b "$J73" "$B73/api/clients")
+if FIRST73="$FIRST73" python3 - <<'PY' 2>"$PASS_TMP"
+import json, os
+first = os.environ['FIRST73']
+body = json.load(open('/tmp/body.json'))
+clients = body['clients'] if isinstance(body, dict) else body
+by = {c['companyName']: c for c in clients}
+m = by['Maybe Lead Co']; a = by['Active Lead Co']
+assert m['demoOutcome'] == 'maybe' and m['stage'] == first and not m['lost'] and not m['archived'], m
+assert a['demoOutcome'] != 'maybe' and a['stage'] == first and not a['lost'] and not a['archived'], a
+# Mirror the Leads-view bin predicates (source-locked in §62): the Maybe bin
+# is demoOutcome === 'maybe' (in stage scope, not lost/archived); the Active
+# bin is the same predicate AND demoOutcome != 'maybe'.
+def in_maybe(c):
+    return c['demoOutcome'] == 'maybe' and c['stage'] == first and not c['lost'] and not c['archived']
+def in_active(c):
+    return c['stage'] == first and not c['lost'] and not c['archived'] and c['demoOutcome'] != 'maybe'
+assert in_maybe(m), 'maybe lead must satisfy the Maybe-bin predicate'
+assert not in_active(m), 'maybe lead must NOT satisfy the Active-bin predicate'
+assert in_active(a), 'active lead must satisfy the Active-bin predicate'
+assert not in_maybe(a), 'active lead must not land in the Maybe bin'
+print('  maybe lead: demoOutcome=maybe -> Maybe bin; Active-bin predicate (not lost, not archived, demoOutcome != maybe) rejects it')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 73d: maybe lead is Maybe-bin-only (Active-bin predicate rejects it); active lead is Active-bin"
+else FAIL=$((FAIL+1)); echo "  ✗ 73d: bin parity failed: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 73e. Clearing the maybe outcome puts the lead's value BACK on the card --"
+S=$(code -b "$J73" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"Maybe Lead Co","clientType":"commercial","demoOutcome":""}' "$B73/api/clients/$MAY73")
+check "73e: clear the maybe outcome → 200" 200 "$S"
+S=$(code -b "$J73" "$B73/api/dashboard")
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert abs(d['projectedPipeline'] - (4321 + 3000)) < 0.001, d.get('projectedPipeline')
+PY
+then PASS=$((PASS+1)); echo "  ✓ 73e: after clearing, the lead is active again → 7321 (4321 + 3000)"
+else FAIL=$((FAIL+1)); echo "  ✗ 73e: projectedPipeline != 7321: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+stop_crm "$MOCK73/srv.pid"; sleep 0.3
+rm -rf "$MOCK73" "$J73"
+echo "  ✓ 73: Lead Opportunities = active-lead deal value only (maybe/lost/archived excluded)"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

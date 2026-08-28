@@ -193,15 +193,15 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
      the visible wording differs. */
   const bookWord = ownerOrg ? "lead" : "client";
   const activeKpi = ownerOrg ? "Active leads" : "Active clients";
-  /* Owner direction 2026-08-15 (clarified twice) — the owner's Projected
-     pipeline KPI is the FIRST pipeline stage's deal-value sum only (their
-     prospects bucket), so the note names that stage (positional +
-     rename-safe). Client accounts keep the all-stage wording. */
-  const pipelineNote = ownerOrg
-    ? stages.length > 0
-      ? `Sum of deal values · ${stages[0]} stage only — not revenue`
-      : "Sum of deal values · Leads stage only — not revenue"
-    : "Sum of deal values · active clients only — not revenue";
+  /* Owner direction 2026-08-28 — the owner's pipeline money card is renamed
+     "Lead Opportunities" and now equals the ACTIVE-leads deal-value sum: the
+     exact Active-bin definition from the owner's Leads view (not lost, not
+     archived, not 'maybe' — the server mirrors that predicate on the
+     projectedPipeline field), so the note names active leads. Client
+     accounts keep their "Projected pipeline" card + all-stage wording
+     unchanged (owner direction: rename the OWNER card only). */
+  const leadOppNote = "Total deal value of active leads · not revenue";
+  const pipelineNote = "Sum of deal values · active clients only — not revenue";
   const lastStageNote = lastStage
     ? ownerOrg
       ? `Leads in "${lastStage}" — your last pipeline stage`
@@ -283,10 +283,12 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
 
       {/* Owner direction 2026-08-15 (refined again during live test) — the
           OWNER's Dashboard shows the pipeline exactly ONCE: a six-card KPI
-          row (Projected pipeline + Sold MRR money figures with the
+          row (Lead Opportunities + Sold MRR money figures with the
           privacy-eye toggle, then the three bucket counts — Active leads with
           a Leads deep-link, Onboarding with an Onboarding deep-link, Sold,
-          Lost).
+          Lost). Owner direction 2026-08-28: the owner money card is renamed
+          "Lead Opportunities" and shows the ACTIVE-leads deal-value sum
+          (maybe leads excluded — they live in the Maybe bin).
           The old duplicate KPI cards, the five-row single card, and the
           per-stage grid are GONE — no pipeline figure appears twice anywhere
           on the owner's page. TENANT dashboards keep their KPI row (own money
@@ -296,7 +298,7 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
         <div className="kpi-row">
           <div className="card kpi">
             <span className="kpi-label kpi-label-row">
-              Projected pipeline
+              Lead Opportunities
               <button
                 type="button"
                 className="eye-btn"
@@ -309,7 +311,7 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
               </button>
             </span>
             <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
-            <span className="kpi-note">{pipelineNote}</span>
+            <span className="kpi-note">{leadOppNote}</span>
           </div>
           <div className="card kpi">
             <span className="kpi-label kpi-label-row">

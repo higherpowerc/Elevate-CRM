@@ -3186,7 +3186,14 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
        hardcoded "Leads" string (the owner can rename stages). The existing
        lost + archived exclusions are kept exactly. Client accounts
        (role=member) keep their own all-stage sum — for them projectedPipeline
-       is their whole book's money, unchanged. */
+       is their whole book's money, unchanged.
+       Owner direction 2026-08-28 — the owner card is renamed "Lead
+       Opportunities" and its value is the total deal value of ACTIVE leads:
+       the exact Active-bin definition from the owner's Leads view (not lost,
+       not archived, AND demo_outcome != 'maybe' — maybe leads live in their
+       own Maybe bin, so a Maybe-level deal value must never surface here
+       while the Active bin looks empty). demo_outcome is NOT NULL DEFAULT ''
+       (server/db.ts), so the plain != comparison is NULL-safe. */
     let projected = value.v;
     if (isOwnerSession(auth)) {
       const firstStage = orgStages.length > 0 ? orgStages[0] : "";
@@ -3195,6 +3202,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
             .query(
               `SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients
                WHERE org_id = ? AND lost = 0 AND archived = 0
+                 AND demo_outcome != 'maybe'
                  AND LOWER(TRIM(stage)) = LOWER(TRIM(?))`,
             )
             .get(orgId, firstStage) as { v: number }).v
