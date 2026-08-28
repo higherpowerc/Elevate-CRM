@@ -328,7 +328,7 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
               </button>
             </span>
             <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.clientMrr ?? 0)}</span>
-            <span className="kpi-note">Deal value of sold clients — records in your last pipeline stage</span>
+            <span className="kpi-note">Monthly subscriptions of sold clients — records in your last pipeline stage</span>
           </div>
           <div className="card kpi">
             <span className="kpi-label">{activeKpi}</span>

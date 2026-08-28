@@ -41,7 +41,7 @@ function generatePassword(): string {
  *  Owner 2026-08-27 table cleanup: EVERY data point owns a dedicated,
  *  clearly-labeled column — Account | Package | Status | Phone | Email |
  *  Members | Client records | Created | Subscription | Billing cycle |
- *  Deal value | Actions. Owner 2026-08-28 privacy fix: the PASSWORD column
+ *  Actions. Owner 2026-08-28 privacy fix: the PASSWORD column
  *  is GONE — a client's password is private to the client, so it is never
  *  shown persistently in the table. Passwords stay available ONLY through
  *  the one-time handoff flows: the post-creation temp-password modal and
@@ -61,7 +61,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   /** Owner request 2026-08-26 (carried through the 2026-08-27 table cleanup)
    *  — the linked owner-org client record per org id, joined via
-   *  client.provisionedOrgId === org.id. Drives the Phone / Deal value
+   *  client.provisionedOrgId === org.id. Drives the Phone
    *  columns and the Edit-account modal (prefill + PUT target). Owner-only by
    *  construction: /api/clients is org-scoped and Accounts is rendered in the
    *  owner's workspace. */
@@ -135,10 +135,12 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
       const [{ orgs }, { clients }] = await Promise.all([api.adminOrgs(), api.clients(true)]);
       setOrgs(orgs);
       // Join each account (org) to its linked client via provisionedOrgId.
-      // Owner 2026-08-27 — this single join feeds the Phone / Deal value
-      // columns AND the Edit-account modal (id to PUT, companyName / phone /
-      // dealValue to prefill, email for the agreement). Missing/never
-      // auto-provisioned links simply stay unset and render "—".
+      // Owner 2026-08-27 — this single join feeds the Phone column AND the
+      // Edit-account modal (id to PUT, companyName / phone / dealValue to
+      // prefill, email for the agreement). Owner 2026-08-28: deal value has no
+      // real equation — the table's Deal value COLUMN is gone (the record's
+      // deal value field itself stays; it feeds Lead Opportunities).
+      // Missing/never auto-provisioned links simply stay unset and render "—".
       const byOrg: Record<number, Client> = {};
       for (const c of clients) {
         if (c.provisionedOrgId) {
@@ -605,9 +607,11 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
             <table className="table accounts-table">
               {/* Owner 2026-08-27 table cleanup — EVERY data point owns a
     clearly-labeled column and nothing truncates (scoped .accounts-table CSS;
-    other .table users keep the shared .cell-* ellipsis). TWELVE columns:
+    other .table users keep the shared .cell-* ellipsis). ELEVEN columns:
     Account | Package | Status | Phone | Email | Members | Client
-    records | Created | Subscription | Billing cycle | Deal value | Actions.
+    records | Created | Subscription | Billing cycle | Actions.
+    Owner 2026-08-28: the Deal value column is REMOVED — deal value has no
+    real equation, so owner money figures are subscription-based only.
     Owner 2026-08-28 privacy fix: the PASSWORD column was REMOVED — a
     client's password is private to the client and must not sit in the
     owner's table; it is surfaced ONLY one-time (post-creation temp-password
@@ -630,14 +634,13 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                   <th>Created</th>
                   <th className="num">Subscription</th>
                   <th>Billing cycle</th>
-                  <th className="num">Deal value</th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {activeOrgs.map((o) => {
                   /* The linked owner-org client record (provisionedOrgId join)
-                     — feeds the Phone and Deal value columns. */
+                     — feeds the Phone column. */
                   const linked = clientByOrg[o.id];
                   return (
                     <tr key={o.id}>
@@ -750,13 +753,6 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           </span>
                         )}
                       </td>
-                      <td className="num" data-label="Deal value">
-                        {linked?.dealValue ? (
-                          money(linked.dealValue)
-                        ) : (
-                          <span className="acc-muted">&mdash;</span>
-                        )}
-                      </td>
                       <td data-label="Actions">
                         <div className="row-actions">
                           <button
@@ -857,7 +853,6 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                 <th>Members</th>
                 <th className="num">Client records</th>
                 <th className="num">Subscription</th>
-                <th className="num">Deal value</th>
                 <th>Canceled</th>
                 <th>Data retained until</th>
                 <th className="actions-th">Actions</th>
@@ -906,13 +901,6 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                     <td className="num" data-label="Subscription" title="Monthly subscription value">
                       {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
                         `${money(o.monthlySubscriptionAmount)}/mo`
-                      ) : (
-                        <span className="acc-muted">&mdash;</span>
-                      )}
-                    </td>
-                    <td className="num" data-label="Deal value">
-                      {linked?.dealValue ? (
-                        money(linked.dealValue)
                       ) : (
                         <span className="acc-muted">&mdash;</span>
                       )}
