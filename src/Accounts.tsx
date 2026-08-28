@@ -40,10 +40,15 @@ function generatePassword(): string {
  *
  *  Owner 2026-08-27 table cleanup: EVERY data point owns a dedicated,
  *  clearly-labeled column — Account | Package | Status | Phone | Email |
- *  Password | Members | Client records | Created | Subscription | Billing
- *  cycle | Deal value | Actions. Nothing truncates: names, emails and
- *  passwords wrap fully (scoped `.accounts-table` CSS — other .table users
- *  keep the shared .cell-* ellipsis behavior). Live-test fix (owner
+ *  Members | Client records | Created | Subscription | Billing cycle |
+ *  Deal value | Actions. Owner 2026-08-28 privacy fix: the PASSWORD column
+ *  is GONE — a client's password is private to the client, so it is never
+ *  shown persistently in the table. Passwords stay available ONLY through
+ *  the one-time handoff flows: the post-creation temp-password modal and
+ *  the per-row "Reset password" action (each surfaces the temp password in
+ *  a modal, once, when the owner explicitly triggers it). Nothing
+ *  truncates: names and emails wrap fully (scoped `.accounts-table` CSS —
+ *  other .table users keep the shared .cell-* ellipsis behavior). Live-test fix (owner
  *  2026-08-27): the fixed colgroup made cells paint over their neighbours
  *  (nowrap chips, non-wrapping action buttons, the 150px date input), so the
  *  table now uses `table-layout: auto` with NO colgroup — columns size to
@@ -288,7 +293,10 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     try {
       const res = await api.adminResetOrgPassword(o.id);
       setResetResult({ orgName: o.name, email: res.email, password: res.password });
-      await load(); // refresh so the list shows the new resetPassword value
+      // Owner 2026-08-28: the table itself shows NO password — the fresh temp
+      // password lives ONLY in the modal above. The refresh keeps the row's
+      // other data (status/counts) current after the reset.
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Reset failed.");
     } finally {
@@ -597,9 +605,13 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
             <table className="table accounts-table">
               {/* Owner 2026-08-27 table cleanup — EVERY data point owns a
     clearly-labeled column and nothing truncates (scoped .accounts-table CSS;
-    other .table users keep the shared .cell-* ellipsis). THIRTEEN columns:
-    Account | Package | Status | Phone | Email | Password | Members | Client
+    other .table users keep the shared .cell-* ellipsis). TWELVE columns:
+    Account | Package | Status | Phone | Email | Members | Client
     records | Created | Subscription | Billing cycle | Deal value | Actions.
+    Owner 2026-08-28 privacy fix: the PASSWORD column was REMOVED — a
+    client's password is private to the client and must not sit in the
+    owner's table; it is surfaced ONLY one-time (post-creation temp-password
+    modal, per-row "Reset password" action), never persistently here.
     NO fixed colgroup (owner live-test 2026-08-27: under table-layout:fixed the
     locked % widths made nowrap chips, the non-wrapping action buttons and the
     150px date input PAINT OVER the neighbouring columns). With the scoped
@@ -613,7 +625,6 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                   <th>Status</th>
                   <th>Phone</th>
                   <th>Email</th>
-                  <th>Password</th>
                   <th className="num">Members</th>
                   <th className="num">Client records</th>
                   <th>Created</th>
@@ -680,23 +691,11 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           <span className="acc-muted">&mdash;</span>
                         )}
                       </td>
-                      <td className="acc-line" data-label="Password">
-                        {/* 3g-3/3k — the temp password while undelivered (from
-                            provisioning or an owner reset), cleared on the
-                            member's first login. */}
-                        {o.tempPassword ? (
-                          <code>{o.tempPassword}</code>
-                        ) : o.resetPassword ? (
-                          <>
-                            <code>{o.resetPassword}</code>
-                            <span className="acc-note">reset &middot; shown until the client signs in</span>
-                          </>
-                        ) : o.provisionedFromClient ? (
-                          <span className="acc-muted">delivered &middot; member has logged in</span>
-                        ) : (
-                          <span className="acc-muted">&mdash;</span>
-                        )}
-                      </td>
+                      {/* Owner 2026-08-28 privacy fix — NO Password column:
+                          the temp password is private to the client. It is
+                          handed over one-time via the post-creation modal or
+                          the row's "Reset password" action (modal), never
+                          displayed persistently in this table. */}
                       <td className="num" data-label="Members">
                         {o.userCount}
                       </td>

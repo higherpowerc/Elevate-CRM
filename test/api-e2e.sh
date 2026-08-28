@@ -4074,9 +4074,13 @@ if [ -n "$NEWEST_JS37" ]; then
   # (PR #78) legitimately use 24%, so it persists in the shared bundle; the
   # source-level checks below, scoped to src/Accounts.tsx, verify the old
   # Accounts widths are gone.)
-  # Owner 2026-08-27 table cleanup — the accounts table has THIRTEEN columns
-  # (Account | Package | Status | Phone | Email | Password | Members | Client
-  # records | Created | Subscription | Billing cycle | Deal value | Actions).
+  # Owner 2026-08-27 table cleanup — every data point owns a labeled column.
+  # Owner 2026-08-28 privacy fix — the table is now TWELVE columns (Account |
+  # Package | Status | Phone | Email | Members | Client records | Created |
+  # Subscription | Billing cycle | Deal value | Actions): the PASSWORD column
+  # is GONE — a client's password is private to the client and is surfaced
+  # ONLY one-time (post-creation temp-password modal, per-row "Reset
+  # password" action), never persistently in the table.
   # Owner live-test fix 2026-08-27 (overlap regression): the FIXED colgroup
   # widths made any cell wider than its column paint over the neighbour
   # (nowrap chips, the non-wrapping 4-button action row, the 150px date
@@ -4089,7 +4093,7 @@ if [ -n "$NEWEST_JS37" ]; then
     FAIL=$((FAIL+1)); echo "  ✗ bundle: accounts auto-layout/wrap guards missing from $NEWEST_CSS37"
   fi
   if ! grep -q '<colgroup' src/Accounts.tsx && grep -Fq 'accounts-table' src/Accounts.tsx; then
-    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx ships 13 labeled columns with NO fixed colgroup (auto layout, columns size to content)"
+    PASS=$((PASS+1)); echo "  ✓ source: Accounts.tsx ships 12 labeled columns with NO fixed colgroup (auto layout, columns size to content)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ source: Accounts.tsx must not carry a fixed colgroup (overlap regression)"
   fi
@@ -9033,7 +9037,7 @@ rm -rf "$MOCK68" "$J68"
 # list or the active count. Foreign orgs are untouched.
 echo "== 69. Accounts-table cleanup + client-delete cascade (owner 2026-08-27) =="
 
-echo "-- 69a. Source guards: 13-column cleanup, heading rename, Confirm buttons, sold-unbuilt deal value --"
+echo "-- 69a. Source guards: 12-column cleanup (password column removed, owner 2026-08-28), heading rename, Confirm buttons, sold-unbuilt deal value --"
 if python3 - <<'PY'
 acc = open('src/Accounts.tsx').read()
 modal = open('src/ConfirmDeleteModal.tsx').read()
@@ -9043,8 +9047,14 @@ assert 'Active client accounts' in acc
 # (PRIMARY) the table is scoped .accounts-table and every data point owns a
 # labeled column; the shared truncating .cell-name/.cell-company are gone here
 assert 'accounts-table' in acc
+# Owner 2026-08-28 privacy fix — NO Password column: a client's password is
+# private to the client. It is surfaced ONLY one-time (post-creation
+# temp-password modal, per-row "Reset password" action), never as a
+# persistent column here.
+assert 'data-label="Password"' not in acc and '<th>Password</th>' not in acc, \
+    'password column must stay out of the accounts table (owner 2026-08-28)'
 for col in ['data-label="Account"', 'data-label="Package"', 'data-label="Status"',
-            'data-label="Phone"', 'data-label="Email"', 'data-label="Password"',
+            'data-label="Phone"', 'data-label="Email"',
             'data-label="Members"', 'data-label="Client records"', 'data-label="Created"',
             'data-label="Subscription"', 'data-label="Billing cycle"',
             'data-label="Deal value"', 'data-label="Actions"']:
@@ -9066,6 +9076,17 @@ assert 'flex-wrap: wrap' in name_rule, 'accounts action rows must wrap'
 name_block = sec.split('.accounts-table .acc-name,')[1].split('}')[0]
 assert 'white-space: normal' in name_block, 'account name cells must wrap, not truncate'
 assert 'ellipsis' not in name_block and 'nowrap' not in name_block, 'no ellipsis/nowrap on account name cells'
+# (A3) Owner bug 2026-08-28 — column misalignment ("phone shows email, email
+# shows password"): the wrap-guard rule used to put display: block ON THE
+# Phone/Email <td class="acc-line"> itself, which knocks those cells out of
+# the table column grid and shifts every later value one column left of its
+# header. The td must NEVER be display:block; only the .acc-name span is.
+assert 'display: block' not in name_block, 'acc-line TD must keep table-cell display (owner 2026-08-28 alignment fix)'
+import re as _re
+sec_nc = _re.sub(r'/\*.*?\*/', '', sec, flags=_re.S)  # comments may MENTION display:block — check rules only
+acc_line_chunks = [c for c in sec_nc.split('}') if '.acc-line' in c and '{' in c]
+for c in acc_line_chunks:
+    assert 'display: block' not in c, 'no acc-line rule may display:block the td (owner 2026-08-28)'
 # (B) every destructive confirm button reads "Confirm" — wording lives in the
 # modal title/body. Default flipped; no caller passes a destructive label.
 assert 'confirmLabel = "Confirm"' in modal
