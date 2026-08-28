@@ -8358,8 +8358,13 @@ import json
 d=json.load(open('/tmp/body.json'))
 assert abs(d['clientMrr']-40)<0.001, d.get('clientMrr')
 PY
-then PASS=$((PASS+1)); echo "  ✓ 63a2: clientMrr back to 40 — un-signing flips the record back OUT (stays out for 63b-e)"
+then PASS=$((PASS+1)); echo "  ✓ 63a2: clientMrr back to 40 — un-signing flips the record back OUT"
 else FAIL=$((FAIL+1)); echo "  ✗ 63a2: un-signed record still counted: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+# Remove the test record: §63b-e's Finance mirror (which mirrors the Finance.tsx
+# active filter — lost/archived/orphaned only, no agreement filter) must see the
+# original record set, so each remaining exclusion stays single-cause.
+S=$(code -b "$J63" -X DELETE "$B63/api/clients/$UNS63_ID")
+check "63a2: cleanup — delete the unsigned test record → 200 (63b-e assert the original set)" 200 "$S"
 echo "-- 63b. Archived sold client EXCLUDED --"
 S=$(code -b "$J63" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Arch MRR Co\",\"clientType\":\"commercial\",\"dealValue\":500,\"monthlyAmount\":50,\"stage\":\"$TERM63\"}" "$B63/api/clients")
