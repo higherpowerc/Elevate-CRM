@@ -1045,6 +1045,12 @@ legend.field-label {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Owner live-test 2026-08-28 (d7b3ae5d): the nav Sign out button signals
+   interactivity by turning blue on hover. */
+.nav-signout:not(:disabled):hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
 
 .main {
   flex: 1;
@@ -2349,6 +2355,23 @@ legend.field-label {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* Owner live-test 2026-08-28 (be3024e9): the Create-client-account form is
+   collapsible (collapsed by default); the head row carries the toggle button
+   while title + sub stay left. */
+.admin-card-head-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-card-head-toggle .admin-card-head-text {
+  min-width: 0;
+}
+.admin-form .admin-card-toggle {
+  flex-shrink: 0;
 }
 
 .admin-table .admin-card-head {

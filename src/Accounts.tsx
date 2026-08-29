@@ -100,6 +100,10 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  /** Owner live-test 2026-08-28 (be3024e9): the create-account form is
+   *  collapsible and starts COLLAPSED so the Clients tab account hub opens
+   *  compact; the owner expands it to add a client account. */
+  const [createOpen, setCreateOpen] = useState(false);
   /** 3f-1: the business type picker (owner direction 2026-08-16 — the catalog
    *  is B2B & B2C only; B2B is the default: "Mainly we will be selling B2B"). */
   const [vertical, setVertical] = useState("b2b");
@@ -239,6 +243,9 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
         vertical,
         tier,
       });
+      // Keep the form expanded so the just-created account alert (temp
+      // password!) is guaranteed visible even if the owner collapsed it.
+      setCreateOpen(true);
       setCreated({ orgName: org.name, email: user.email, password, verticalLabel: verticalLabel(vertical), emailStatus, emailError });
       setName("");
       setEmail("");
@@ -437,13 +444,28 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
 
       <div className="admin-grid">
         <div className="card admin-form">
-          <div className="admin-card-head">
-            <h3 className="admin-card-title">Create client account</h3>
-            <p className="admin-card-sub">
-              Creates the client's private workspace and a member login for it.
-            </p>
+          <div className="admin-card-head admin-card-head-toggle">
+            <div className="admin-card-head-text">
+              <h3 className="admin-card-title">Create client account</h3>
+              <p className="admin-card-sub">
+                Creates the client's private workspace and a member login for it.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm admin-card-toggle"
+              aria-expanded={createOpen}
+              onClick={() => setCreateOpen((s) => !s)}
+            >
+              {createOpen ? "Hide form" : "New account"}
+            </button>
           </div>
 
+          {/* Owner live-test 2026-08-28 (be3024e9): everything below the head —
+              the form, its errors and the created-account alerts — only renders
+              while the form is expanded. Stays on the Clients tab. */}
+          {createOpen && (
+          <>
           {formError && (
             <div className="alert alert-error" role="alert">
               {formError}
@@ -585,6 +607,8 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
               {busy ? "Creating…" : "Create account"}
             </button>
           </form>
+          </>
+          )}
         </div>
 
         <div className="card table-wrap admin-table">
@@ -789,11 +813,11 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           <button
                             className="btn btn-ghost btn-sm"
                             title="Cancel this account — the client loses login access and the account moves to Inactive clients with all data retained"
-                            aria-label={`Mark ${o.name} inactive`}
+                            aria-label={`Disable ${o.name} account`}
                             disabled={markingOrgId !== null || restoringOrgId !== null}
                             onClick={() => handleMarkInactive(o)}
                           >
-                            {markingOrgId === o.id ? "Marking…" : "Mark inactive"}
+                            {markingOrgId === o.id ? "Disabling…" : "Disable account"}
                           </button>
                           <button
                             className="icon-btn danger"

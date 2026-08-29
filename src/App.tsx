@@ -125,6 +125,12 @@ export default function App() {
   // Per-tenant branding (Phase 3a): once signed in, the shell (and the
   // document title) carries the tenant's own org name + accent color.
   const orgName = user?.orgName?.trim() || "";
+  /** Owner live-test 2026-08-28 (128c3ad7): the nav shows a NAME, not the raw
+   *  email — "Owner" for the owner session; a display name when the account
+   *  carries one (additive User.name); the email only as the tenant-user
+   *  fallback. The email stays on the nav-user span's title (hover) and PII
+   *  blur is unchanged. */
+  const navUserName = user?.name?.trim() || (user?.isOwner ? "Owner" : user?.email ?? "");
   useEffect(() => {
     document.title = orgName ? `${orgName} — CRM` : "Revzenta — CRM";
   }, [orgName]);
@@ -539,10 +545,10 @@ export default function App() {
               {piiHidden ? <PiiEyeOffIcon /> : <PiiEyeIcon />}
             </button>
             <span className={`nav-user${blurPii(piiHidden)}`} title={user.email}>
-              {user.email}
+              {navUserName}
               {orgName ? ` · ${orgName}` : ""}
             </span>
-            <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
+            <button className="btn btn-ghost btn-sm nav-signout" onClick={handleLogout}>
               Sign out
             </button>
           </div>

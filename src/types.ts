@@ -463,6 +463,10 @@ export interface User {
    *  so the client never compares the org NAME string. Additive key on
    *  /api/auth/me + login. */
   isOwner?: boolean;
+  /** Optional display name (additive, owner live-test 2026-08-28) — the nav
+   *  prefers it over the raw email when present; not yet sent by the server,
+   *  so owner sessions fall back to "Owner" and tenant users to their email. */
+  name?: string;
   /** The tenant's ordered pipeline stages (Phase 3a). */
   stages?: string[];
   /** The tenant's brand accent (hex). */
