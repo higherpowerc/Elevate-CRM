@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import {
   CUSTOM_FIELD_TYPES,
@@ -124,10 +124,13 @@ export default function Settings({
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSaved, setPwSaved] = useState<string | null>(null);
 
-  /* Phase 5 prep — tenant self-service: data export + self-serve cancel. */
+  /* Phase 5 prep — self-serve data export state (owner decision 2026-08-29,
+     option b: tenant workspaces keep the "Your data" card HERE in Settings;
+     the owner's copy lives under Administration). */
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  /* Phase 5 prep — tenant self-service: self-serve cancel. */
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -181,7 +184,6 @@ export default function Settings({
       setExportBusy(false);
     }
   }
-
   /* Phase 5 prep — self-serve cancel (org admin only; the server guards the
      owner workspace). Cancellation is effective immediately for sign-in; the
      data is RETAINED 30 days (never hard-deleted). The server clears the
@@ -982,8 +984,6 @@ export default function Settings({
           </form>
         </div>
 
-        {isOwnerOrg && <AgreementsPinControl />}
-
         {!isOwnerOrg && (
         <>
         <div className="card admin-form">
@@ -1597,39 +1597,46 @@ export default function Settings({
           </form>
         </div>
 
-        {/* Phase 5 prep — self-serve data export. Read-only: any settings
-            reader (org admin or a member with settings access) can download
-            this workspace's own data as a JSON file. The server scopes every
-            query by org_id, so the file can never contain another tenant's
-            rows. */}
-        <div className="card admin-form">
-          <div className="admin-card-head">
-            <h2 className="admin-card-title">Your data</h2>
-            <p className="admin-card-sub">
-              Download everything in this workspace — clients, tasks, invoices, custom field
-              values, support tickets and agreements — as a JSON file. Only this workspace's
-              data is included, and no passwords or sign-in credentials.
-            </p>
+        {/* Phase 5 prep — self-serve data export (owner decision
+            2026-08-29, option b): tenant workspaces keep the card HERE —
+            self-serve export of this org's own data. Read-only: any
+            settings reader (org admin or a member with settings access)
+            can download it as a JSON file. The server scopes every query
+            by org_id, so the file can never contain another tenant's rows.
+            NOT rendered for the owner workspace — the owner's copy lives
+            under Administration (Admin.tsx), so no user ever sees the
+            card in two places. */}
+        {!isOwnerOrg && (
+          <div className="card admin-form">
+            <div className="admin-card-head">
+              <h2 className="admin-card-title">Your data</h2>
+              <p className="admin-card-sub">
+                Download everything in this workspace — clients, tasks, invoices, custom field
+                values, support tickets and agreements — as a JSON file. Only this workspace's
+                data is included, and no passwords or sign-in credentials.
+              </p>
+            </div>
+            {exportError && (
+              <div className="alert alert-error" role="alert">
+                {exportError}
+              </div>
+            )}
+            {exportMsg && (
+              <div className="alert alert-success" role="status">
+                {exportMsg}
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={handleExport}
+              disabled={exportBusy}
+            >
+              {exportBusy ? "Preparing…" : "Export my data"}
+            </button>
           </div>
-          {exportError && (
-            <div className="alert alert-error" role="alert">
-              {exportError}
-            </div>
-          )}
-          {exportMsg && (
-            <div className="alert alert-success" role="status">
-              {exportMsg}
-            </div>
-          )}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={handleExport}
-            disabled={exportBusy}
-          >
-            {exportBusy ? "Preparing…" : "Export my data"}
-          </button>
-        </div>
+        )}
+
       </div>
 
       {/* Team users per client account (owner request 2026-08-14) — the
@@ -2079,95 +2086,6 @@ export default function Settings({
           onConfirm={handleCancelAccount}
         />
       )}
-    </div>
-  );
-}
-
-
-/* Owner-only Agreements PIN control (owner direction 2026-08-25): set/change
-   the PIN that unlocks the Documents tab's Agreements editor. Stored hashed
-   (sha-256) server-side; never rendered for tenant accounts. */
-function AgreementsPinControl() {
-  const [pinSet, setPinSet] = useState<boolean | null>(null);
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    api
-      .settings()
-      .then(({ settings }) => {
-        setPinSet(settings.agreementsPinSet ?? false);
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
-  }, []);
-
-  async function savePin(e: FormEvent) {
-    e.preventDefault();
-    if (!pin.trim()) {
-      setError("Enter a PIN to set.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setSaved(null);
-    try {
-      await api.updateSettings({ agreementsPin: pin.trim() });
-      setPinSet(true);
-      setPin("");
-      setSaved("Agreements PIN saved — use it to unlock the Agreements editor on the Documents tab.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save PIN.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!loaded) return null;
-  return (
-    <div className="card admin-form">
-      <div className="admin-card-head">
-        <h2 className="admin-card-title">Agreements PIN</h2>
-        <p className="admin-card-sub">
-          {pinSet
-            ? "A PIN is set — enter a new one to change it."
-            : "No PIN set yet. Set one to protect the Agreements template editor on the Documents tab."}
-        </p>
-      </div>
-      <form className="form" onSubmit={savePin}>
-        {error && (
-          <div className="alert alert-error" role="alert">
-            {error}
-          </div>
-        )}
-        {saved && (
-          <div className="alert alert-success" role="status">
-            {saved}
-          </div>
-        )}
-        <div className="field">
-          <label className="field-label" htmlFor="agreements-pin">
-            {pinSet ? "New agreements PIN" : "Agreements PIN"}
-          </label>
-          <input
-            id="agreements-pin"
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            placeholder="4–10 digits"
-            disabled={busy}
-          />
-          <span className="field-hint">Owner-only — stored as a hash, never shown to client accounts.</span>
-        </div>
-        <button className="btn btn-primary" disabled={busy} type="submit">
-          {busy ? "Saving…" : pinSet ? "Change PIN" : "Set PIN"}
-        </button>
-      </form>
     </div>
   );
 }
