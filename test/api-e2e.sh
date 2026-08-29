@@ -1994,8 +1994,8 @@ echo "== 25d. Individual lead rows: no person name under 'Business name'; full n
 # name') in BOTH workspaces. The universal 'Contact name' intake field is
 # commercial-only.
 if grep -Fq 'function primaryName' src/Clients.tsx && \
-   grep -Fq 'ownerOrg && c.clientType !== "commercial" ? c.dbaName || "—" : c.companyName' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: primaryName helper (individual → dbaName or em dash under the owner's 'Business name' header; full name under 'Client')"
+   grep -Fq 'ownerOrg && c.clientType !== "commercial" ? c.dbaName || c.companyName : c.companyName' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: primaryName helper (individual → DBA, else the person's own name — never a bare dash; owner 2026-08-29)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: primaryName helper missing from src/Clients.tsx"
 fi
@@ -2061,10 +2061,10 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ individual lead API payload: $(cat /tmp/body.json)"
 fi
 # Bundle: the compiled app contains both helpers' distinctive expressions
-# (minified): dbaName-or-em-dash for the Business-name slot and
+# (minified): dbaName-or-personal-name fallback for the Business-name slot and
 # contactName-or-em-dash for the commercial Contact primary.
 NEWEST_JS25=$(ls -t dist/index-*.js 2>/dev/null | head -1)
-if [ -n "$NEWEST_JS25" ] && grep -Fq 'dbaName||"—"' "$NEWEST_JS25" && grep -Fq 'contactName||"—"' "$NEWEST_JS25"; then
+if [ -n "$NEWEST_JS25" ] && grep -Eq 'dbaName\|\|[A-Za-z_$][A-Za-z0-9_$]*\.companyName' "$NEWEST_JS25" && grep -Fq 'contactName||"—"' "$NEWEST_JS25"; then
   PASS=$((PASS+1)); echo "  ✓ bundle: individual Business-name fallback + Contact primary compiled"
 else
   FAIL=$((FAIL+1)); echo "  ✗ bundle: individual-row markers missing from $NEWEST_JS25"

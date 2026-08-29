@@ -1869,13 +1869,21 @@ legend.field-label {
 
 .table {
   width: 100%;
+  /* Owner 2026-08-29 — when the screen is too small to show a window's
+     columns evenly, the window gets its own horizontal scrollbar (.table-wrap
+     already scrolls) instead of the data bunching up: the table never
+     compresses below this readable minimum. */
+  min-width: 640px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 14px;
 }
 
 .table th {
-  text-align: left;
+  /* Owner 2026-08-29 — all table-cell data centers under its column header
+     (owner + tenant tables). The Deal column's old PR #102 right-alignment
+     is superseded by this newer owner instruction. */
+  text-align: center;
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -1892,6 +1900,7 @@ legend.field-label {
   padding: 12px 12px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
+  text-align: center;
 }
 
 .table tbody tr:last-child td {
@@ -1905,13 +1914,25 @@ legend.field-label {
 .table tbody tr:hover {
   background: rgba(242, 241, 236, 0.025);
 }
+/* Owner 2026-08-29 — centering pass: flex-based cell content (name row,
+   action rows, next-action/stage/agreement stacks, custom-field chips) must
+   follow the centered cells. Scoped to desktop — the ≤760px stacked-card
+   mode re-lefts cells (.table td text-align + .row-actions flex-start). */
+@media (min-width: 761px) {
+  .table td .cell-company { justify-content: center; }
+  .table td .row-actions { justify-content: center; }
+  .table td .cell-next-stack { align-items: center; }
+  .table td .stage-cell { align-items: center; }
+  .table td .agree-cell { align-items: center; }
+  .table td .cf-line { justify-content: center; }
+}
 
 .row-archived {
   opacity: 0.55;
 }
 
 .num {
-  text-align: right;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2202,7 +2223,7 @@ legend.field-label {
 }
 
 .actions-th {
-  text-align: right;
+  text-align: center;
 }
 
 /* ── Toolbar ───────────────────────────────────────────────── */
@@ -3171,6 +3192,7 @@ p.inv-notes.cockpit-foot {
   .table td {
     display: block;
     width: 100%;
+    min-width: 0;
   }
 
   .table thead {
@@ -3189,6 +3211,7 @@ p.inv-notes.cockpit-foot {
   .table td {
     border: none;
     padding: 5px 16px;
+    text-align: left;
   }
 
   .table td::before {
@@ -4461,6 +4484,13 @@ input.accent-hex::placeholder,
    window under the Active client accounts table. Inactive (canceled) rows are
    slightly muted — retained data, blocked logins — but every column stays
    readable; the same .accounts-table wrap guards apply (no overlap). */
+.accounts-inactive {
+  /* Owner 2026-08-29 — the Inactive clients window is a separate sibling
+     AFTER the .admin-grid (Create + Active accounts) on the page root, not a
+     .page-stack child, so it missed the shared vertical rhythm: give it the
+     same stack gap so there is a clear space below the Active accounts. */
+  margin-top: var(--stack-gap);
+}
 .accounts-inactive .row-inactive td {
   color: var(--muted, #a9a9b3);
 }
@@ -4607,6 +4637,14 @@ input.accent-hex::placeholder,
 
 
 /* ── Paying clients hub (Finance, owner 2026-08-27, backlog 8b9bbe2c) ── */
+/* Owner 2026-08-29 — even spacing inside the Finance windows: the Stripe
+   status + Paying clients windows rendered flush against their card borders
+   (generic .card sets only background/border/radius). Same inset as the
+   admin windows (.admin-form/.admin-table). */
+.paying-hub,
+.pending-bills {
+  padding: 22px 24px 24px;
+}
 .paying-table .cell-name {
   display: block;
   font-weight: 700;

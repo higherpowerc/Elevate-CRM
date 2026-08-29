@@ -77,16 +77,19 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   return value;
 }
 
-/** GLOBAL name rule (owner direction 2026-08-16 — owner AND tenant pipeline
- *  tables): the primary cell shows the record's business name — EXCEPT an
- *  INDIVIDUAL record under the owner's "Business name" header, where
- *  companyName holds the person's FULL NAME and must never render as a
- *  business name: show the DBA name when present, else an em dash (PR #62).
+/** GLOBAL name rule (owner direction 2026-08-16, amended 2026-08-29 — owner
+ *  AND tenant pipeline tables): the primary cell shows the record's business
+ *  name — EXCEPT an INDIVIDUAL record under the owner's "Business name"
+ *  header, where companyName holds the person's FULL NAME and must never
+ *  render as a business name: show the DBA name when present, and when there
+ *  is no DBA show the person's own name (companyName — the required "Name *"
+ *  intake field) instead of the old bare em dash (owner 2026-08-29: an
+ *  individual lead must never display as "—").
  *  Tenant tables (header "Client") always show companyName — for an
  *  individual that IS their full name, exactly what the owner wants there.
  *  Commercial records always show companyName. */
 function primaryName(ownerOrg: boolean, c: Client): string {
-  return ownerOrg && c.clientType !== "commercial" ? c.dbaName || "—" : c.companyName;
+  return ownerOrg && c.clientType !== "commercial" ? c.dbaName || c.companyName : c.companyName;
 }
 
 /** GLOBAL contact rule (owner direction 2026-08-16 — owner AND tenant): the
@@ -97,6 +100,20 @@ function primaryName(ownerOrg: boolean, c: Client): string {
  *  records, followed by email + phone. */
 function contactPrimary(c: Client): string {
   return c.clientType !== "commercial" ? c.companyName : c.contactName || "—";
+}
+
+/** Owner 2026-08-29 — the Commercial/Individual tag moves OUT of the name
+ *  cell into its own dedicated "Type" column, placed right next to the Name
+ *  and Contact-information columns, in every pipeline/leads table that shows
+ *  the tag (owner + tenant, incl. the Maybe/Lost/DNC tables). */
+function TypeBadgeCell({ c }: { c: Client }) {
+  return (
+    <td data-label="Type">
+      <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
+        {c.clientType === "commercial" ? "Commercial" : "Individual"}
+      </span>
+    </td>
+  );
 }
 
 /** Local YYYY-MM-DD — for the DNC quick row-action's "marked" date (owner
@@ -1164,14 +1181,16 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         <div className="card table-wrap">
           <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
             <colgroup>
-              <col style={{ width: ownerLeadsTab ? "26%" : "22%" }} />
+              <col style={{ width: ownerLeadsTab ? "24%" : "22%" }} />
+              <col style={{ width: "10%" }} />
               {!ownerLeadsTab && <col style={{ width: "12%" }} />}
-              <col style={{ width: ownerLeadsTab ? "40%" : "44%" }} />
-              <col style={{ width: ownerLeadsTab ? "34%" : "22%" }} />
+              <col style={{ width: "38%" }} />
+              <col style={{ width: ownerLeadsTab ? "28%" : "18%" }} />
             </colgroup>
             <thead>
               <tr>
                 <th>{ownerOrg ? "Business name" : "Client"}</th>
+                <th>Type</th>
                 {!ownerLeadsTab && <th>Stage</th>}
                 <th>Follow-up note</th>
                 <th className="actions-th">Actions</th>
@@ -1191,6 +1210,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </div>
                     {c.industry && <div className="cell-sub">{c.industry}</div>}
                   </td>
+                  <TypeBadgeCell c={c} />
                   {!ownerLeadsTab && (
                     <td data-label="Stage" className="lost-dnc-stage-cell">
                       <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
@@ -1255,14 +1275,16 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         <div className="card table-wrap">
           <table className={`table clients-table${ownerOrg ? " owner-leads" : ""}`}>
             <colgroup>
-              <col style={{ width: ownerLeadsTab ? "30%" : "26%" }} />
-              {!ownerLeadsTab && <col style={{ width: "14%" }} />}
+              <col style={{ width: ownerLeadsTab ? "24%" : "22%" }} />
+              <col style={{ width: "10%" }} />
+              {!ownerLeadsTab && <col style={{ width: "12%" }} />}
               <col style={{ width: "38%" }} />
-              <col style={{ width: ownerLeadsTab ? "32%" : "22%" }} />
+              <col style={{ width: ownerLeadsTab ? "28%" : "18%" }} />
             </colgroup>
             <thead>
               <tr>
                 <th>{ownerOrg ? "Business name" : "Client"}</th>
+                <th>Type</th>
                 {!ownerLeadsTab && <th>Stage</th>}
                 <th>{filter === "lost" ? "Lost reason" : "Do-not-contact"}</th>
                 <th className="actions-th">Actions</th>
@@ -1282,6 +1304,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     </div>
                     {c.industry && <div className="cell-sub">{c.industry}</div>}
                   </td>
+                  <TypeBadgeCell c={c} />
                   {!ownerLeadsTab && (
                     <td data-label="Stage" className="lost-dnc-stage-cell">
                       <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
@@ -1350,27 +1373,31 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           </table>
         </div>
       ) : ownerLeadsTab && ownerOrg ? (
-        /* OWNER LEADS TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 4
+        /* OWNER LEADS TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 5
            columns: 1) Business name or Individual name (the same primaryName
-           cell: type badge, pii blur, industry, address, custom-field chips),
-           2) Contact information (contactPrimary + email + phone), 3) Schedule
-           Demo — a prominent quick-action button that opens the meeting-link
-           modal (date/time + pasted Zoom/Google Meet URL → invite email), 4)
-           Actions — a dropdown menu (EXACTLY: Edit / DNC / Lost; Delete and
-           Archive are removed here, they remain via the edit modal / other
-           tabs). The old Services / Deal / Next action / Payment columns are
-           removed from the owner Leads tab. */
+           cell: pii blur, industry, address, custom-field chips), 2) Type —
+           the Commercial/Individual tag in its OWN column next to the name +
+           contact columns (owner 2026-08-29), 3) Contact information
+           (contactPrimary + email + phone), 4) Schedule Demo — a prominent
+           quick-action button that opens the meeting-link modal (date/time +
+           pasted Zoom/Google Meet URL → invite email), 5) Actions — a
+           dropdown menu (EXACTLY: Edit / DNC / Lost; Delete and Archive are
+           removed here, they remain via the edit modal / other tabs). The old
+           Services / Deal / Next action / Payment columns are removed from
+           the owner Leads tab. */
         <div className="card table-wrap">
           <table className="table clients-table owner-leads sales-leads">
             <colgroup>
-              <col style={{ width: "30%" }} />
-              <col style={{ width: "27%" }} />
+              <col style={{ width: "26%" }} />
+              <col style={{ width: "8%" }} />
+              <col style={{ width: "24%" }} />
               <col style={{ width: "20%" }} />
-              <col style={{ width: "23%" }} />
+              <col style={{ width: "22%" }} />
             </colgroup>
             <thead>
               <tr>
                 <th>Business name or Individual name</th>
+                <th>Type</th>
                 <th>Contact information</th>
                 <th>Schedule Demo</th>
                 <th className="actions-th">Actions</th>
@@ -1385,9 +1412,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                       <div className="cell-company">
                         <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
                           {primaryName(ownerOrg, c)}
-                        </span>
-                        <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
-                          {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
                         {c.lost && <span className="chip chip-lost">Lost</span>}
                         {c.dnc && <span className="chip chip-dnc">DNC</span>}
@@ -1419,6 +1443,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         );
                       })()}
                     </td>
+                    <TypeBadgeCell c={c} />
                     <td data-label="Contact information">
                       <div className="cell-contact">
                         <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
@@ -1458,27 +1483,31 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           </table>
         </div>
       ) : ownerOnboardingTab && ownerOrg ? (
-        /* OWNER ONBOARDING TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 5
-           columns: 1) Business name / Individual name, 2) Contact information,
-           3) Next action (Send/Re-send Agreements — handleSendAgreement, with
-           the audit/sign-tracking intact), 4) Agreement stages (the lifecycle
-           tracker NOT sent → Sent → Delivered → Signed), 5) Edit (opens the
-           edit modal for last-minute changes). Billing moved to the Finance tab
-           ("Bill this account"), so the Send-payment-link column was removed
-           (owner 2026-08-20). Backend behavior unchanged; the previous Deal /
-           Stage select / Services overflow is gone. */
+        /* OWNER ONBOARDING TAB — Sales-Flow UI (owner 2026-08-20). EXACTLY 6
+           columns: 1) Business name / Individual name, 2) Type — the
+           Commercial/Individual tag in its OWN column next to the name +
+           contact columns (owner 2026-08-29), 3) Contact information,
+           4) Next action (Send/Re-send Agreements — handleSendAgreement, with
+           the audit/sign-tracking intact), 5) Agreement stages (the lifecycle
+           tracker NOT sent → Sent → Delivered → Signed), 6) Edit (opens the
+           edit modal for last-minute changes). Billing moved to the Finance
+           tab ("Bill this account"), so the Send-payment-link column was
+           removed (owner 2026-08-20). Backend behavior unchanged; the
+           previous Deal / Stage select / Services overflow is gone. */
         <div className="card table-wrap">
           <table className="table clients-table owner-leads sales-onboarding">
             <colgroup>
-              <col style={{ width: "26%" }} />
-              <col style={{ width: "22%" }} />
+              <col style={{ width: "23%" }} />
+              <col style={{ width: "8%" }} />
               <col style={{ width: "20%" }} />
-              <col style={{ width: "20%" }} />
+              <col style={{ width: "19%" }} />
+              <col style={{ width: "18%" }} />
               <col style={{ width: "12%" }} />
             </colgroup>
             <thead>
               <tr>
                 <th>Business name / Individual name</th>
+                <th>Type</th>
                 <th>Contact information</th>
                 <th>Next action (send agreements)</th>
                 <th>Agreement stages</th>
@@ -1494,9 +1523,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                       <div className="cell-company">
                         <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
                           {primaryName(ownerOrg, c)}
-                        </span>
-                        <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
-                          {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
                         {c.lost && <span className="chip chip-lost">Lost</span>}
                         {c.dnc && <span className="chip chip-dnc">DNC</span>}
@@ -1528,6 +1554,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         );
                       })()}
                     </td>
+                    <TypeBadgeCell c={c} />
                     <td data-label="Contact information">
                       <div className="cell-contact">
                         <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
@@ -1601,45 +1628,51 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   bug report 2026-08-15 — the owner's LEADS tab drops the
                   Stage column entirely. Owner direction 2026-08-18 — the
                   Payment column sits between Next action and Actions in every
-                  OWNER view (Leads: 7 cols 19/15/11/9/17/10/19; Onboarding +
-                  Clients directory: 8 cols 17/14/10/8/13/12/10/16). Tenant
-                  views keep their exact 7-col layout (21/15/11/8/15/12/18). */}
+                  OWNER view. Owner direction 2026-08-29 — every variant gains
+                  a dedicated 8% "Type" column (Commercial/Individual tag)
+                  between the name and contact columns (Leads: 8 cols
+                  17/8/14/10/8/16/9/18; Onboarding + Clients directory: 9 cols
+                  15/8/13/9/8/12/11/8/16; tenant: 8 cols 19/8/14/10/8/14/11/16). */}
               {ownerLeadsTab ? (
                 <>
-                  <col style={{ width: "19%" }} />
-                  <col style={{ width: "15%" }} />
-                  <col style={{ width: "11%" }} />
-                  <col style={{ width: "9%" }} />
                   <col style={{ width: "17%" }} />
-                  <col style={{ width: "10%" }} />
-                  <col style={{ width: "19%" }} />
-                </>
-              ) : ownerOrg ? (
-                <>
-                  <col style={{ width: "17%" }} />
+                  <col style={{ width: "8%" }} />
                   <col style={{ width: "14%" }} />
                   <col style={{ width: "10%" }} />
                   <col style={{ width: "8%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "18%" }} />
+                </>
+              ) : ownerOrg ? (
+                <>
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "8%" }} />
                   <col style={{ width: "13%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "8%" }} />
                   <col style={{ width: "12%" }} />
-                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "8%" }} />
                   <col style={{ width: "16%" }} />
                 </>
               ) : (
                 <>
-                  <col style={{ width: "21%" }} />
-                  <col style={{ width: "15%" }} />
-                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "19%" }} />
                   <col style={{ width: "8%" }} />
-                  <col style={{ width: "15%" }} />
-                  <col style={{ width: "12%" }} />
-                  <col style={{ width: "18%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "16%" }} />
                 </>
               )}
             </colgroup>
             <thead>
               <tr>
                 <th>{ownerOrg ? "Business name" : "Client"}</th>
+                <th>Type</th>
                 <th>Contact</th>
                 {/* Owner cockpit B — the owner's Onboarding tab replaces the
                     Services column with the DocuSign Agreement column; client
@@ -1664,9 +1697,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                       <div className="cell-company">
                         <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
                           {primaryName(ownerOrg, c)}
-                        </span>
-                        <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
-                          {c.clientType === "commercial" ? "Commercial" : "Individual"}
                         </span>
                         {c.lost && <span className="chip chip-lost">Lost</span>}
                         {c.dnc && <span className="chip chip-dnc">DNC</span>}
@@ -1700,6 +1730,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         );
                       })()}
                     </td>
+                    <TypeBadgeCell c={c} />
                     <td data-label="Contact">
                       <div className="cell-contact">
                         <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
