@@ -499,10 +499,13 @@ export default function App() {
                 onClick={() => setView("admin")}
               >
                 {/* Owner direction 2026-08-17 — the owner's admin tab reads
-                    "Administration": it hosts the Agreements section (the
-                    agreement template editor that used to live in Settings).
-                    One home, no duplicate. Client-ACCOUNT management lives on
-                    the Clients tab since 2026-08-18. */}
+                    "Administration". Owner 2026-08-28 (consolidation): it
+                    hosts the Agreements section — the PIN-protected template
+                    editor (moved back from the Documents tab, which had
+                    briefly hosted it), the Agreements PIN control (moved from
+                    Settings) and the "Your data" export (moved from Settings).
+                    One home for the owner's admin controls. Client-ACCOUNT
+                    management lives on the Clients tab since 2026-08-18. */}
                 Administration
               </button>
             )}
@@ -629,9 +632,11 @@ export default function App() {
         ) : effectiveView === "finance" ? (
           <Finance canEdit={canEditTab("finance")} ownerOrg={isOwnerOrg} />
         ) : effectiveView === "admin" ? (
-          /* Administration now hosts the Agreements (template editor) section
-             only — client-account management moved to the Clients tab
-             (2026-08-18). */
+          /* Owner 2026-08-28 consolidation — Administration hosts the
+             Agreements template editor (PIN-protected, moved back from
+             Documents), the Agreements PIN control and the "Your data"
+             export (both moved from Settings). Client-account management
+             moved to the Clients tab (2026-08-18). */
           <Admin />
         ) : effectiveView === "documents" ? (
           <Documents />

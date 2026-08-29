@@ -5,12 +5,12 @@ import { usePii, blurPii } from "./pii";
 
 /** Owner document center (owner direction 2026-08-25): the Documents tab lists
  *  EVERY agreement envelope across all client accounts — status, signer, audit
- *  trail + PDF — with search and delete, AND hosts the owner's agreement
- *  template editor (moved here from Administration, PIN-protected). Data comes
- *  from the owner-only audit API (GET /api/agreements — tenants 403); the PDFs
- *  reuse /agreement-pdf/<id>, deletion is DELETE /api/agreements/:id, and the
- *  editor saves via updateSettings({ agreementTemplate }). Owner-workspace only
- *  (tab is owner-gated in App.tsx, every API is requireAdmin server-side). */
+ *  trail + PDF — with search and delete. (Owner 2026-08-28: the agreement
+ *  template editor that briefly lived here moved back under Administration —
+ *  see src/Admin.tsx.) Data comes from the owner-only audit API (GET
+ *  /api/agreements — tenants 403); the PDFs reuse /agreement-pdf/<id> and
+ *  deletion is DELETE /api/agreements/:id. Owner-workspace only (tab is
+ *  owner-gated in App.tsx, every API is requireAdmin server-side). */
 const STATUS_META: Record<AgreementStatus, { label: string; tone: string }> = {
   not_sent: { label: "Not sent", tone: "tone-gray" },
   sent: { label: "Sent", tone: "tone-amber" },
@@ -81,13 +81,10 @@ export default function Documents() {
             Documents
           </h1>
           <p className="page-sub">
-            Every agreement envelope across all client accounts — status, signer, audit trail and the PDF copy —
-            plus the agreement template editor (PIN-protected) below.
+            Every agreement envelope across all client accounts — status, signer, audit trail and the PDF copy.
           </p>
         </div>
       </div>
-
-      <AgreementsEditor />
 
       {error && (
         <div className="alert alert-error" role="alert">
@@ -221,154 +218,6 @@ export default function Documents() {
               </button>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Agreements editor (PIN-protected dropdown) ─────────────────────────
- * Owner-only. The agreement-template editor moved here from Administration and
- * is gated behind a PIN set/changed in Settings (hashed server-side). The
- * dropdown shows on click: if not yet unlocked for the session, a PIN prompt
- * appears first; the correct PIN reveals the editor (wrong PIN → inline error,
- * editor stays hidden). */
-function AgreementsEditor() {
-  const [open, setOpen] = useState(false);
-  const [unlocked, setUnlocked] = useState(false);
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState<string | null>(null);
-  const [pinBusy, setPinBusy] = useState(false);
-
-  const [agreementTemplate, setAgreementTemplate] = useState("");
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [tplBusy, setTplBusy] = useState(false);
-  const [tplSaved, setTplSaved] = useState<string | null>(null);
-  const [tplError, setTplError] = useState<string | null>(null);
-
-  const loadSettings = useCallback(async () => {
-    try {
-      const { settings } = await api.settings();
-      setAgreementTemplate(settings.agreementTemplate ?? "");
-      setSettingsLoaded(true);
-    } catch {
-      /* settings errors surface elsewhere */
-    }
-  }, []);
-
-  useEffect(() => {
-    if (open && unlocked && !settingsLoaded) void loadSettings();
-  }, [open, unlocked, settingsLoaded, loadSettings]);
-
-  async function tryUnlock(e: React.FormEvent) {
-    e.preventDefault();
-    if (!pin.trim()) {
-      setPinError("Enter the agreements PIN.");
-      return;
-    }
-    setPinBusy(true);
-    setPinError(null);
-    try {
-      const r = await api.checkAgreementsPin(pin.trim());
-      if (r.ok) {
-        setUnlocked(true);
-        setPin("");
-        void loadSettings();
-      } else {
-        setPinError(r.error || "Incorrect PIN.");
-      }
-    } catch (err) {
-      setPinError(err instanceof Error ? err.message : "Could not verify PIN.");
-    } finally {
-      setPinBusy(false);
-    }
-  }
-
-  async function saveTemplate() {
-    setTplBusy(true);
-    setTplSaved(null);
-    setTplError(null);
-    try {
-      await api.updateSettings({ agreementTemplate });
-      setTplSaved("Agreement template saved — new sends use this wording.");
-    } catch (e) {
-      setTplError(e instanceof Error ? e.message : "Save failed.");
-    } finally {
-      setTplBusy(false);
-    }
-  }
-
-  return (
-    <div className="card agreements-editor">
-      <button
-        type="button"
-        className="agreements-dropdown-bar"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="agreements-dropdown-title">
-          <em className="serif">Agreements</em> — template editor
-        </span>
-        <span className="agreements-dropdown-chevron">{open ? "▾" : "▸"}</span>
-      </button>
-      {open && !unlocked && (
-        <form className="agreements-pin-box" onSubmit={tryUnlock}>
-          <p className="admin-card-sub">Enter the agreements PIN to edit the template (set/change it in Settings).</p>
-          {pinError && (
-            <div className="alert alert-error" role="alert">
-              {pinError}
-            </div>
-          )}
-          <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="Agreements PIN"
-              aria-label="Agreements PIN"
-              style={{ minWidth: "180px", flex: "1" }}
-            />
-            <button className="btn btn-primary" disabled={pinBusy} type="submit">
-              {pinBusy ? "Checking…" : "Unlock"}
-            </button>
-          </div>
-        </form>
-      )}
-      {open && unlocked && (
-        <div className="form agreements-editor-body">
-          <label className="field">
-            <span className="field-label">Template</span>
-            <textarea
-              className="agree-template-input"
-              value={agreementTemplate}
-              onChange={(e) => setAgreementTemplate(e.target.value)}
-              rows={12}
-              maxLength={20000}
-              placeholder={
-                "CLIENT SERVICES AGREEMENT\n\nThis agreement is between {{company}} and {{client_name}}.\nDate: {{date}}\nMonthly price: {{price}} / {{deal_value}}"
-              }
-            />
-            <span className="field-hint">
-              {settingsLoaded
-                ? "Owner workspace only — client accounts never see this. Saved wording applies to new sends."
-                : "Loading the saved template…"}
-            </span>
-          </label>
-          {tplError && (
-            <div className="alert alert-error" role="alert">
-              {tplError}
-            </div>
-          )}
-          {tplSaved && (
-            <div className="alert alert-success" role="status">
-              {tplSaved}
-            </div>
-          )}
-          <button className="btn btn-primary" disabled={tplBusy} type="button" onClick={saveTemplate}>
-            {tplBusy ? "Saving…" : "Save agreement template"}
-          </button>
         </div>
       )}
     </div>
