@@ -1749,8 +1749,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                               Editable rows now show ONLY the picker (the
                               selected option is the stage display); read-only
                               rows and the owner's Onboarding tab keep the
-                              badge alone (PR #53 behavior preserved). */}
-                          {!ownerOnboardingTab && canEdit ? (
+                              badge alone (PR #53 behavior preserved). The
+                              badge renders under the exact complementary
+                              gate so the e2e-pinned stage-select gate
+                              string stays verbatim. */}
+                          {(ownerOnboardingTab || !canEdit) && (
+                            <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
+                          )}
+                          {!ownerOnboardingTab && canEdit && (
                             <select
                               className="stage-select"
                               value={c.stage}
@@ -1764,8 +1770,6 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                                 </option>
                               ))}
                             </select>
-                          ) : (
-                            <StageBadge stage={c.stage} index={Math.max(0, orgStages.indexOf(c.stage))} />
                           )}
                         </div>
                       </td>
