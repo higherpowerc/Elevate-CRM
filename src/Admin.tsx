@@ -9,14 +9,17 @@ import { api } from "./api";
    • Agreements PIN control — moved here from Settings (owner-only; hashed
      storage + the server routes /api/agreements/pin-check and settings
      agreementsPin are untouched).
-   • "Your data" export card — moved here from Settings (same org-scoped
-     /api/export download; functionality unchanged).
+   • "Your data" export card — the OWNER's copy (owner decision 2026-08-29,
+     option b): tenant workspaces keep their own card in Settings; the owner's
+     export lives here. Same org-scoped /api/settings/export download;
+     functionality unchanged.
    Account management stays on the Clients tab (2026-08-18 reorg). This
    component renders in the owner workspace only (App.tsx gates view "admin"
    on isOwnerOrg), so every card below is owner-only. */
 
 export default function Admin() {
-  /* "Your data" export (moved verbatim from Settings) — downloads this
+  /* "Your data" export (the owner's copy; tenant workspaces keep theirs in
+     Settings — owner decision 2026-08-29, option b) — downloads this
      workspace's own data as a JSON file. The server scopes every query by
      org_id, so the file can never contain another tenant's rows. */
   const [exportBusy, setExportBusy] = useState(false);

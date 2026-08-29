@@ -124,8 +124,13 @@ export default function Settings({
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSaved, setPwSaved] = useState<string | null>(null);
 
-  /* Phase 5 prep — tenant self-service: self-serve cancel. (The "Your data"
-     export card moved to the Administration tab, owner 2026-08-28.) */
+  /* Phase 5 prep — self-serve data export state (owner decision 2026-08-29,
+     option b: tenant workspaces keep the "Your data" card HERE in Settings;
+     the owner's copy lives under Administration). */
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  /* Phase 5 prep — tenant self-service: self-serve cancel. */
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -161,6 +166,24 @@ export default function Settings({
     }
   }
 
+  /* Phase 5 prep — self-serve data export: downloads this workspace's own
+     data as a JSON file (server-scoped by org_id; credentials never leave
+     the server). Read-only — available to any settings reader. */
+  async function handleExport() {
+    setExportBusy(true);
+    setExportMsg(null);
+    setExportError(null);
+    try {
+      const res = await api.exportData();
+      setExportMsg(
+        `Downloaded ${res.filename} — it contains every record in this workspace.`,
+      );
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setExportBusy(false);
+    }
+  }
   /* Phase 5 prep — self-serve cancel (org admin only; the server guards the
      owner workspace). Cancellation is effective immediately for sign-in; the
      data is RETAINED 30 days (never hard-deleted). The server clears the
@@ -1573,6 +1596,46 @@ export default function Settings({
             </button>
           </form>
         </div>
+
+        {/* Phase 5 prep — self-serve data export (owner decision
+            2026-08-29, option b): tenant workspaces keep the card HERE —
+            self-serve export of this org's own data. Read-only: any
+            settings reader (org admin or a member with settings access)
+            can download it as a JSON file. The server scopes every query
+            by org_id, so the file can never contain another tenant's rows.
+            NOT rendered for the owner workspace — the owner's copy lives
+            under Administration (Admin.tsx), so no user ever sees the
+            card in two places. */}
+        {!isOwnerOrg && (
+          <div className="card admin-form">
+            <div className="admin-card-head">
+              <h2 className="admin-card-title">Your data</h2>
+              <p className="admin-card-sub">
+                Download everything in this workspace — clients, tasks, invoices, custom field
+                values, support tickets and agreements — as a JSON file. Only this workspace's
+                data is included, and no passwords or sign-in credentials.
+              </p>
+            </div>
+            {exportError && (
+              <div className="alert alert-error" role="alert">
+                {exportError}
+              </div>
+            )}
+            {exportMsg && (
+              <div className="alert alert-success" role="status">
+                {exportMsg}
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={handleExport}
+              disabled={exportBusy}
+            >
+              {exportBusy ? "Preparing…" : "Export my data"}
+            </button>
+          </div>
+        )}
 
       </div>
 

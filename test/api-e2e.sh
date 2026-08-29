@@ -6134,8 +6134,10 @@ else
 fi
 # Owner 2026-08-28 — Administration consolidation: the PIN-gated agreement
 # template editor moved BACK under Administration (Admin.tsx); Documents hosts
-# only the agreement-envelope list again. PIN control + "Your data" export
-# moved from Settings to Admin.tsx too.
+# only the agreement-envelope list again. PIN control moved from Settings to
+# Admin.tsx too. "Your data" export (owner decision 2026-08-29, option b):
+# the OWNER's copy lives under Administration; tenant workspaces KEEP the
+# card in Settings (both render the same org-scoped /api/settings/export).
 if grep -Fq 'agreements-dropdown-title' src/Admin.tsx && grep -Fq 'checkAgreementsPin' src/Admin.tsx && grep -Fq 'agreements-pin-box' src/Admin.tsx && grep -Fq 'AgreementsPinControl' src/Admin.tsx; then
   PASS=$((PASS+1)); echo "  ✓ source: Agreements template editor + PIN control live under Administration (Admin.tsx, PIN-gated dropdown)"
 else
@@ -6146,10 +6148,26 @@ if ! grep -Fq 'agreements-dropdown-title' src/Documents.tsx && ! grep -Fq 'check
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: src/Documents.tsx still hosts (or lost list markers for) the template editor"
 fi
-if grep -Fq 'Export my data' src/Admin.tsx && ! grep -Fq 'Export my data' src/Settings.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: 'Your data' export moved from Settings to Administration (Admin.tsx)"
+if grep -Fq 'Export my data' src/Admin.tsx && grep -Fq 'Export my data' src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: 'Your data' export reachable from tenant Settings AND owner Administration (Admin.tsx); both org-scoped"
 else
-  FAIL=$((FAIL+1)); echo "  ✗ source: 'Your data' export markers wrong in src/Admin.tsx / src/Settings.tsx"
+  FAIL=$((FAIL+1)); echo "  ✗ source: 'Your data' export markers missing from src/Admin.tsx / src/Settings.tsx"
+fi
+if python3 - <<'PY'
+s = open("src/Settings.tsx").read()
+card = s.find('>Your data</h2>')
+gate = s.rfind('{!isOwnerOrg && (', 0, card)
+# The Settings card must sit directly inside an {!isOwnerOrg && (...)} gate
+# (no closing )} between the gate and the card) — the owner workspace does
+# NOT render it here, so no user ever sees the export card twice (owner:
+# Administration; tenant: Settings).
+ok = card != -1 and gate != -1 and ')}' not in s[gate:card]
+raise SystemExit(0 if ok else 1)
+PY
+then
+  PASS=$((PASS+1)); echo "  ✓ source: Settings 'Your data' card is owner-gated ({!isOwnerOrg && ...}) — owner sees the export only under Administration, no double render"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: Settings 'Your data' card not owner-gated (double-render risk)"
 fi
 if grep -Fq 'stripeClient' server/api.ts && grep -Fq 'Stripe not configured' server/api.ts && grep -Fq 'requireAdmin' server/api.ts && grep -Fq 'sendPaymentLinkEmail' server/api.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: payment-link route (owner-only, guarded Stripe client, Resend email)"
