@@ -8972,6 +8972,50 @@ PY
 then PASS=$((PASS+1)); echo "  ✓ 66f: account-edit UI + intake deal value present in source"
 else FAIL=$((FAIL+1)); echo "  ✗ 66f: UI wiring missing"; cat "$PASS_TMP"; fi
 
+echo "-- 66g. Monthly subscription edit + Active/Inactive status (owner 2026-08-29) --"
+# (b) The owner can PATCH/set a client org's monthlySubscriptionAmount (the
+# Edit-account modal's "Monthly subscription ($/mo)" field targets exactly
+# this org field) and the value round-trips through the admin org endpoint.
+S=$(code -b "$JA66" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"monthlySubscriptionAmount":250}' "$B66/api/admin/orgs/$ORG66")
+check "66g: owner PATCH the edit-modal org's monthlySubscriptionAmount 250 -> 200" 200 "$S"
+S=$(code -b "$JA66" "$B66/api/admin/orgs")
+if python3 - "$ORG66" <<'PY' 2>"$PASS_TMP"
+import json, sys
+oid = int(sys.argv[1])
+o = next(x for x in json.load(open('/tmp/body.json'))['orgs'] if x['id'] == oid)
+assert o['monthlySubscriptionAmount'] == 250, o
+print("  ✓ 66g: the set amount round-trips (admin org list shows 250)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66g: monthlySubscriptionAmount round-trips via the admin org endpoint"
+else FAIL=$((FAIL+1)); echo "  ✗ 66g: round-trip failed"; cat "$PASS_TMP"; cat /tmp/body.json; fi
+# (a) Source guard: Active/Inactive status indicators + the subscription edit
+# wiring (the UI must never lose the ability to set the org's amount again).
+if python3 - <<'PY' 2>"$PASS_TMP"
+acc = open('src/Accounts.tsx').read()
+css = open('src/styles.css').read()
+# (a) status indicators: every ACTIVE row shows a green Active chip; the
+# auto-provisioned chip + sold-lead note stay alongside it; the Inactive
+# window shows an explicit Inactive chip.
+assert 'chip-active' in acc and '>Active</span>' in acc, 'missing the Active chip'
+assert 'chip-provisioned' in acc and 'provisionedFromClientName ||' in acc, 'auto-provisioned note must stay'
+assert '>Inactive</span>' in acc, 'missing the Inactive chip'
+assert '.chip-active' in css, 'missing .chip-active CSS'
+active_sec = acc[acc.index('Active client accounts</h3>'):acc.index('Inactive clients</h3>')]
+assert 'chip-active' in active_sec and 'chip-provisioned' in active_sec
+# (b) the Edit-account modal wires the monthly subscription to the ORG:
+# prefilled from the org, PATCHed via adminUpdateOrg in BOTH save branches
+# (linked + no-linked-record), never smuggled through the client PUT.
+assert 'setEditSub(String(o.monthlySubscriptionAmount ?? 0))' in acc, 'sub prefill missing'
+assert 'Monthly subscription ($/mo)' in acc, 'sub field missing'
+assert acc.count('adminUpdateOrg(editing.id, { monthlySubscriptionAmount: subValue })') == 2, 'org sub PATCH must fire in both save branches'
+assert 'Save subscription' in acc, 'org-only save button missing'
+# distinct from deal value: the client PUT body still carries dealValue only
+assert 'dealValue,' in acc
+print("  ✓ 66g: status indicators + monthly-subscription edit wiring locked")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 66g: source guards - Active/Inactive chips + subscription edit"
+else FAIL=$((FAIL+1)); echo "  ✗ 66g: source guards failed:"; cat "$PASS_TMP"; fi
 stop_crm "$MOCK66/srv.pid"
 kill "$MOCK66_PID" 2>/dev/null
 rm -rf "$MOCK66" "$JA66" "$JT66"

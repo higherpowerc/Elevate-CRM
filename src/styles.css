@@ -2489,6 +2489,18 @@ legend.field-label {
   letter-spacing: 0.06em;
   font-weight: 700;
 }
+/* Owner 2026-08-29 — Active-account status chip (green = live account),
+   shown on every Active clients row; auto-provisioned rows keep the blue
+   chip + sold-lead note alongside it. */
+.chip-active {
+  background: var(--green-dim);
+  border-color: rgba(124, 227, 139, 0.3);
+  color: var(--green);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
 /* 3g-3 — sold-lead auto-provisioning notices (owner Dashboard + Admin). */
 .prov-notices {
   display: flex;

@@ -70,11 +70,14 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   /* Owner 2026-08-27 — Edit account: the modal edits the LINKED owner-org
      client record (company name / phone / deal value) + renames the org so
      the Clients cell follows, and can generate a fresh agreement (upgrade
-     path) without ever opening the tenant's CRM. */
+     path) without ever opening the tenant's CRM. Owner 2026-08-29 — it also
+     edits the account's MONTHLY SUBSCRIPTION (editSub → org-level
+     monthlySubscriptionAmount), distinct from the linked record's deal value. */
   const [editing, setEditing] = useState<Org | null>(null);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editDeal, setEditDeal] = useState("");
+  const [editSub, setEditSub] = useState("");
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [agreementBusy, setAgreementBusy] = useState(false);
@@ -338,16 +341,45 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     setEditName(linked ? linked.companyName : o.name);
     setEditPhone(linked ? linked.phone : "");
     setEditDeal(linked ? String(linked.dealValue ?? 0) : "");
+    // Monthly subscription lives on the ORG (the billing book) — prefill from
+    // the org regardless of any linked client record.
+    setEditSub(String(o.monthlySubscriptionAmount ?? 0));
   }
 
-  /** Save: PUT the linked owner-org client record (name / phone / deal value)
-   *  and rename the org in step so the Clients cell reflects the edit. The
-   *  PUT target is safe by construction — clientByOrg is joined from the
-   *  OWNER org's own /api/clients (org-scoped server-side too) and only
-   *  records whose provisionedOrgId === the selected org's id land in it.
+  /** Save: PUT the linked owner-org client record (name / phone / deal value),
+   *  rename the org in step so the Clients cell reflects the edit, and PATCH
+   *  the org's monthly subscription (owner 2026-08-29 — the subscription is
+   *  org-level billing data, NOT part of the client record's deal value).
+   *  Accounts WITHOUT a linked client record can still save their monthly
+   *  subscription (org-only save path). The PUT target is safe by
+   *  construction — clientByOrg is joined from the OWNER org's own
+   *  /api/clients (org-scoped server-side too) and only records whose
+   *  provisionedOrgId === the selected org's id land in it.
    *  The tenant's CRM data is never touched. */
   async function handleSaveEdit() {
-    if (!editing || !editingLinked) return;
+    if (!editing) return;
+    const subTrimmed = editSub.trim();
+    const subValue = subTrimmed === "" ? 0 : Number(subTrimmed);
+    if (!Number.isFinite(subValue) || subValue < 0) {
+      setEditError("Monthly subscription must be a non-negative number.");
+      return;
+    }
+    if (!editingLinked) {
+      // Org-only save: no linked client record, so the name/phone/deal-value
+      // fields stay disabled — the monthly subscription is still saveable.
+      setEditBusy(true);
+      setEditError(null);
+      try {
+        await api.adminUpdateOrg(editing.id, { monthlySubscriptionAmount: subValue });
+        setEditing(null);
+        await load(); // re-join: Subscription column + prefill data
+      } catch (e) {
+        setEditError(e instanceof Error ? e.message : "Save failed.");
+      } finally {
+        setEditBusy(false);
+      }
+      return;
+    }
     const companyName = editName.trim();
     if (!companyName) {
       setEditError("Account name is required.");
@@ -371,6 +403,9 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
       // The org name IS the visible account name (the Clients cell renders
       // o.name) — rename it through the owner-only PATCH so the table follows.
       await api.adminUpdateOrg(editing.id, { name: companyName });
+      // Owner 2026-08-29 — the monthly subscription lives on the ORG (billing
+      // book), separate from the client record's deal value (sales book).
+      await api.adminUpdateOrg(editing.id, { monthlySubscriptionAmount: subValue });
       setEditing(null);
       await load(); // re-join: Deal value column + Clients cell + prefill data
     } catch (e) {
@@ -684,10 +719,12 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         )}
                       </td>
                       <td data-label="Status">
-                        {/* Rows here are ALL active (canceled accounts live in
-                            the Inactive clients window below) — the only
-                            statuses an active row carries are the
-                            auto-provisioned chip or a dash. */}
+                        {/* Owner 2026-08-29 — every active row shows a clear
+                            Active indicator; the auto-provisioned chip + sold
+                            lead note stay alongside it when present. Rows in
+                            this window are ALL active (canceled accounts live
+                            in the Inactive clients window below). */}
+                        <span className="chip chip-active" title="Active — the account is live and the client can sign in">Active</span>
                         {o.provisionedFromClient ? (
                           <>
                             <span
@@ -700,9 +737,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                               from sold lead &middot; <b>{o.provisionedFromClientName || "—"}</b>
                             </span>
                           </>
-                        ) : (
-                          <span className="acc-muted">&mdash;</span>
-                        )}
+                        ) : null}
                       </td>
                       <td className="acc-line" data-label="Phone">
                         {linked?.phone ? (
@@ -902,12 +937,9 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                       )}
                     </td>
                     <td data-label="Status">
-                      <span
-                        className="chip chip-archived"
-                        title="Inactive — the account is canceled, its data is retained and its logins are blocked"
-                      >
-                        inactive
-                      </span>
+                      {/* Owner 2026-08-29 — explicit Inactive indicator (the
+                          chip text is uppercased by the shared chip CSS). */}
+                      <span className="chip chip-archived" title="Inactive — the account is canceled, its data is retained and its logins are blocked">Inactive</span>
                     </td>
                     <td className="acc-line" data-label="Email">
                       {o.loginEmail ? (
@@ -1077,8 +1109,25 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                       aria-label="Deal value in dollars"
                     />
                   </label>
+                  {/* Owner 2026-08-29 — the account's monthly subscription.
+                      ORG-level billing data (PATCH /api/admin/orgs/:id) — the
+                      Subscription column reads it; distinct from the deal
+                      value above, which lives on the linked client record. */}
+                  <label className="field">
+                    <span className="field-label">Monthly subscription ($/mo)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={editSub}
+                      onChange={(e) => setEditSub(e.target.value)}
+                      aria-label="Monthly subscription in dollars per month"
+                    />
+                  </label>
                   <p className="field-hint">
-                    Edits the client's own record in your workspace — the account's CRM data is not touched.
+                    Edits the client's own record in your workspace — the account's CRM data is not touched.{" "}
+                    <b>Deal value</b> is the sales number on the client record; <b>Monthly subscription</b> is what
+                    this account is billed each month (shown in the Subscription column).
                   </p>
                   <div className="field intake-block">
                     <span className="field-label">Agreement</span>
@@ -1137,9 +1186,26 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                     <span className="field-label">Deal value ($)</span>
                     <input type="number" min={0} value="" disabled aria-label="Deal value (no linked client record)" />
                   </label>
+                  {/* Owner 2026-08-29 — the monthly subscription is ORG-level
+                      billing data, so it stays editable even without a linked
+                      client record (org-only save path in handleSaveEdit). */}
+                  <label className="field">
+                    <span className="field-label">Monthly subscription ($/mo)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={editSub}
+                      onChange={(e) => setEditSub(e.target.value)}
+                      aria-label="Monthly subscription in dollars per month (no linked client record)"
+                    />
+                  </label>
                   <div className="modal-actions">
-                    <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>
+                    <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)} disabled={editBusy}>
                       Close
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={editBusy}>
+                      {editBusy ? "Saving…" : "Save subscription"}
                     </button>
                   </div>
                 </>
