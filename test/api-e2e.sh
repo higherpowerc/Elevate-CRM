@@ -4325,17 +4325,17 @@ if [ "$(grep -c '{!ownerLeadsTab && <th>Stage</th>}' src/Clients.tsx)" -ge 2 ] &
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Lost/DNC Stage gating missing from src/Clients.tsx"
 fi
-# Owner direction 2026-08-18 (payment-status PR): the owner colgroup layout
-# changed — owner Leads is now 7 cols 19/15/11/9/17/10/19 (the Payment column
-# sits between Next action and Actions); owner Onboarding/Clients 8 cols
-# 17/14/10/8/13/12/10/16; tenant views keep Stage, 7 cols 21/15/11/8/15/12/18.
-if grep -Fq 'ownerLeadsTab ? (' src/Clients.tsx && grep -Fq 'width: "19%"' src/Clients.tsx && grep -Fq 'width: "9%"' src/Clients.tsx && grep -Fq 'width: "17%"' src/Clients.tsx && grep -Fq 'width: "10%"' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: owner Leads colgroup is the 7-col 19/15/11/9/17/10/19 branch (sums 100%)"
+# Owner direction 2026-08-18 (payment-status PR) + 2026-08-29 (Type column):
+# every variant gains an 8% "Type" column between name + contact — owner
+# Leads 8 cols 17/8/14/10/8/16/9/18; owner Onboarding/Clients 9 cols
+# 15/8/13/9/8/12/11/8/16; tenant 8 cols 19/8/14/10/8/14/11/16 (Payment kept).
+if grep -Fq 'ownerLeadsTab ? (' src/Clients.tsx && grep -Fq 'width: "17%"' src/Clients.tsx && grep -Fq 'width: "9%"' src/Clients.tsx && grep -Fq 'width: "18%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Leads colgroup is the 8-col 17/8/14/10/8/16/9/18 branch (Type column, sums 100%)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: 7-col owner Leads colgroup branch missing in src/Clients.tsx"
 fi
-if grep -Fq 'width: "14%"' src/Clients.tsx && grep -Fq 'width: "13%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx && grep -Fq 'width: "21%"' src/Clients.tsx && grep -Fq 'width: "18%"' src/Clients.tsx; then
-  PASS=$((PASS+1)); echo "  ✓ source: owner Onboarding/Clients 8-col (17/14/10/8/13/12/10/16) + tenant 7-col (21/15/11/8/15/12/18) colgroup branches retained"
+if grep -Fq 'width: "13%"' src/Clients.tsx && grep -Fq 'width: "19%"' src/Clients.tsx && grep -Fq 'width: "14%"' src/Clients.tsx && grep -Fq 'width: "16%"' src/Clients.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ source: owner Onboarding/Clients 9-col (15/8/13/9/8/12/11/8/16) + tenant 8-col (19/8/14/10/8/14/11/16) colgroup branches retained (Type column)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: 8-col owner / 7-col tenant colgroup branches missing from src/Clients.tsx"
 fi
@@ -4350,13 +4350,13 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage td missing from $NEWEST_JS39"
   fi
-  if grep -Eq 'width:"19%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"15%"}}' "$NEWEST_JS39"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: owner Leads 7-col colgroup present (19/15… sequence, Payment column added)"
+  if grep -Eq 'width:"17%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"8%"}}' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner Leads 8-col colgroup present (17/8… sequence, Type + Payment columns)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 7-col owner Leads colgroup missing from $NEWEST_JS39"
   fi
-  if grep -Eq 'width:"17%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"14%"}}' "$NEWEST_JS39" && grep -Eq 'width:"21%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"15%"}}' "$NEWEST_JS39"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle: owner 8-col (17/14… seq) + tenant 7-col (21/15… seq) colgroups retained"
+  if grep -Eq 'width:"15%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"8%"}}' "$NEWEST_JS39" && grep -Eq 'width:"19%"}},void 0,!1,void 0,this\),[A-Za-z0-9$_]+\.jsxDEV\("col",{style:{width:"8%"}}' "$NEWEST_JS39"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle: owner 9-col (15/8… seq) + tenant 8-col (19/8… seq) colgroups retained (Type column)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 8-col/7-col colgroup sequences missing from $NEWEST_JS39"
   fi
