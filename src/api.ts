@@ -304,6 +304,7 @@ export const api = {
   updateSettings: (data: {
     orgName?: string;
     accentColor?: string;
+    dashboardColor?: string;
     stages?: string[];
     customFields?: CustomFieldDef[];
     serviceModel?: OrgSettings["serviceModel"];

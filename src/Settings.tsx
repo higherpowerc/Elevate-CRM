@@ -79,6 +79,8 @@ export default function Settings({
   /* Workspace (branding) */
   const [orgName, setOrgName] = useState("");
   const [accentColor, setAccentColor] = useState("#d6ff3f");
+  // Dashboard color picker (owner 2026-08-29) — '' = theme defaults.
+  const [dashboardColor, setDashboardColor] = useState("");
 
   /* Custom fields (Phase 3b; 3f-1 adds select fields with options) */
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
@@ -405,6 +407,7 @@ export default function Settings({
       setSettings(settings);
       setOrgName(settings.orgName);
       setAccentColor(settings.accentColor);
+      setDashboardColor(settings.dashboardColor ?? "");
       setCustomFields(settings.customFields);
       setServiceModel(settings.serviceModel);
       setDeliveryType(settings.deliveryType);
@@ -439,7 +442,7 @@ export default function Settings({
     setSaved(null);
     setBusy(true);
     try {
-      await api.updateSettings({ orgName: orgName.trim(), accentColor });
+      await api.updateSettings({ orgName: orgName.trim(), accentColor, dashboardColor });
       setSaved("Workspace branding saved.");
       await load(); // refresh orgName/accent from the server
     } catch (err) {
@@ -938,7 +941,8 @@ export default function Settings({
             <h2 className="admin-card-title">Branding</h2>
             <p className="admin-card-sub">
               The workspace name shows in the header and browser tab; the accent colors the
-              header mark and active tab.
+              header mark and active tab, and the dashboard color sets the dashboard's
+              numbers and text.
             </p>
           </div>
           <form onSubmit={saveWorkspace} className="form">
@@ -975,6 +979,32 @@ export default function Settings({
                   disabled={!canEdit}
                 />
               </div>
+            </div>
+            <div className="field">
+              <span className="field-label">Dashboard numbers &amp; text</span>
+              <div className="accent-row">
+                <input
+                  type="color"
+                  className="color-input"
+                  value={dashboardColor || "#f2f1ec"}
+                  onChange={(e) => setDashboardColor(e.target.value)}
+                  aria-label="Dashboard numbers and text color"
+                  disabled={!canEdit}
+                />
+                <input
+                  className="accent-hex"
+                  value={dashboardColor}
+                  onChange={(e) => setDashboardColor(e.target.value)}
+                  maxLength={7}
+                  placeholder="#f2f1ec"
+                  aria-label="Dashboard numbers and text color hex"
+                  disabled={!canEdit}
+                />
+              </div>
+              <span className="field-hint">
+                Colors the figures and labels on your dashboard. Leave empty for the theme
+                default.
+              </span>
             </div>
             {canEdit && (
               <button className="btn btn-primary" disabled={busy} type="submit">

@@ -264,7 +264,7 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
   ));
 
   return (
-    <div className="page page-stack">
+    <div className="page page-stack dashboard">
       <div className="page-head">
         <div>
           <h1>

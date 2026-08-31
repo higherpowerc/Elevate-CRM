@@ -471,6 +471,9 @@ export interface User {
   stages?: string[];
   /** The tenant's brand accent (hex). */
   accentColor?: string;
+  /** Dashboard color picker (owner 2026-08-29): the account's dashboard
+   *  numbers/text color (hex); unset/empty -> theme defaults. */
+  dashboardColor?: string;
   created_at?: string;
 }
 
@@ -581,6 +584,8 @@ export interface CreatedOrgUser {
 export interface OrgSettings {
   orgName: string;
   accentColor: string;
+  /** Dashboard color picker (owner 2026-08-29): '' = theme defaults. */
+  dashboardColor: string;
   stages: string[];
   /** Client count per stage (all clients incl. archived) — used by Settings
    *  to warn before a stage with clients is removed. */

@@ -673,6 +673,11 @@ db.exec(`
   if (!orgCols.some((c) => c.name === "accent_color")) {
     db.exec(`ALTER TABLE orgs ADD COLUMN accent_color TEXT NOT NULL DEFAULT '${DEFAULT_ACCENT}'`);
   }
+  if (!orgCols.some((c) => c.name === "dashboard_color")) {
+    // Dashboard color picker (owner 2026-08-29): per-account color for the
+    // dashboard's KPI numbers/text. '' = unset -> theme defaults.
+    db.exec("ALTER TABLE orgs ADD COLUMN dashboard_color TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 /**
@@ -1394,6 +1399,7 @@ export interface OrgRow {
   name: string;
   stages: string;
   accent_color: string;
+  dashboard_color: string;
   custom_fields: string;
   /** Adaptive intake Phase 1: account-level vertical config. */
   service_model: string;
@@ -1438,7 +1444,7 @@ export interface OrgRow {
 export function getOrg(orgId: number): OrgRow | null {
   return db
     .query(
-      "SELECT id, name, stages, accent_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, agreements_pin_hash, status, canceled_at, retention_until, allow_self_schedule, created_at FROM orgs WHERE id = ?",
+      "SELECT id, name, stages, accent_color, dashboard_color, custom_fields, service_model, delivery_type, industry, intake_opts, custom_intake_groups, vertical_key, monthly_subscription_amount, revenue_model, agreement_template, agreements_pin_hash, status, canceled_at, retention_until, allow_self_schedule, created_at FROM orgs WHERE id = ?",
     )
     .get(orgId) as OrgRow | null;
 }
