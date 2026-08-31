@@ -545,6 +545,23 @@ export interface Org {
    *  linked sold lead on auto-provision; editable via the owner. Owner-only
    *  admin data (never in tenant responses). */
   tier?: PackageTier;
+  /** Owner 2026-08-27 — the account's AUTO-SEEDED onboarding checklist
+   *  progress (done/total item counts; 0/0 until a tier is set). The items
+   *  themselves come from /api/admin/orgs/:id/onboarding. Owner-only admin
+   *  data (never in tenant responses). */
+  onboardingTotal?: number;
+  onboardingDone?: number;
+}
+
+/** Owner 2026-08-27 — one item of a client account's auto-seeded onboarding
+ *  checklist (the package-selector feature). Items are chosen by the account's
+ *  package tier at creation and re-seeded when the tier changes. Owner-only
+ *  admin data: tenants never see the checklist. */
+export interface OnboardingItem {
+  id: number;
+  label: string;
+  position: number;
+  done: boolean;
 }
 /** 3g-3: an owner notification that a sold lead got auto-provisioned. */
 export interface ProvisionEvent {

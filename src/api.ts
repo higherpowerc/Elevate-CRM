@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User } from "./types";
+import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -233,6 +233,17 @@ export const api = {
     ),
   adminRestoreOrg: (id: number) =>
     request<{ ok: true; orgId: number }>(`/api/admin/orgs/${id}/restore`, { method: "POST" }),
+  /* Owner 2026-08-27 — the per-tier AUTO-SEEDED onboarding checklist for a
+     client account (the package-selector feature). GET reads the account's
+     tier + checklist; PATCH toggles one item's done flag. Owner-only: members
+     and tenants get a 403 from every /api/admin route. */
+  adminGetOnboarding: (orgId: number) =>
+    request<{ tier: string; items: OnboardingItem[] }>(`/api/admin/orgs/${orgId}/onboarding`),
+  adminToggleOnboardingItem: (orgId: number, itemId: number, done: boolean) =>
+    request<{ ok: true; tier: string; items: OnboardingItem[] }>(
+      `/api/admin/orgs/${orgId}/onboarding`,
+      { method: "PATCH", body: JSON.stringify({ id: itemId, done }) },
+    ),
   /* Owner request 2026-08-14 — owner edits a client account's billing: the
      monthly subscription amount they pay (USD >= 0). Owner direction
      2026-08-15 — the per-account revenue-model selector is REMOVED (one

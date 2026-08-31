@@ -1212,6 +1212,27 @@ db.exec(`
     db.exec("ALTER TABLE clients ADD COLUMN timezone TEXT NOT NULL DEFAULT ''");
   }
 }
+
+/**
+ * Package-selector onboarding checklist (owner 2026-08-27 — the auto-seeded
+ * per-tier checklist). Idempotent — safe on every boot.
+ *
+ * onboarding_items: the OWNER-only checklist auto-seeded for every CLIENT
+ * ACCOUNT (org) at creation, its items chosen by the account's package tier
+ * ('' seeds none; tier1 Website → tier2 +CRM → tier3 +Lead gen are
+ * cumulative; tier4 is the custom-package track). Re-seeded whenever the
+ * account's tier changes — labels that survive the tier change keep their
+ * done state. Owner-only admin data: every read and write goes through
+ * owner-gated /api/admin routes; tenant orgs never see it.
+ */
+db.exec(`CREATE TABLE IF NOT EXISTS onboarding_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id INTEGER NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 /**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
