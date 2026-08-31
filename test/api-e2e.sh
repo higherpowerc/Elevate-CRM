@@ -9991,6 +9991,80 @@ else FAIL=$((FAIL+1)); echo "  ✗ 73e: projectedPipeline != 7321: $(cat /tmp/bo
 stop_crm "$MOCK73/srv.pid"; sleep 0.3
 rm -rf "$MOCK73" "$J73"
 echo "  ✓ 73: Lead Opportunities = active-lead deal value only (maybe/lost/archived excluded)"
+echo "== 74. Dashboard color picker (owner 2026-08-29): per-account dashboard numbers/text color =="
+echo "-- 74a. Validation mirrors the accent rule --"
+check "74a: bad dashboardColor -> 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"dashboardColor":"blue"}' "$BASE/api/settings")
+check "74a: 3-digit hex dashboardColor -> 400" 400 $(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"dashboardColor":"#6fb"}' "$BASE/api/settings")
+echo "-- 74b. Owner save + round-trip --"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"dashboardColor":"#6fb3ff"}' "$BASE/api/settings")
+check "74b: owner sets dashboardColor -> 200" 200 "$S"
+grep -q '"dashboardColor":"#6fb3ff"' /tmp/body.json && echo "  ✓ 74b: PUT response echoes the saved color" || { FAIL=$((FAIL+1)); echo "  ✗ 74b: PUT response: $(cat /tmp/body.json)"; }
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "74b: owner GET settings -> 200" 200 "$S"
+grep -q '"dashboardColor":"#6fb3ff"' /tmp/body.json && echo "  ✓ 74b: settings round-trips dashboardColor" || { FAIL=$((FAIL+1)); echo "  ✗ 74b: settings: $(cat /tmp/body.json)"; }
+S=$(code -b "$JAR" "$BASE/api/auth/me")
+check "74b: owner me -> 200" 200 "$S"
+grep -q '"dashboardColor":"#6fb3ff"' /tmp/body.json && echo "  ✓ 74b: me carries the account color (App root drives --dash-color from it)" || { FAIL=$((FAIL+1)); echo "  ✗ 74b: me: $(cat /tmp/body.json)"; }
+echo "-- 74c. Per-account isolation: a tenant keeps its own color --"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Dash Color Tenant Co","email":"dash-color-tenant@example.com","password":"dashcolor123"}' "$BASE/api/admin/orgs")
+check "74c: owner provisions tenant org -> 201" 201 "$S"
+T74_ORG=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+JART74=$(mktemp)
+S=$(code -c "$JART74" -b "$JART74" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"dash-color-tenant@example.com","password":"dashcolor123"}' "$BASE/api/auth/login")
+check "74c: tenant login -> 200" 200 "$S"
+S=$(code -b "$JART74" "$BASE/api/settings")
+check "74c: tenant GET settings -> 200" 200 "$S"
+grep -q '"dashboardColor":""' /tmp/body.json && echo "  ✓ 74c: tenant starts unset (the owner's pick does not leak)" || { FAIL=$((FAIL+1)); echo "  ✗ 74c: tenant settings: $(cat /tmp/body.json)"; }
+S=$(code -b "$JART74" -X PUT -H 'Content-Type: application/json' \
+  -d '{"dashboardColor":"#7ce38b"}' "$BASE/api/settings")
+check "74c: tenant sets its own dashboardColor -> 200" 200 "$S"
+S=$(code -b "$JART74" "$BASE/api/settings")
+grep -q '"dashboardColor":"#7ce38b"' /tmp/body.json && echo "  ✓ 74c: tenant round-trips its own color" || { FAIL=$((FAIL+1)); echo "  ✗ 74c: tenant settings after save: $(cat /tmp/body.json)"; }
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"dashboardColor":"#6fb3ff"' /tmp/body.json && echo "  ✓ 74c: the owner's color is untouched by the tenant's save" || { FAIL=$((FAIL+1)); echo "  ✗ 74c: owner settings: $(cat /tmp/body.json)"; }
+echo "-- 74d. Empty pick resets to the theme defaults --"
+S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
+  -d '{"dashboardColor":""}' "$BASE/api/settings")
+check "74d: empty dashboardColor -> 200 (reset)" 200 "$S"
+S=$(code -b "$JAR" "$BASE/api/settings")
+grep -q '"dashboardColor":""' /tmp/body.json && echo "  ✓ 74d: cleared — the dashboard falls back to theme defaults" || { FAIL=$((FAIL+1)); echo "  ✗ 74d: settings: $(cat /tmp/body.json)"; }
+echo "-- 74e. Dashboard-theming wiring (source + built bundle) --"
+if grep -Fq '"--dash-color"' src/App.tsx && grep -Fq 'dashboardColor' src/App.tsx && grep -Fq 'style={brandStyle}' src/App.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ 74e: App.tsx drives --dash-color from the account setting on the app root"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 74e: App.tsx missing the --dash-color wiring"
+fi
+if grep -Fq 'dashboardColor' src/Settings.tsx && grep -Fq 'Dashboard numbers' src/Settings.tsx && grep -Fq 'accent-row' src/Settings.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ 74e: Settings branding window carries the dashboard color bar (same accent-row UI as the accent)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 74e: Settings.tsx missing the dashboard color control"
+fi
+if grep -Fq 'page page-stack dashboard' src/Dashboard.tsx && grep -Fq '.dashboard .kpi-value' src/styles.css && grep -Fq 'var(--dash-color' src/styles.css; then
+  PASS=$((PASS+1)); echo "  ✓ 74e: dashboard KPI numbers/text follow the pick (scoped .dashboard overrides, theme fallbacks when unset)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 74e: dashboard theming CSS missing"
+fi
+NEWEST_JS74=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+NEWEST_CSS74=$(ls -t dist/index-*.css 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS74" ] && grep -Fq -- '--dash-color' "$NEWEST_JS74" && grep -Fq 'Dashboard numbers' "$NEWEST_JS74"; then
+  PASS=$((PASS+1)); echo "  ✓ 74e: built bundle carries the --dash-color wiring + the branding control"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 74e: bundle missing the dashboard-color surface ($NEWEST_JS74)"
+fi
+if [ -n "$NEWEST_CSS74" ] && grep -Fq '.dashboard .kpi-value' "$NEWEST_CSS74"; then
+  PASS=$((PASS+1)); echo "  ✓ 74e: built CSS carries the scoped dashboard KPI overrides"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 74e: built CSS missing .dashboard .kpi-value ($NEWEST_CSS74)"
+fi
+echo "-- 74f. Cleanup --"
+code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$T74_ORG" > /dev/null
+rm -f "$JART74"
+echo "  ✓ 74f: dash-color tenant org removed"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

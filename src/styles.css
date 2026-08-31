@@ -1395,6 +1395,30 @@ legend.field-label {
   font-size: 12px;
   color: var(--muted-2);
 }
+
+/* Dashboard color picker (owner 2026-08-29): when the account sets a
+   dashboard color, App.tsx puts --dash-color on the app root and the
+   dashboard's KPI figures, labels and notes take it. Scoped to the dashboard
+   page (.dashboard) so Finance / clients-directory KPIs keep the theme
+   palette; every rule falls back to the theme default when unset. */
+.dashboard .kpi-value {
+  color: var(--dash-color, var(--ink));
+}
+.dashboard .kpi-value.lime {
+  color: var(--dash-color, var(--lime));
+}
+.dashboard .kpi-value.green {
+  color: var(--dash-color, var(--green));
+}
+.dashboard .kpi-value.red {
+  color: var(--dash-color, var(--danger));
+}
+.dashboard .kpi-label {
+  color: var(--dash-color, var(--muted));
+}
+.dashboard .kpi-note {
+  color: var(--dash-color, var(--muted-2));
+}
 /* Owner Dashboard — 2026-08-26: the "Lost" card renders exactly like the
    sibling count cards (.card.kpi with a link-btn "View →"); the inline
    Restore/Delete list (.lost-kpi-*) existed only for the earlier in-card

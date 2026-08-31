@@ -121,6 +121,9 @@ export interface User {
   stages: string[];
   /** The tenant's brand accent (hex) — the app shell uses it for the accent. */
   accentColor: string;
+  /** Dashboard color picker (owner 2026-08-29): the account's dashboard
+   *  numbers/text color (hex); '' = unset -> theme defaults. */
+  dashboardColor: string;
   created_at: string;
 }
 
@@ -163,6 +166,7 @@ export function toUser(row: UserRow): User {
     orgName: org?.name ?? "",
     stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
     accentColor: org?.accent_color ?? DEFAULT_ACCENT,
+    dashboardColor: org?.dashboard_color ?? "",
     created_at: row.created_at,
   };
 }

@@ -3413,6 +3413,8 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       settings: {
         orgName: org.name,
         accentColor: org.accent_color,
+        // Dashboard color picker (owner 2026-08-29): '' = theme defaults.
+        dashboardColor: org.dashboard_color ?? "",
         stages: parseStages(org.stages),
         stageCounts: orgStageCounts(orgId),
         customFields: parseCustomFields(org.custom_fields),
@@ -3468,6 +3470,15 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       const hex = typeof body.accentColor === "string" ? body.accentColor.trim() : "";
       if (!ACCENT_RE.test(hex)) return err("Accent color must be a hex color like #d6ff3f.", 400);
       sets.push("accent_color = ?");
+      params.push(hex.toLowerCase());
+    }
+    if (body.dashboardColor !== undefined) {
+      // Dashboard color picker (owner 2026-08-29): '' clears the pick (theme
+      // defaults); otherwise a hex color, validated exactly like the accent.
+      const hex = typeof body.dashboardColor === "string" ? body.dashboardColor.trim() : "";
+      if (hex !== "" && !ACCENT_RE.test(hex))
+        return err("Dashboard color must be a hex color like #6fb3ff.", 400);
+      sets.push("dashboard_color = ?");
       params.push(hex.toLowerCase());
     }
 
@@ -3701,6 +3712,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       settings: {
         orgName: updated.name,
         accentColor: updated.accent_color,
+        dashboardColor: updated.dashboard_color ?? "",
         stages: parseStages(updated.stages),
         customFields: parseCustomFields(updated.custom_fields),
         serviceModel: updated.service_model,

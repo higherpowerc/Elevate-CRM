@@ -135,9 +135,19 @@ export default function App() {
     document.title = orgName ? `${orgName} — CRM` : "Revzenta — CRM";
   }, [orgName]);
 
-  const accentStyle = useMemo<CSSProperties | undefined>(
-    () => (user?.accentColor ? ({ "--accent": user.accentColor } as CSSProperties) : undefined),
-    [user?.accentColor],
+  /* Branding + dashboard color picker (owner 2026-08-29): the same
+     per-account mechanism drives both custom properties on the app root —
+     --accent (brand accent) and --dash-color (dashboard KPI numbers/text).
+     Unset dashboardColor (empty) keeps the theme defaults via CSS fallbacks. */
+  const brandStyle = useMemo<CSSProperties | undefined>(
+    () =>
+      user?.accentColor || user?.dashboardColor
+        ? ({
+            ...(user?.accentColor ? { "--accent": user.accentColor } : null),
+            ...(user?.dashboardColor ? { "--dash-color": user.dashboardColor } : null),
+          } as CSSProperties)
+        : undefined,
+    [user?.accentColor, user?.dashboardColor],
   );
 
   const stages = useMemo(() => user?.stages ?? DEFAULT_STAGES, [user?.stages]);
@@ -356,7 +366,7 @@ export default function App() {
   const brandMark = isOwner ? "R" : initials(orgName) || "R";
 
   return (
-    <div className={isOwnerOrg ? "app owner-workspace" : "app"} style={accentStyle}>
+    <div className={isOwnerOrg ? "app owner-workspace" : "app"} style={brandStyle}>
       <PiiContext.Provider value={piiHidden}>
         {/* Owner 2026-08-28 — nav moved to a LEFT SIDEBAR ("Put the
             navigation menu on the left side of the screen"). .shell is a
