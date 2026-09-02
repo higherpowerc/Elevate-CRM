@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { fmtDate, money, type Client, type Org } from "./types";
+import { fmtDate, money, type Client, type OnboardingItem, type Org } from "./types";
 import { PACKAGE_TIERS, TIER_LABELS, TIER_SHORT_LABELS, type PackageTier } from "./types";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
@@ -97,6 +97,16 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     email: string;
     password: string;
   } | null>(null);
+  /* Owner 2026-08-27 — the per-tier AUTO-SEEDED onboarding checklist window:
+     the account whose checklist is open, its tier + items, and the item being
+     toggled. Items are seeded server-side from the account's package tier at
+     creation and re-seeded when the tier changes; the owner ticks items off
+     here. Owner-only: the endpoints are /api/admin. */
+  const [onboardingOrg, setOnboardingOrg] = useState<Org | null>(null);
+  const [onboardingTier, setOnboardingTier] = useState("");
+  const [onboardingItems, setOnboardingItems] = useState<OnboardingItem[] | null>(null);
+  const [onboardingError, setOnboardingError] = useState("");
+  const [togglingItemId, setTogglingItemId] = useState<number | null>(null);
 
   /* Create-account form */
   const [name, setName] = useState("");
@@ -325,6 +335,50 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [resetResult]);
+
+  /* ── Onboarding checklist (owner 2026-08-27) ──────────────────────────── */
+  /** Open the account's auto-seeded checklist (items were seeded from the
+   *  account's package tier at creation). */
+  async function openOnboarding(o: Org) {
+    setOnboardingOrg(o);
+    setOnboardingTier("");
+    setOnboardingItems(null);
+    setOnboardingError("");
+    try {
+      const d = await api.adminGetOnboarding(o.id);
+      setOnboardingTier(d.tier);
+      setOnboardingItems(d.items);
+    } catch (e) {
+      setOnboardingError(e instanceof Error ? e.message : "Failed to load the checklist.");
+    }
+  }
+
+  /** Tick/untick one checklist item; the row's progress count refreshes with
+   *  the accounts list. */
+  async function toggleOnboardingItem(item: OnboardingItem) {
+    if (!onboardingOrg || togglingItemId !== null) return;
+    setTogglingItemId(item.id);
+    setOnboardingError("");
+    try {
+      const d = await api.adminToggleOnboardingItem(onboardingOrg.id, item.id, !item.done);
+      setOnboardingItems(d.items);
+      await load();
+    } catch (e) {
+      setOnboardingError(e instanceof Error ? e.message : "Failed to update the checklist.");
+    } finally {
+      setTogglingItemId(null);
+    }
+  }
+
+  /* Esc closes the onboarding-checklist window (same as every other modal). */
+  useEffect(() => {
+    if (!onboardingOrg) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setOnboardingOrg(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onboardingOrg]);
 
   /* ── Edit account (owner 2026-08-27) ──────────────────────────────────── */
   /** The owner-org client record linked to the account being edited (null
@@ -841,6 +895,20 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           >
                             Edit
                           </button>
+                          {/* Owner 2026-08-27 — the per-tier auto-seeded
+                              onboarding checklist (package-selector feature).
+                              Button label carries the live progress count. */}
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            title="Open this account's auto-seeded onboarding checklist (driven by its package tier)"
+                            aria-label={`Onboarding checklist for ${o.name}`}
+                            disabled={viewingOrgId !== null || resettingOrgId !== null}
+                            onClick={() => openOnboarding(o)}
+                          >
+                            {o.onboardingTotal
+                              ? `Onboarding (${o.onboardingDone ?? 0}/${o.onboardingTotal})`
+                              : "Onboarding"}
+                          </button>
                           {/* Owner 2026-08-27 (Inactive clients, cb1c9700) —
                               cancel the account WITHOUT deleting: the row
                               moves to the Inactive clients window below with
@@ -980,6 +1048,19 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         >
                           {restoringOrgId === o.id ? "Restoring…" : "Restore"}
                         </button>
+                        {/* Owner 2026-08-27 — the checklist stays reachable on
+                            an inactive account too (onboarding can continue). */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          title="Open this account's auto-seeded onboarding checklist (driven by its package tier)"
+                          aria-label={`Onboarding checklist for ${o.name}`}
+                          disabled={markingOrgId !== null || restoringOrgId !== null}
+                          onClick={() => openOnboarding(o)}
+                        >
+                          {o.onboardingTotal
+                            ? `Onboarding (${o.onboardingDone ?? 0}/${o.onboardingTotal})`
+                            : "Onboarding"}
+                        </button>
                         <button
                           className="icon-btn danger"
                           title="Permanently delete this inactive account and all of its data"
@@ -1042,6 +1123,78 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
             </div>
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={() => setResetResult(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Owner 2026-08-27 — the account's AUTO-SEEDED onboarding checklist
+          (package-selector feature). Items were seeded from the account's
+          package tier at creation and re-seed when the tier changes; the owner
+          ticks items off here. Owner-only surface (Client accounts hub). */}
+      {onboardingOrg && (
+        <div className="overlay" role="dialog" aria-modal="true" aria-label="Onboarding checklist">
+          <div className="modal modal-sm">
+            <div className="modal-head">
+              <h2>Onboarding checklist</h2>
+              <button className="icon-btn" onClick={() => setOnboardingOrg(null)} aria-label="Close">
+                ✕
+              </button>
+            </div>
+            <div className="confirm-body">
+              <p className="confirm-delete-msg">
+                <strong className={pii ? "pii-blur" : undefined}>{onboardingOrg.name}</strong>
+                {onboardingTier ? (
+                  <>
+                    {" — package: "}
+                    <span className="chip chip-tier">
+                      {TIER_SHORT_LABELS[onboardingTier as PackageTier] ?? onboardingTier}
+                    </span>
+                  </>
+                ) : (
+                  " — no package tier set yet"
+                )}
+              </p>
+              {onboardingError && (
+                <div className="alert alert-error" role="alert">
+                  {onboardingError}
+                </div>
+              )}
+              {onboardingItems === null ? (
+                <div className="skeleton-block" aria-label="Loading checklist" />
+              ) : onboardingItems.length === 0 ? (
+                <p className="created-hint">
+                  No checklist items yet — set a package tier on this account and its checklist is
+                  seeded automatically.
+                </p>
+              ) : (
+                <ul className="onb-list">
+                  {onboardingItems.map((it) => (
+                    <li key={it.id} className={it.done ? "onb-item onb-done" : "onb-item"}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={it.done}
+                          disabled={togglingItemId !== null}
+                          onChange={() => toggleOnboardingItem(it)}
+                        />
+                        <span>{it.label}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {onboardingItems && onboardingItems.length > 0 && (
+                <p className="created-hint">
+                  {onboardingItems.filter((i) => i.done).length}/{onboardingItems.length} complete —
+                  items follow the account's package tier (upgrade keeps checked website/CRM steps).
+                </p>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setOnboardingOrg(null)}>
                 Done
               </button>
             </div>

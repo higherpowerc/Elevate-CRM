@@ -10065,6 +10065,125 @@ echo "-- 74f. Cleanup --"
 code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$T74_ORG" > /dev/null
 rm -f "$JART74"
 echo "  ✓ 74f: dash-color tenant org removed"
+echo "== 75. Package-selector onboarding checklist (owner 2026-08-27): auto-seeded per tier at account creation, re-seeds on tier change, owner-only =="
+# Fresh owner login (earlier sections may have logged out).
+J75=$(mktemp)
+S=$(code -c "$J75" -b "$J75" -X POST -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/auth/login")
+check "75: owner login -> 200" 200 "$S"
+echo "-- 75a. Account created with tier3 seeds the tier3 checklist --"
+S=$(code -b "$J75" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Checklist Tier3 Co","email":"checklist-tier3@example.com","password":"check12345","tier":"tier3"}' "$BASE/api/admin/orgs")
+check "75a: owner creates tier3 account -> 201" 201 "$S"
+ORG75=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+S=$(code -b "$J75" "$BASE/api/admin/orgs/$ORG75/onboarding")
+check "75a: owner GET account onboarding -> 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert d.get('tier') == 'tier3', d
+labels = [i['label'] for i in d['items']]
+# tier3: 4 website + 3 CRM + 2 lead-gen = 9 items
+assert len(labels) == 9, labels
+assert labels[0] == 'Kickoff call with the client', labels
+assert 'Set up the lead-gen capture pipeline' in labels, labels
+assert all(not i['done'] for i in d['items']), d['items']
+print("  ✓ 75a: tier3 account seeded with its 9-item checklist, all open")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 75a: per-tier checklist auto-seeded on create-account"
+else FAIL=$((FAIL+1)); echo "  ✗ 75a: checklist seed wrong: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 75b. Toggle an item done; the orgs list carries progress --"
+ITEM75=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['items'][0]['id'])")
+S=$(code -b "$J75" -X PATCH -H 'Content-Type: application/json' \
+  -d "{\"id\":$ITEM75,\"done\":true}" "$BASE/api/admin/orgs/$ORG75/onboarding")
+check "75b: owner toggles item done -> 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+assert d['items'][0]['done'] is True, d['items'][0]
+print("  ✓ 75b: toggle persisted (first item done)")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 75b: checklist toggle round-trips"
+else FAIL=$((FAIL+1)); echo "  ✗ 75b: toggle failed: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+S=$(code -b "$J75" "$BASE/api/admin/orgs")
+check "75b: owner GET orgs -> 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+o = next(x for x in d['orgs'] if x['name'] == 'Checklist Tier3 Co')
+assert o.get('onboardingTotal') == 9, o
+assert o.get('onboardingDone') == 1, o
+print("  ✓ 75b: orgs list carries onboardingTotal=9, onboardingDone=1")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 75b: account row shows checklist progress"
+else FAIL=$((FAIL+1)); echo "  ✗ 75b: progress missing: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 75c. Tier change re-seeds; a label surviving the change keeps its done state --"
+S=$(code -b "$J75" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"tier":"tier1"}' "$BASE/api/admin/orgs/$ORG75")
+check "75c: owner PATCHes account tier tier3->tier1 -> 200" 200 "$S"
+S=$(code -b "$J75" "$BASE/api/admin/orgs/$ORG75/onboarding")
+check "75c: owner GET re-seeded checklist -> 200" 200 "$S"
+if python3 - <<'PY' 2>"$PASS_TMP"
+import json
+d = json.load(open('/tmp/body.json'))
+labels = [i['label'] for i in d['items']]
+assert d.get('tier') == 'tier1', d
+assert len(labels) == 4, labels          # tier1 = website only
+# 'Kickoff call with the client' survived the tier change and stays done
+k = next(i for i in d['items'] if i['label'] == 'Kickoff call with the client')
+assert k['done'] is True, d['items']
+assert 'Set up the lead-gen capture pipeline' not in labels, labels
+print("  ✓ 75c: tier change re-seeded to 4 items; surviving 'Kickoff call' kept done=true")
+PY
+then PASS=$((PASS+1)); echo "  ✓ 75c: re-seed keeps surviving done labels"
+else FAIL=$((FAIL+1)); echo "  ✗ 75c: re-seed wrong: $(cat /tmp/body.json)"; cat "$PASS_TMP"; fi
+echo "-- 75d. Owner-only: tenants cannot read or write the checklist; owner workspace has none --"
+S=$(code -b "$J75" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Checklist Tenant Co","email":"checklist-tenant@example.com","password":"tenant12345"}' "$BASE/api/admin/orgs")
+check "75d: owner creates tenant -> 201" 201 "$S"
+T75=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['org']['id'])")
+JT75=$(mktemp)
+S=$(code -c "$JT75" -b "$JT75" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"checklist-tenant@example.com","password":"tenant12345"}' "$BASE/api/auth/login")
+check "75d: tenant login -> 200" 200 "$S"
+S=$(code -b "$JT75" "$BASE/api/admin/orgs/$T75/onboarding")
+check "75d: tenant GET checklist -> 403" 403 "$S"
+S=$(code -b "$JT75" -X PATCH -H 'Content-Type: application/json' \
+  -d "{\"id\":1,\"done\":true}" "$BASE/api/admin/orgs/$T75/onboarding")
+check "75d: tenant PATCH checklist -> 403" 403 "$S"
+S=$(code -b "$J75" "$BASE/api/auth/me")
+check "75d: owner me -> 200" 200 "$S"
+OWNER75=$(python3 - <<PYM
+import json
+print(json.load(open('/tmp/body.json'))['user']['orgId'])
+PYM
+)
+S=$(code -b "$J75" "$BASE/api/admin/orgs/$OWNER75/onboarding")
+check "75d: owner workspace checklist -> 400 (no checklist on the owner org)" 400 "$S"
+echo "-- 75e. Source guards: Accounts.tsx surfaces the checklist window with progress --"
+if grep -Fq 'adminGetOnboarding' src/api.ts && grep -Fq 'adminToggleOnboardingItem' src/api.ts && \
+   grep -Fq 'onboardingTotal' src/types.ts && grep -Fq 'OnboardingItem' src/types.ts; then
+  PASS=$((PASS+1)); echo "  ✓ 75e: api/types carry the onboarding checklist surface"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 75e: src/api.ts or src/types.ts missing the checklist surface"
+fi
+if grep -Fq 'Onboarding (' src/Accounts.tsx && grep -Fq 'onboardingTotal' src/Accounts.tsx && \
+   grep -Fq 'adminGetOnboarding' src/Accounts.tsx && grep -Fq 'toggleOnboardingItem' src/Accounts.tsx; then
+  PASS=$((PASS+1)); echo "  ✓ 75e: Accounts.tsx renders the Onboarding (done/total) checklist window"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 75e: Accounts.tsx missing the checklist window/progress button"
+fi
+if grep -Fq 'TIER_ONBOARDING_ITEMS' server/api.ts && grep -Fq 'reseedOnboardingItems' server/api.ts && \
+   grep -Fq 'onboarding_items' server/db.ts; then
+  PASS=$((PASS+1)); echo "  ✓ 75e: server side defines the per-tier lists + reseed + table"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ 75e: server tier-checklist definitions missing"
+fi
+echo "-- 75f. Cleanup --"
+code -b "$J75" -X DELETE "$BASE/api/admin/orgs/$ORG75" > /dev/null
+code -b "$J75" -X DELETE "$BASE/api/admin/orgs/$T75" > /dev/null
+rm -f "$J75" "$JT75"
+echo "  ✓ 75f: checklist orgs removed"
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

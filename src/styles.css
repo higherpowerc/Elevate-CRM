@@ -4705,3 +4705,35 @@ input.accent-hex::placeholder,
 .hub-bill-actions .hub-money {
   min-width: 84px;
 }
+
+/* Owner 2026-08-27 — the account's auto-seeded onboarding checklist window
+   (package-selector feature). Compact checkbox list inside the modal. */
+.onb-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.onb-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+}
+.onb-item label:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+.onb-item.onb-done span {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+.onb-item input[type="checkbox"] {
+  accent-color: currentColor;
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}

@@ -754,6 +754,49 @@ function isPackageTier(v: unknown): v is PackageTier {
   return typeof v === "string" && (v === "" || TIER_KEYS.includes(v));
 }
 
+/** Owner 2026-08-27 — the AUTO-SEEDED onboarding checklist per tier. When a
+ *  client account is created (or its tier later changes) these items are
+ *  seeded for the OWNER to work through on the account. Tier 2 extends Tier 1
+ *  and Tier 3 extends Tier 2 (cumulative deliverables); Tier 4 is the
+ *  custom-package track; '' (no tier) seeds nothing. Deliverable labels only —
+ *  NO prices anywhere (per-tier pricing is the owner's call at charge time).
+ *  Owner-only admin data: seeded/read/written exclusively through /api/admin
+ *  routes (see reseedOnboardingItems + the /onboarding endpoints). */
+export const TIER_ONBOARDING_ITEMS: Record<string, string[]> = {
+  "": [],
+  tier1: [
+    "Kickoff call with the client",
+    "Collect brand assets and content",
+    "Build the website",
+    "Launch the website",
+  ],
+  tier2: [
+    "Kickoff call with the client",
+    "Collect brand assets and content",
+    "Build the website",
+    "Launch the website",
+    "Provision the CRM account",
+    "Import the client's leads into the CRM",
+    "CRM walkthrough with the client",
+  ],
+  tier3: [
+    "Kickoff call with the client",
+    "Collect brand assets and content",
+    "Build the website",
+    "Launch the website",
+    "Provision the CRM account",
+    "Import the client's leads into the CRM",
+    "CRM walkthrough with the client",
+    "Connect website lead forms to the CRM",
+    "Set up the lead-gen capture pipeline",
+  ],
+  tier4: [
+    "Scope the custom package with the client",
+    "Agree custom milestones and deliverables",
+    "Deliver the custom package work",
+  ],
+};
+
 interface ClientInput {
   companyName: string;
   contactName: string;
@@ -1686,6 +1729,11 @@ interface OrgRow {
   /** Owner 2026-08-27 — this client account's package tier ('' unset |
    *  tier1..4). Owner-only admin data (the client accounts table). */
   tier: string;
+  /** Owner 2026-08-27 — the account's auto-seeded onboarding checklist
+   *  progress (total / done item counts) for the Client accounts table.
+   *  Owner-only admin data. */
+  onboarding_total: number;
+  onboarding_done: number;
 }
 
 function toOrg(row: OrgRow) {
@@ -1714,6 +1762,10 @@ function toOrg(row: OrgRow) {
     billingCycleDate: row.billing_cycle_date ?? "",
     // Owner 2026-08-27 — package tier ('' unset | tier1..4).
     tier: row.tier ?? "",
+    // Owner 2026-08-27 — the auto-seeded onboarding checklist progress
+    // (done/total) shown on the Client accounts table. Owner-only.
+    onboardingTotal: row.onboarding_total ?? 0,
+    onboardingDone: row.onboarding_done ?? 0,
     // Phase 5 prep — account lifecycle ('' = never canceled / active).
     status: row.status ?? "active",
     canceledAt: row.canceled_at ?? "",
@@ -1783,6 +1835,28 @@ function validateNewOrg(
   return { ok: true, value: { name, email, password, verticalKey, tier } };
 }
 
+/** Owner 2026-08-27 — (re-)seed an org's onboarding checklist for a tier.
+ *  Replaces the org's items with the tier's list (TIER_ONBOARDING_ITEMS); a
+ *  label present in BOTH the old and the new list keeps its done state (a
+ *  tier1→tier2 upgrade keeps the website items the owner already checked).
+ *  '' clears the checklist. Nested db.transaction calls become savepoints, so
+ *  calling this inside insertOrgWithMember's transaction is safe. */
+function reseedOnboardingItems(orgId: number, tier: string): void {
+  const items = TIER_ONBOARDING_ITEMS[tier] ?? [];
+  db.transaction(() => {
+    const prev = db
+      .query("SELECT label, done FROM onboarding_items WHERE org_id = ?")
+      .all(orgId) as { label: string; done: number }[];
+    const doneByLabel = new Map(prev.map((r) => [r.label, r.done === 1]));
+    db.query("DELETE FROM onboarding_items WHERE org_id = ?").run(orgId);
+    items.forEach((label, i) => {
+      db
+        .query("INSERT INTO onboarding_items (org_id, label, position, done) VALUES (?, ?, ?, ?)")
+        .run(orgId, label, i, doneByLabel.get(label) === true ? 1 : 0);
+    });
+  })();
+}
+
 /**
  * Insert a brand-new org + its first member user inside one transaction —
  * the single shared provisioning path used by BOTH the Admin "create client
@@ -1840,6 +1914,10 @@ function insertOrgWithMember(input: {
         .query("INSERT INTO users (email, password_hash, org_id, role) VALUES (?, ?, ?, 'member')")
         .run(input.email, input.passwordHash, orgIdNew).lastInsertRowid,
     );
+    // Owner 2026-08-27 — auto-seed the per-tier onboarding checklist for the
+    // new account INSIDE the same transaction, so an account is never created
+    // without the checklist its package tier implies.
+    reseedOnboardingItems(orgIdNew, input.tier ?? "");
     return { orgId: orgIdNew, userId };
   })();
 }
@@ -1880,6 +1958,8 @@ function deleteOrgCascade(id: number): void {
     // envelopes (PR #59) both FK to orgs — dropped before the org row.
     db.query("DELETE FROM tickets WHERE org_id = ?").run(id);
     db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
+    // Package-selector onboarding checklist (owner 2026-08-27).
+    db.query("DELETE FROM onboarding_items WHERE org_id = ?").run(id);
     db.query("DELETE FROM clients WHERE org_id = ?").run(id);
     // Owner direction 2026-08-26 — deleting an account deletes its linked
     // SOLD client ENTIRELY (the owner-org record pointing at this workspace
@@ -2756,7 +2836,9 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
                 (SELECT c.company_name FROM clients c WHERE c.id = o.provisioned_from_client) AS provisioned_client_name,
                 (SELECT u.email FROM users u WHERE u.org_id = o.id ORDER BY u.id ASC LIMIT 1) AS login_email,
                 COUNT(DISTINCT u.id) AS user_count,
-                COUNT(DISTINCT c.id) AS client_count
+                COUNT(DISTINCT c.id) AS client_count,
+                (SELECT COUNT(*) FROM onboarding_items oi WHERE oi.org_id = o.id) AS onboarding_total,
+                (SELECT COUNT(*) FROM onboarding_items oi WHERE oi.org_id = o.id AND oi.done = 1) AS onboarding_done
          FROM orgs o
          LEFT JOIN users u   ON u.org_id = o.id
          LEFT JOIN clients c ON c.org_id = o.id
@@ -2979,9 +3061,56 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     params.push(id);
     db.query(`UPDATE orgs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
     const updated = db.query("SELECT id, name FROM orgs WHERE id = ?").get(id) as { id: number; name: string };
+    // Owner 2026-08-27 — the checklist follows the tier: when the PATCH set a
+    // tier, re-seed the account's onboarding items to the new tier's list
+    // (labels surviving the change keep their done state).
+    if (body.tier !== undefined && body.tier !== null) {
+      reseedOnboardingItems(id, String(body.tier));
+    }
     return json({ ok: true, org: { id: updated.id, name: updated.name } });
   }
 
+  /* Owner 2026-08-27 — the per-tier AUTO-SEEDED onboarding checklist for a
+     client account (the package-selector feature). The checklist is seeded at
+     account creation from the account's package tier (TIER_ONBOARDING_ITEMS,
+     inside insertOrgWithMember) and re-seeded whenever the tier changes
+     (surviving labels keep their done state). OWNER-only (requireAdmin):
+     GET returns the account's tier + items; PATCH toggles one item's done
+     flag. Tenant orgs never see or write it — every /api/admin route is
+     owner-gated and the checklist never appears in any tenant payload. */
+  const adminOnboardingMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)\/onboarding$/);
+  if (adminOnboardingMatch && (method === "GET" || method === "PATCH")) {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminOnboardingMatch[1]);
+    const org = db.query("SELECT id, tier FROM orgs WHERE id = ?").get(id) as
+      | { id: number; tier: string }
+      | null;
+    if (!org) return err("Org not found.", 404);
+    if (org.id === ensureDefaultOrg()) {
+      return err("The owner workspace has no onboarding checklist.", 400);
+    }
+    const readItems = () =>
+      (
+        db
+          .query(
+            "SELECT id, label, position, done FROM onboarding_items WHERE org_id = ? ORDER BY position ASC, id ASC",
+          )
+          .all(id) as { id: number; label: string; position: number; done: number }[]
+      ).map((i) => ({ id: i.id, label: i.label, position: i.position, done: i.done === 1 }));
+    if (method === "GET") {
+      return json({ tier: org.tier ?? "", items: readItems() });
+    }
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    if (body.id === undefined || body.id === null) return err("Item id is required.", 400);
+    if (typeof body.done !== "boolean") return err("done must be true or false.", 400);
+    const res = db
+      .query("UPDATE onboarding_items SET done = ? WHERE id = ? AND org_id = ?")
+      .run(body.done ? 1 : 0, Number(body.id), id);
+    if (res.changes === 0) return err("Onboarding item not found.", 404);
+    return json({ ok: true, tier: org.tier ?? "", items: readItems() });
+  }
   /* 3k — owner-only per-tenant "Reset password" (the Admin tab action for a
      client who forgot their password and has no email access). Generates a
      crypto temp password (the same generator the 3g-3 sold-lead provisioning
@@ -4544,6 +4673,12 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       // account. Tenant edits (and absent tier keys) never touch it.
       if (isOwnerSession(auth) && body.tier !== undefined && body.tier !== null && updated.provisioned_org_id !== 0) {
         db.query("UPDATE orgs SET tier = ? WHERE id = ?").run(updated.tier ?? "", updated.provisioned_org_id);
+        // The checklist follows the tier — re-seed the linked account's
+        // onboarding items (labels surviving the change keep their done state).
+        reseedOnboardingItems(
+          updated.provisioned_org_id,
+          (updated as unknown as { tier?: string }).tier ?? "",
+        );
       }
       // 3g-3: the single trigger hook — after ANY owner-org client update, if
       // the record is now in the final "Sold" stage (and not provisioned yet)
