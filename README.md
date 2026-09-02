@@ -4,7 +4,11 @@ A standalone client-pipeline management application — **its own codebase, sepa
 agency website** (`/home/team/shared/site`). Built as a product track: universal data model
 that works for any company type, real database, its own deployment path.
 
-**Pipeline:** `Prospect → Intake → Kickoff → Build → Launch → Retainer`
+**Owner pipeline:** `Leads → Onboarding → Sold` (owner direction 2026-08-14, shipped in 3g-2: the
+owner org is migrated at boot — its stored stage list is replaced and every client is
+remapped positionally, old bands [1-2] → Leads, [3-4] → Onboarding, [5-6] → Sold). Tenants
+get their own pipeline from the vertical template chosen at signup (or the legacy
+default list for General), untouched by the owner migration.
 
 ---
 
@@ -29,15 +33,29 @@ same port. Nothing else to run.
 - **Auth** — email + password login. Admin account seeded from env (`ADMIN_EMAIL` /
   `ADMIN_PASSWORD`); **no hardcoded defaults** — if the env vars are unset the server logs a
   clear setup message and login returns `503 setup_required` with instructions.
-- **Pipeline** — the six stages above, enforced server-side.
+- **Pipeline** — per-org stages, enforced server-side: the owner org runs `Leads →
+  Onboarding → Sold` (3g-2; the middle stage was renamed from “Intakes” on 2026-08-15); tenant orgs run their vertical-seeded stages; every stage
+  list is renamable/reorderable in Settings (a rename migrates its clients
+  positionally).
 - **Dashboard** — counts per stage, **projected pipeline** (sum of deal values of active,
   non-archived clients — explicitly labeled *projected*, not revenue), recent clients.
 - **Clients CRUD** — create, list (search + active/archived/all filter), edit, move between
   stages, archive/restore, delete with confirmation dialog. Fields: company name, contact
-  name, email, phone, industry, services (multi-select: Premium Website / SEO / Paid
-  Campaigns / Analytics), deal value, stage, next action, notes.
-- **UI** — premium dark interface (Inter + Instrument Serif, lime accent), responsive
-  (desktop table → mobile stacked cards, bottom-sheet modals).
+  name, email, phone, industry, services (free-form chips — any industry: HVAC, legal, dog
+  grooming…), deal value (any magnitude, decimals allowed), stage, next action, notes, and
+  **per-client custom fields** (label/value rows — e.g. License #, Service area, Fleet size).
+- **Vertical templates (business-type delegation)** — when the owner creates a client
+  account they pick a business type (Cleaning, Plumbing, Landscaping, Pest Control, Pool
+  Service, Painting, Flooring, Med Spa, Real Estate, or General/no preset). The new org's
+  pipeline stages, vertical-specific custom fields (text / yes-no / select-with-options)
+  and vertical settings (industry, service model, delivery) are seeded automatically from
+  `src/verticals.ts` — no per-vertical code, one shared layout engine, and the tenant can
+  rename/reorder/remove everything afterward in Settings. Settings also lets a tenant
+  **apply a different template later**: strictly additive and non-destructive — only
+  missing stages/fields are appended, nothing is renamed, removed or reordered.
+- **UI** — premium dark interface (Inter + Instrument Serif, lime accent), branded loading
+  splash (circular progress + Elevate Studio mark), responsive (desktop table → mobile
+  stacked cards, bottom-sheet modals).
 
 ---
 
@@ -75,8 +93,11 @@ bun run start:local        # binds 0.0.0.0:3001 (see "Port" note below)
 You can also seed/refresh the admin without restarting:
 
 ```bash
-bun run seed          # idempotent — creates or re-hashes the admin from env
-bun run db:reset      # wipes data/crm.db (local QA data only)
+bun run seed              # idempotent — creates or re-hashes the admin from env
+bun run seed -- --demo    # also seed 8 demo clients (incl. HVAC + Landscaping with
+                          # custom fields) directly into the DB — only when the
+                          # clients table is empty; db:reset for a clean slate
+bun run db:reset          # wipes data/crm.db (local QA data only)
 ```
 
 ---
@@ -116,20 +137,39 @@ browser ──► Bun server (server/index.ts) :PORT
 - **Build:** `bun build ./index.html --outdir ./dist --minify` → hashed JS/CSS assets.
 
 ### Data model & storage
-
-SQLite file at `DATA_DIR/crm.db` (default `./data/crm.db`), WAL mode. Two tables:
+SQLite file at `DATA_DIR/crm.db` (default `./data/crm.db`), WAL mode. Multi-tenant
+(Phase 1): every data row belongs to an org, and every user belongs to exactly one org.
 
 ```sql
-users   (id, email UNIQUE, password_hash, created_at)
-clients (id, company_name, contact_name, email, phone, industry,
-         services JSON text, deal_value REAL, stage TEXT,
+orgs    (id, name, created_at)
+users   (id, email UNIQUE, password_hash, org_id → orgs.id, role TEXT admin|member,
+         created_at)
+clients (id, org_id → orgs.id, company_name, contact_name, email, phone, industry,
+         services JSON text, custom_fields JSON text, deal_value REAL, stage TEXT,
          next_action, notes, archived INTEGER, created_at, updated_at)
+tasks    (id, org_id → orgs.id, title, client_id → clients.id (ON DELETE SET NULL),
+          due_date, done, notes, created_at, updated_at)
+invoices (id, org_id → orgs.id, client_id → clients.id (ON DELETE SET NULL),
+          amount REAL, status TEXT draft|sent|paid, due_date, notes, created_at, updated_at)
 ```
 
-`services` is stored as a JSON array string; `stage` is validated against the six stages
-server-side. The universal model means the app fits any company type — nothing is hardcoded
-to Elevate Studio's own service categories beyond the `services` picklist, which is a
-configurable constant in `server/db.ts`.
+`services` and `custom_fields` are stored as JSON string columns; `stage` is validated
+against the six stages server-side. `services` is a free-form array of strings (any
+industry — no picklist), and `custom_fields` is an array of `{label, value}` objects.
+The universal model means the app fits any company type — nothing is hardcoded to Elevate
+Studio's own service categories.
+
+**Multi-tenancy (Phase 1).** Each org's data is fully isolated: every API route scopes
+its queries by the authenticated user's `org_id` (from the session — never from the
+request body), so a user can only read/write rows inside their own org. Touching another
+org's row returns `404` (existence is not leaked). Tasks and invoices may only link to
+clients in the same org (cross-org links are rejected with `400`). The default org
+"Elevate Studio" is created automatically on boot; a pre-existing single-tenant database
+is migrated on boot by adding `org_id`/`role` columns and backfilling every row and user
+into the default org (idempotent, safe on every boot). The admin account from
+`ADMIN_EMAIL` lives in the default org with role `admin`. Role `admin` currently behaves
+like `member` inside its own org — cross-org admin access is Phase 2. Account
+provisioning (signup, per-tenant login) is Phase 2; the schema is ready for it.
 
 **Backup:** copy `data/crm.db` (with the WAL checkpointed — stop the server or use
 `sqlite3 data/crm.db ".backup out.db"`).
@@ -142,10 +182,16 @@ configurable constant in `server/db.ts`.
 | -------- | -------------------- | ---------------------------------------------- | ---------------------------------- |
 | POST     | `/api/auth/login`    | `{email, password}`                            | Sets session cookie; `503 setup_required` if no admin exists |
 | POST     | `/api/auth/logout`   | —                                              | Clears cookie                      |
-| GET      | `/api/auth/me`       | —                                              | Current user                       |
+| GET      | `/api/auth/me`       | —                                              | Current user (`impersonating`/`impersonatedFrom` set during Phase 3d owner impersonation) |
+| POST     | `/api/admin/impersonate` | `{orgId}`                                  | Owner-only (403 for members): swap the session into that tenant's user — no password, no new users; `impersonating:true` + `impersonatedFrom` in response |
+| POST     | `/api/auth/impersonate-return` | —                                        | Swap back to the owner's own session (400 if not impersonating) |
+| POST     | `/api/auth/forgot` | `{email}`                                      | Public (3k): if the email has an account, emails a single-use reset link. Identical response whether or not the email exists (no account enumeration); token stored SHA-256-hashed only |
+| POST     | `/api/auth/reset`  | `{token, password}`                            | Public (3k): validates the token (exists, unexpired — 45 min — unused), sets the new password (min 8 chars), marks the token used. Token is bound to one user/org; a signed-in user from a DIFFERENT org gets 403 |
+| POST     | `/api/auth/change-password` | `{currentPassword, newPassword}`        | Authenticated (3k): verifies the current password server-side, updates to the new one; the existing session stays valid |
+| POST     | `/api/admin/orgs/:id/reset-password` | —                              | Owner-only (3k): generates a crypto temp password for the tenant member (returns it once; stored in `orgs.admin_reset_password`, cleared on the member's first login) |
 | GET      | `/api/dashboard`     | —                                              | Stage counts, projectedPipeline (active only), recent clients |
 | GET      | `/api/clients`       | `?archived=1` `?q=term`                        | List (archived hidden by default)  |
-| POST     | `/api/clients`       | full client object                             | 201 on create; 400 on invalid      |
+| POST     | `/api/clients`       | full client object (incl. `services` string[] and `customFields` {label,value}[]) | 201 on create; 400 on invalid      |
 | GET      | `/api/clients/:id`   | —                                              |                                   |
 | PUT      | `/api/clients/:id`   | full client object (partial updates via same shape) | Move stage, edit fields, archive |
 | DELETE   | `/api/clients/:id`   | —                                              | Permanent (UI requires confirm)    |
@@ -153,7 +199,9 @@ configurable constant in `server/db.ts`.
 Run the end-to-end suite (needs a running server with the QA admin from `.env`):
 
 ```bash
-bash test/api-e2e.sh        # 23 checks: auth guards → login → CRUD → stage moves → archive → delete → logout
+bash test/api-e2e.sh        # auth guards → login → CRUD → stage moves → archive → delete →
+                            # customFields round-trip → free-form services → decimal deal values → logout
+                            # → multi-tenant isolation → impersonation → emails (mock Resend) → password reset (3k)
 ```
 
 ---
@@ -161,6 +209,10 @@ bash test/api-e2e.sh        # 23 checks: auth guards → login → CRUD → stag
 ## Auth & security notes (MVP-grade — read before launch)
 
 - Passwords are hashed with **bcrypt** (`Bun.password.hash`, cost 10) — never plaintext.
+- Password-reset tokens (3k) are single-use, expire after 45 minutes, and are stored as
+  **SHA-256 hashes only** — the raw token appears solely in the emailed reset link
+  (`<appUrl>/#/reset?token=…`). Tokens are bound to a user (and therefore an org), so
+  redemption can never change a password across tenant boundaries.
 - Sessions are **HMAC-SHA256-signed tokens** in an `HttpOnly; SameSite=Lax` cookie. Not
   stored server-side; logout works by expiring the cookie.
 - **Must harden before a public launch:**
@@ -229,8 +281,9 @@ CREATE TABLE clients (
   phone        TEXT NOT NULL DEFAULT '',
   industry     TEXT NOT NULL DEFAULT '',
   services     JSONB NOT NULL DEFAULT '[]',
+  custom_fields JSONB NOT NULL DEFAULT '[]',
   deal_value   NUMERIC(12,2) NOT NULL DEFAULT 0,
-  stage        TEXT NOT NULL DEFAULT 'Prospect',
+  stage        TEXT NOT NULL DEFAULT 'Leads',
   next_action  TEXT NOT NULL DEFAULT '',
   notes        TEXT NOT NULL DEFAULT '',
   archived     BOOLEAN NOT NULL DEFAULT false,
@@ -255,7 +308,7 @@ CREATE INDEX idx_clients_updated ON clients(updated_at);
 crm-app/
 ├── server/           # Bun server: index.ts (entry), api.ts (routes), db.ts (SQLite+schema), auth.ts (hashing/sessions), seed.ts
 ├── src/              # React SPA: main.tsx, App.tsx, Login, Dashboard, Clients, ClientModal, ConfirmDialog, api.ts, types.ts, styles.css
-├── test/api-e2e.sh   # 23-check end-to-end API test
+├── test/api-e2e.sh   # end-to-end API test (auth, CRUD, custom fields, services, deal values)
 ├── qc/               # QA screenshots (desktop + mobile) from the verification pass
 ├── index.html        # SPA shell (entry for `bun run build`)
 ├── .env.example      # documented env template

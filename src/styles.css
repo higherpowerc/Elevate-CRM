@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Elevate Studio CRM — design system
+   Revzenta CRM — design system
    Dark premium: night / ink / lime, Inter + Instrument Serif.
    ───────────────────────────────────────────────────────────── */
 
@@ -23,8 +23,14 @@
   --amber: #ffc46b;
   --violet: #b9a6ff;
   --teal: #6fe3c1;
+  --green: #7ce38b;
+  --green-dim: rgba(124, 227, 139, 0.1);
   --radius: 14px;
   --radius-sm: 9px;
+  /* Shared vertical rhythm (owner direction 2026-08-25): the uniform gap
+     between stacked content blocks/windows. Use var(--stack-gap) (or the
+     .page-stack class) instead of ad-hoc .5rem/.75rem/1rem margins. */
+  --stack-gap: 1rem;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
@@ -66,6 +72,13 @@ textarea {
   font: inherit;
   color: var(--ink);
 }
+/* Native select dropdown popup (stage picker, etc.): force black background
+   with white lettering — the OS default bright popup with faint text is
+   unreadable on the dark theme. */
+select option {
+  background: #000;
+  color: #fff;
+}
 
 .serif {
   font-family: var(--font-serif);
@@ -74,31 +87,79 @@ textarea {
   letter-spacing: 0.01em;
 }
 
-/* ── Boot ─────────────────────────────────────────────────── */
+/* ── Boot / branded splash ───────────────────────────────── */
 
-.boot {
+.splash {
   min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+
+.splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.splash-ring {
+  position: relative;
+  width: 84px;
+  height: 84px;
   display: grid;
   place-items: center;
 }
 
-.boot-mark {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: 42px;
-  color: var(--lime);
-  animation: pulse 1.2s ease-in-out infinite;
+.splash-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 292deg,
+    var(--lime) 336deg,
+    transparent 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  animation: spin 0.9s linear infinite;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-    transform: scale(0.97);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1);
+.splash-mark {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--lime);
+}
+
+.splash-name {
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.splash-name em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  color: var(--lime);
+}
+
+.splash-sub {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -166,6 +227,33 @@ textarea {
 
 .btn-block {
   width: 100%;
+}
+/* 3k — "Forgot password?" link under the sign-in form (and its "Back to
+   sign in" counterpart on the reset-request form): a quiet link-styled
+   button, centered, that inherits the accent on hover. */
+.forgot-link {
+  background: none;
+  border: none;
+  padding: 2px 0 0;
+  margin: -4px auto 0;
+  display: block;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--ink-dim) 45%, transparent);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.forgot-link:hover {
+  color: var(--accent);
+  text-decoration-color: var(--accent);
+}
+.forgot-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
 /* ── Login ─────────────────────────────────────────────────── */
@@ -293,6 +381,14 @@ textarea {
   border-color: rgba(255, 107, 107, 0.35);
   color: #ffb3b3;
 }
+.alert-warn {
+  background: rgba(255, 196, 107, 0.08);
+  border-color: rgba(255, 196, 107, 0.4);
+  color: #ffd9a3;
+}
+.alert-warn strong {
+  color: #ffcf8a;
+}
 
 .alert-setup {
   background: rgba(255, 196, 107, 0.08);
@@ -368,6 +464,184 @@ legend.field-label {
   padding-right: 32px;
 }
 
+/* ── Schedule Demo modal — mini calendar (owner 2026-08-21) ──────
+   Hand-rolled native month calendar: a 7-col grid of day buttons with a
+   prev/next header. Matches the app's dark field styling (bg-soft line-strong
+   inset; lime accent for the selected day + focus ring to match inputs). */
+.mini-cal {
+  width: 320px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px 16px;
+}
+.mini-cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.mini-cal-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  text-transform: capitalize;
+}
+.mini-cal-nav {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink-dim);
+  font-size: 18px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.mini-cal-nav:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background: var(--bg);
+}
+.mini-cal-nav:focus-visible {
+  outline: none;
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+.mini-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.mini-cal-dow {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--muted-2);
+  letter-spacing: 0.04em;
+  padding: 2px 0 4px;
+}
+.mini-cal-cell {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1;
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.mini-cal-cell:hover:not(.mini-cal-blank) {
+  border-color: var(--line-strong);
+  background: var(--bg);
+}
+.mini-cal-cell:focus-visible {
+  outline: none;
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+.mini-cal-cell.mini-cal-blank {
+  cursor: default;
+}
+.mini-cal-cell.mini-cal-selected {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #0a0a0c;
+  font-weight: 700;
+}
+
+/* ── SearchableSelect (type-to-search combobox) ────────────── */
+/* Replaces native client <select>s on the Finance tab. The input looks like
+   the other form controls (plus a chevron hint); the dropdown is absolutely
+   positioned under the wrapper and never clips inside modals or flex rows. */
+.combobox {
+  position: relative;
+  min-width: 0;
+}
+.combobox-input {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 32px 10px 13px;
+  font-size: 14.5px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.combobox-input:focus {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+.combobox-input::placeholder {
+  color: var(--muted-2);
+}
+.combobox-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 70;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: fade 0.12s ease both;
+}
+.combobox-opt {
+  padding: 9px 11px;
+  font-size: 14px;
+  color: var(--ink);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.combobox-opt:hover,
+.combobox-opt.active {
+  background: var(--bg-soft);
+}
+.combobox-opt.selected {
+  color: var(--lime);
+  font-weight: 600;
+}
+.combobox-empty,
+.combobox-more {
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--muted);
+}
+/* Quick-add sizing in the Finance row (mirrors the old select's footprint) */
+.inv-add .combobox {
+  flex: 0 1 220px;
+}
+.inv-add .combobox-input {
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 14px;
+}
+
 .field-row {
   display: flex;
   gap: 14px;
@@ -380,6 +654,174 @@ legend.field-label {
 
 .field-row .field.grow {
   flex-grow: 1.6;
+}
+
+/* Two-column form grid (client modal) */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 14px;
+}
+
+.form-grid .field {
+  min-width: 0;
+}
+/* -- Phase 3e: rich client record fields -- */
+/* Commercial/Residential segmented toggle at the top of the client form. */
+.seg-type {
+  align-self: flex-start;
+}
+.seg-type .seg-btn {
+  min-width: 130px;
+  justify-content: center;
+}
+/* City / State / ZIP row inside the address group. */
+.form-row-3 {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 12px;
+}
+.form-row-3 .field {
+  min-width: 0;
+  margin: 0;
+}
+@media (max-width: 560px) {
+  .form-row-3 {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+/* Address fieldset -- same reset as the Services group, plus breathing room
+   between the street line and the city/state/zip row. */
+.addr-group {
+  gap: 12px;
+}
+.addr-group > .field {
+  margin: 0;
+}
+/* Compact Commercial/Residential badge on client rows (distinct tones:
+   blue = commercial, teal = residential). */
+.type-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+/* Client row address line -- truncated with an ellipsis, full value in a
+   tooltip (the book shows name, address, phone and email at a glance). */
+.addr-line {
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Header action cluster (Manage stages + New client). */
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── Services chip editor ─────────────────────────────────── */
+
+.chips .chip {
+  gap: 5px;
+}
+
+.chip-hint {
+  font-size: 12.5px;
+  padding-top: 4px;
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.chip-remove:hover {
+  color: var(--lime);
+  background: rgba(214, 255, 63, 0.12);
+}
+
+.chip-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chip-add input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  font-size: 14.5px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.chip-add input:focus {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+
+.chip-add input::placeholder {
+  color: var(--muted-2);
+}
+
+/* ── Custom fields editor ─────────────────────────────────── */
+
+.cf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cf-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.cf-row input {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+}
+
+.cf-row input:focus {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+
+.cf-row input::placeholder {
+  color: var(--muted-2);
+}
+
+.cf-add {
+  align-self: flex-start;
 }
 
 .check-grid {
@@ -413,23 +855,116 @@ legend.field-label {
   flex-direction: column;
 }
 
+/* Owner 2026-08-28 — LEFT SIDEBAR layout ("Put the navigation menu on the
+   left side of the screen"). .shell is the row: the sticky .nav sidebar on
+   the left, .content (impersonate banner + main + footer) flowing to its
+   right. Sizing lives in the "Left sidebar chrome" section below, after the
+   wide-monitor queries, so the cascade is explicit. */
+.shell {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .nav {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: rgba(10, 10, 12, 0.82);
+  background: rgba(10, 10, 12, 0.92);
   backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
 }
 
 .nav-inner {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 24px;
-  height: 62px;
   display: flex;
-  align-items: center;
-  gap: 26px;
+  flex-direction: column;
+}
+
+/* Top-bar tightening (owner request 2026-08-14: everything viewable, no
+   right scrollbar). Since the 2026-08-28 left-sidebar rework these rules
+   mostly serve the <=960px fallback where the sidebar collapses back into
+   a sticky top bar; the e2e suite (38b) pins these exact strings. */
+@media (max-width: 1200px) {
+  .nav-inner {
+    gap: 14px;
+    padding: 0 16px;
+  }
+  .tab {
+    padding: 8px 9px;
+  }
+  .nav-user {
+    max-width: 120px;
+  }
+  .brand-sub {
+    display: none;
+  }
+}
+
+/* Owner workspace table-fit sweep (owner permission 2026-08-15) — the
+   owner's 8-tab nav (Leads/Onboarding/Clients/Tasks/Finance/Admin/Settings
+   + brand + privacy eye + user + sign-out) outgrew the viewport at ~1280px
+   (~25px) and below 980px (~200px), forcing a horizontal scrollbar on EVERY
+   tab. Tenant workspaces (5-6 tabs) fit at all widths, so the tightening is
+   owner-scoped (.owner-workspace) and client-account headers stay
+   pixel-identical. The tabs row also becomes internally scrollable (min-width
+   0 + overflow-x) so no page-level horizontal scroll can ever return.
+
+   Owner 2026-08-28: the tab set kept growing (Appointments, Documents, … —
+   12 tabs) and now overflows even ~1900px-wide viewports, which put a
+   PAGE-level horizontal scrollbar back on every owner tab (measured
+   docScrollW 1853 vs 1500 viewport). The tabs row is therefore internally
+   scrollable at EVERY width now — the same mechanism the 2026-08-15
+   owner-approved sweep introduced; still owner-scoped, tenant navs are
+   untouched, and at widths where the tabs fit nothing visibly changes. */
+.owner-workspace .tabs {
+  min-width: 0;
+  overflow-x: auto;
+}
+@media (max-width: 1320px) {
+  .owner-workspace .nav-inner {
+    gap: 14px;
+    padding: 0 16px;
+  }
+  .owner-workspace .tab {
+    padding: 8px 9px;
+  }
+  .owner-workspace .nav-user {
+    max-width: 120px;
+  }
+  .owner-workspace .brand-sub {
+    display: none;
+  }
+  .owner-workspace .tabs {
+    min-width: 0;
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 1100px) {
+  .owner-workspace .nav-inner {
+    gap: 10px;
+    padding: 0 14px;
+  }
+  .owner-workspace .tab {
+    padding: 7px 7px;
+    font-size: 13px;
+  }
+  .owner-workspace .nav-user {
+    display: none;
+  }
+  .owner-workspace .nav-right {
+    gap: 8px;
+  }
+  .owner-workspace .tabs {
+    gap: 2px;
+  }
 }
 
 .brand {
@@ -510,6 +1045,12 @@ legend.field-label {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Owner live-test 2026-08-28 (d7b3ae5d): the nav Sign out button signals
+   interactivity by turning blue on hover. */
+.nav-signout:not(:disabled):hover {
+  color: var(--blue);
+  border-color: var(--blue);
+}
 
 .main {
   flex: 1;
@@ -528,10 +1069,237 @@ legend.field-label {
   letter-spacing: 0.04em;
 }
 
+/* ── Owner impersonation banner (Phase 3d) ───────────────────
+   Lives INSIDE the sticky .nav header, so it stays on screen on every
+   tab while the owner is viewing a client's workspace. Amber on purpose:
+   zero ambiguity that this is the client's account, not the owner's. */
+
+.impersonate-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 8px 24px;
+  width: 100%;
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #241a04;
+  background: var(--amber);
+  border-bottom: 1px solid rgba(36, 26, 4, 0.25);
+}
+
+/* ── Wide monitors: use the screen (owner 2026-08-28, #114) ────
+   .main and .impersonate-banner grow with the viewport in steps, still
+   hard-capped so text lines never get absurd. Since the left-sidebar
+   rework they measure against the CONTENT COLUMN (viewport minus the
+   sidebar), so a sidebar no longer costs the page its width:
+     < 1440px  -> 1180px  (unchanged — laptops/small desktops)
+     >= 1440px -> 1480px
+     >= 1920px -> 1840px  (full-size 1080p monitors)
+     >= 2560px -> 2160px  (2K + 34" curved/ultra-wide: tables spread out)
+   .nav-inner is intentionally absent: the nav is a fixed-width sidebar
+   now, not a centered column. */
+@media (min-width: 1440px) {
+  .main,
+  .impersonate-banner {
+    max-width: 1480px;
+  }
+}
+
+@media (min-width: 1920px) {
+  .main,
+  .impersonate-banner {
+    max-width: 1840px;
+  }
+}
+
+@media (min-width: 2560px) {
+  .main,
+  .impersonate-banner {
+    max-width: 2160px;
+  }
+}
+
+/* ── Left sidebar chrome (owner 2026-08-28) ──────────────────
+   "Put the navigation menu on the left side of the screen." The nav is a
+   vertical sidebar pinned to the left edge (brand on top, tabs under it,
+   session controls anchored to the bottom); the page flows in a column to
+   its right. Selectors are .nav-prefixed so they win the cascade over the
+   top-bar tightening queries above, which now serve the <=960px fallback
+   (e2e 38b pins their strings). Tab set, labels, order, active styling:
+   unchanged. */
+.nav {
+  align-self: flex-start;
+  height: 100vh;
+  width: 232px;
+  flex: none;
+  display: flex;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav .nav-inner {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  min-width: 0;
+  height: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 18px 14px;
+}
+
+.nav .brand {
+  padding: 4px 6px 2px;
+}
+
+.nav .brand-text {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.nav .tabs {
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.nav .tab {
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+}
+
+.nav .nav-right {
+  margin: auto 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.nav .nav-right .eye-btn {
+  align-self: flex-start;
+}
+
+.nav .nav-user {
+  max-width: 100%;
+}
+
+/* Laptops: slim the sidebar so tables keep their room (content keeps its
+   own internal-scroll guards; breakpoints below 960 are untouched). */
+@media (max-width: 1280px) {
+  .nav {
+    width: 196px;
+  }
+}
+
+/* ── Narrow fallback (<=960px): the sidebar collapses back into a sticky
+   top bar — brand + horizontally scrollable tabs + session controls in
+   one row — so phones and tablets keep the pre-sidebar behavior. No
+   hamburger state to regress; the tabs row is internally scrollable (the
+   same owner-approved mechanism as before). */
+@media (max-width: 960px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .nav {
+    height: auto;
+    width: 100%;
+    overflow: visible;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .nav .nav-inner {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+  }
+
+  .nav .tabs {
+    flex: 1 1 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+  }
+
+  .nav .tab {
+    width: auto;
+    white-space: nowrap;
+    padding: 8px 10px;
+  }
+
+  .nav .nav-right {
+    margin: 0 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .nav .nav-user {
+    display: none;
+  }
+
+  .impersonate-banner {
+    position: static;
+  }
+
+  .main {
+    padding: 24px 16px 48px;
+  }
+}
+
+.impersonate-icon {
+  font-size: 15px;
+  line-height: 1;
+  flex: none;
+}
+
+.impersonate-text strong {
+  font-weight: 700;
+}
+
+.impersonate-return {
+  margin-left: auto;
+  flex: none;
+  background: rgba(36, 26, 4, 0.1);
+  border: 1px solid rgba(36, 26, 4, 0.4);
+  color: #241a04;
+  font-weight: 700;
+}
+
+.impersonate-return:hover {
+  background: rgba(36, 26, 4, 0.18);
+  color: #140e02;
+}
+
+.impersonate-return:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
 /* ── Page layout ───────────────────────────────────────────── */
 
 .page {
-  animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* 'backwards' (not 'both'): the end keyframe equals the natural style, so
+     nothing is retained after the animation. A lingering 'both' fill keeps a
+     non-none transform on .page, which becomes the containing block for the
+     fixed .overlay and mis-anchors modals off-screen (the cut-off bug). */
+  animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 .page-head {
@@ -577,6 +1345,21 @@ legend.field-label {
   border-radius: var(--radius);
 }
 
+/* Shared vertical rhythm between stacked content blocks under a page
+   (owner direction 2026-08-25). Add .page-stack to any `.page` root that
+   stacks multiple windows/cards: each following card/toolbar/kpi-row/alert
+   gets exactly var(--stack-gap) of top space. Deliberately targets only the
+   content-block selectors — never .page-head or .section-title, which carry
+   their own larger section spacing. */
+.page-stack > .card,
+.page-stack > .toolbar,
+.page-stack > .kpi-row,
+.page-stack > .alert,
+.page-stack > .table-wrap,
+.page-stack > .inv-list {
+  margin-top: var(--stack-gap);
+}
+
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -611,6 +1394,103 @@ legend.field-label {
 .kpi-note {
   font-size: 12px;
   color: var(--muted-2);
+}
+
+/* Dashboard color picker (owner 2026-08-29): when the account sets a
+   dashboard color, App.tsx puts --dash-color on the app root and the
+   dashboard's KPI figures, labels and notes take it. Scoped to the dashboard
+   page (.dashboard) so Finance / clients-directory KPIs keep the theme
+   palette; every rule falls back to the theme default when unset. */
+.dashboard .kpi-value {
+  color: var(--dash-color, var(--ink));
+}
+.dashboard .kpi-value.lime {
+  color: var(--dash-color, var(--lime));
+}
+.dashboard .kpi-value.green {
+  color: var(--dash-color, var(--green));
+}
+.dashboard .kpi-value.red {
+  color: var(--dash-color, var(--danger));
+}
+.dashboard .kpi-label {
+  color: var(--dash-color, var(--muted));
+}
+.dashboard .kpi-note {
+  color: var(--dash-color, var(--muted-2));
+}
+/* Owner Dashboard — 2026-08-26: the "Lost" card renders exactly like the
+   sibling count cards (.card.kpi with a link-btn "View →"); the inline
+   Restore/Delete list (.lost-kpi-*) existed only for the earlier in-card
+   actions and was removed by owner direction 2026-08-26. Restore/delete of a
+   lost client lives on the Lost listing now. */
+/* Owner Dashboard — six-card "Pipeline overview" KPI row (owner direction
+   2026-08-15, refined again during live test): the owner's six figures each
+   render as a standard .card.kpi inside the standard .kpi-row — no dedicated
+   classes needed. Money cards carry the privacy-eye toggle; count cards
+   carry the View deep-link. Tenants never see this row (they keep their own
+   .kpi-row + "Stage breakdown" grid). */
+/* Four-up KPI row (Finance) */
+.kpi-row-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+/* Two-up KPI row (Finance cockpit MRR) */
+.kpi-row-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+/* ── Finance cockpit / reporting (owner-only, backlog a8241fea) ────────── */
+.cockpit {
+  padding: 20px 22px;
+  margin-top: 22px;
+}
+.cockpit .page-head {
+  margin-left: 0;
+}
+.cockpit-sub {
+  margin: 20px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cockpit-sub-note {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted-2);
+  margin-left: 6px;
+}
+.cockpit .kpi-row {
+  margin-bottom: 6px;
+}
+.cockpit-paid {
+  color: var(--green);
+}
+.cockpit-empty {
+  font-size: 13px;
+  color: var(--muted-2);
+  padding: 8px 0;
+}
+.cockpit .table-wrap {
+  margin-bottom: 6px;
+}
+.cockpit-foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.kpi-value.green {
+  color: var(--green);
+}
+
+.kpi-value.red {
+  color: var(--danger);
 }
 
 /* ── Stage grid ────────────────────────────────────────────── */
@@ -703,6 +1583,176 @@ legend.field-label {
   color: var(--lime);
 }
 
+/* Dashboard privacy eye (2026-08-14 owner request) */
+.kpi-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.eye-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.eye-btn:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.eye-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Blurs money figures when the privacy eye is off; a subtle transition so
+   the toggle feels smooth rather than jarring. */
+.money-blur {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+/* Global privacy eye (2026-08-14 owner request): the same blur treatment as
+   .money-blur, applied to any element carrying PII — client/company names,
+   phone, email, address — while the top-nav eye is on. Kept as its own class
+   so it can be attached to any element regardless of what else it renders. */
+.pii-blur {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+/* The top-nav privacy-eye toggle — "active" marks the blurring state
+   (accent-colored, matching the app's active-tab treatment). */
+.pii-eye-btn.active {
+  color: var(--lime);
+  border-color: var(--lime);
+  background: var(--lime-dim);
+}
+
+/* Dashboard task overview (2026-08-14 owner request) */
+
+.task-overview {
+  padding: 18px 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.task-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-stat-num {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-stat-num.danger {
+  color: var(--danger);
+}
+
+.task-stat-num.muted {
+  color: var(--muted);
+}
+
+.task-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.task-overview-rule {
+  height: 1px;
+  background: var(--line);
+}
+
+.task-upcoming {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.task-upcoming-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+}
+
+.task-upcoming-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-upcoming-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.task-upcoming-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  max-width: 55%;
+}
+
+.task-upcoming-due {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.task-upcoming-due.overdue {
+  color: var(--danger);
+}
+
+.task-upcoming-due.today {
+  color: var(--lime);
+}
+
+.task-upcoming-due.soon {
+  color: var(--green);
+}
+
+.task-upcoming-empty {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+
 /* ── Badges & chips ────────────────────────────────────────── */
 
 .badge {
@@ -747,6 +1797,18 @@ legend.field-label {
   background: rgba(111, 227, 193, 0.09);
 }
 
+.badge.tone-green {
+  color: var(--green);
+  border-color: rgba(124, 227, 139, 0.35);
+  background: var(--green-dim);
+}
+
+.badge.tone-red {
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.35);
+  background: var(--danger-dim);
+}
+
 .chips {
   display: inline-flex;
   flex-wrap: wrap;
@@ -775,6 +1837,53 @@ legend.field-label {
   letter-spacing: 0.06em;
   font-weight: 700;
 }
+/* Owner request 2026-08-14 — lost + DNC status chips (Lead status). */
+.chip-lost {
+  background: rgba(255, 196, 107, 0.1);
+  border-color: rgba(255, 196, 107, 0.35);
+  color: #ffcf8a;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.chip-dnc {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.4);
+  color: #ffb3b3;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
+/* Custom-field chips on client rows */
+.cf-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.cf-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  background: var(--lime-dim);
+  border: 1px solid rgba(214, 255, 63, 0.22);
+  color: var(--lime);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.cf-more {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted-2);
+  padding: 1px 4px;
+}
 
 /* ── Table ─────────────────────────────────────────────────── */
 
@@ -784,26 +1893,38 @@ legend.field-label {
 
 .table {
   width: 100%;
+  /* Owner 2026-08-29 — when the screen is too small to show a window's
+     columns evenly, the window gets its own horizontal scrollbar (.table-wrap
+     already scrolls) instead of the data bunching up: the table never
+     compresses below this readable minimum. */
+  min-width: 640px;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 14px;
 }
 
 .table th {
-  text-align: left;
+  /* Owner 2026-08-29 — all table-cell data centers under its column header
+     (owner + tenant tables). The Deal column's old PR #102 right-alignment
+     is superseded by this newer owner instruction. */
+  text-align: center;
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 13px 16px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .table td {
-  padding: 13px 16px;
+  padding: 12px 12px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
+  text-align: center;
 }
 
 .table tbody tr:last-child td {
@@ -817,13 +1938,25 @@ legend.field-label {
 .table tbody tr:hover {
   background: rgba(242, 241, 236, 0.025);
 }
+/* Owner 2026-08-29 — centering pass: flex-based cell content (name row,
+   action rows, next-action/stage/agreement stacks, custom-field chips) must
+   follow the centered cells. Scoped to desktop — the ≤760px stacked-card
+   mode re-lefts cells (.table td text-align + .row-actions flex-start). */
+@media (min-width: 761px) {
+  .table td .cell-company { justify-content: center; }
+  .table td .row-actions { justify-content: center; }
+  .table td .cell-next-stack { align-items: center; }
+  .table td .stage-cell { align-items: center; }
+  .table td .agree-cell { align-items: center; }
+  .table td .cf-line { justify-content: center; }
+}
 
 .row-archived {
   opacity: 0.55;
 }
 
 .num {
-  text-align: right;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
@@ -841,11 +1974,28 @@ legend.field-label {
   font-weight: 400;
   margin-top: 1px;
 }
+/* Sub-lines inside table cells (address, email, phone, industry) truncate
+   with ellipsis rather than widening the column. Full value is in title. */
+.table td .cell-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .cell-company {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+/* Company/client name inside the flex row — shrinks with ellipsis instead
+   of stretching the table (table-layout: fixed needs min-width: 0). */
+.cell-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cell-contact {
@@ -853,7 +2003,166 @@ legend.field-label {
 }
 
 .cell-next {
-  max-width: 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ── Owner cockpit A (owner direction 2026-08-15) ───────────── */
+/* The owner's Leads tables show the FULL business name: wrap instead of
+   ellipsis-truncate. table-layout stays fixed (the 3i table-fit rule holds —
+   long names wrap to extra lines rather than widening columns or scrolling).
+   Client accounts keep the truncated cell. */
+.table.owner-leads .cell-name {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+}
+/* The Next-action cell becomes a small stack so the "Start Onboarding"
+   quick action sits under the next-action text. */
+.cell-next-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+/* Compact accent button for the owner Leads tab's "Start Onboarding" row
+   action — small enough that the fixed-width column stays fit. */
+.start-onboarding-btn {
+  background: rgba(214, 255, 63, 0.08);
+  border: 1px solid rgba(214, 255, 63, 0.35);
+  border-radius: 7px;
+  color: var(--lime);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 4px 8px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.start-onboarding-btn:hover {
+  background: rgba(214, 255, 63, 0.16);
+  border-color: var(--lime);
+}
+.start-onboarding-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* Owner cockpit B (owner direction 2026-08-15) — the OWNER's Onboarding tab:
+   "Send Agreements" quick action under the next-action text (same compact
+   stack action as the Leads tab's "Start Onboarding", blue accent for the
+   DocuSign flow). */
+.send-agreements-btn {
+  background: rgba(124, 227, 139, 0.08);
+  border: 1px solid rgba(124, 227, 139, 0.35);
+  border-radius: 7px;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 4px 8px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.send-agreements-btn:hover {
+  background: rgba(124, 227, 139, 0.16);
+  border-color: var(--green);
+}
+.send-agreements-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* The owner Onboarding tab's DocuSign Agreement cell: a tone badge (Not sent
+   / Sent / Signed) over a compact select, stacked like the Stage cell so the
+   fixed-width column stays table-fit. */
+.agree-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+/* Owner direction 2026-08-18 — the owner's Payment column cell: the status
+   badge (Sent amber / Paid green) with the tiny "Mark paid" action beside it
+   on the Onboarding tab. Row layout (badge + button side by side) so the
+   fixed-width column stays table-fit; wraps on narrow tables. */
+.pay-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+/* Owner cockpit B (PR #53) — the compact DocuSign lifecycle stepper in the
+   owner's Onboarding Agreement cell: a 4-dot progress row (Not sent → Sent →
+   Delivered → Signed) with completed dots filled and the current step
+   highlighted; "declined" is NOT a step in the bar — it renders as a
+   distinct red failure pill instead. */
+.agree-tracker {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  width: 100%;
+  max-width: 120px;
+}
+.agree-tracker-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(242, 241, 236, 0.14);
+  border: 1px solid var(--line-strong);
+  flex: 0 0 auto;
+  cursor: default;
+}
+.agree-tracker-dot.done {
+  background: var(--green);
+  border-color: var(--green);
+  opacity: 0.65;
+}
+.agree-tracker-dot.current {
+  background: var(--green);
+  border-color: var(--green);
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 2px rgba(124, 227, 139, 0.25);
+}
+.agree-tracker-line {
+  height: 2px;
+  flex: 1 1 auto;
+  min-width: 6px;
+  background: rgba(242, 241, 236, 0.14);
+  border-radius: 1px;
+}
+.agree-tracker-line.done {
+  background: var(--green);
+  opacity: 0.55;
+}
+.agree-tracker.declined {
+  width: auto;
+  max-width: none;
+}
+.agree-tracker-fail {
+  display: inline-flex;
+  align-items: center;
+  color: var(--danger);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  background: var(--danger-dim);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+/* The owner Leads tab's Actions column holds more buttons (Edit / Lost /
+   DNC / Delete) — let them wrap inside the fixed column instead of
+   overflowing the table edge. */
+.table.owner-leads .row-actions {
+  flex-wrap: wrap;
 }
 
 .stage-cell {
@@ -861,7 +2170,14 @@ legend.field-label {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  min-width: 120px;
+  min-width: 100px;
+}
+/* Long stage names in the badge truncate gracefully (full name in title,
+   and always available in the adjacent dropdown). */
+.table .stage-cell .badge {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stage-select {
@@ -885,7 +2201,26 @@ legend.field-label {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex-wrap: wrap;
   white-space: nowrap;
+  min-width: 0;
+}
+/* $ amount field + "Send payment link" button inside the Finance "Pending
+   payment" rows: keep the pair centered and the input from sprawling. */
+.row-actions.pending-pay-actions {
+  align-items: center;
+}
+.row-actions.pending-pay-actions .inv-add-amount {
+  flex: 0 1 150px;
+}
+.row-actions.pending-pay-actions .btn {
+  flex: none;
+}
+/* Compact action buttons inside tables so the Actions column never forces
+   horizontal overflow (owner request: everything viewable without scroll). */
+.table .icon-btn {
+  padding: 5px 7px;
+  font-size: 12px;
 }
 
 .icon-btn {
@@ -912,7 +2247,7 @@ legend.field-label {
 }
 
 .actions-th {
-  text-align: right;
+  text-align: center;
 }
 
 /* ── Toolbar ───────────────────────────────────────────────── */
@@ -969,6 +2304,298 @@ legend.field-label {
 .search {
   max-width: 320px;
 }
+/* ── Leads stage chips (2026-08-14 owner request) ────────────
+   Full-width row under the seg/search toolbar: "All" + one pill per org
+   stage with its live count. Same visual language as .seg but lighter;
+   the active chip glows like an active seg button. */
+.stage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+}
+.stage-chip:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.stage-chip.active {
+  background: var(--lime-dim);
+  border-color: var(--lime);
+  color: var(--lime);
+}
+.stage-chip .seg-count {
+  background: rgba(242, 241, 236, 0.08);
+}
+.stage-chip.active .seg-count {
+  background: rgba(214, 255, 63, 0.18);
+}
+
+/* ── Admin (tenant provisioning) ─────────────────────────────── */
+
+/* Owner live-test reorg 2026-08-18 — the Accounts panel sits at the bottom
+   of the owner's Clients tab (the sold-clients records directory stays the
+   heart of the tab; account management moves below it as its own section). */
+.accounts-section {
+  margin-top: 26px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+.accounts-head {
+  margin-bottom: 18px;
+}
+.accounts-head h2 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+
+.admin-grid {
+  display: grid;
+  /* Owner bug report 2026-08-15 (re-reported) — the two-column grid
+     (380px create-form column + 1fr table) squeezed the client-accounts
+     table: with table-layout:fixed and no explicit column widths the action
+     buttons overlapped their neighbors at ~1280px. Restacked: the "create
+     client account" form sits ABOVE and the client-accounts table takes the
+     full width below it. The Accounts panel moved from Administration to the
+     owner's Clients tab on 2026-08-18 (single hub for account management);
+     the layout + wrap guards came along unchanged. */
+  grid-template-columns: 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-form,
+.admin-table {
+  padding: 22px 24px 24px;
+}
+
+.admin-card-head {
+  margin-bottom: 18px;
+}
+
+.admin-card-title {
+  margin: 0 0 3px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.admin-card-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Owner live-test 2026-08-28 (be3024e9): the Create-client-account form is
+   collapsible (collapsed by default); the head row carries the toggle button
+   while title + sub stay left. */
+.admin-card-head-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-card-head-toggle .admin-card-head-text {
+  min-width: 0;
+}
+.admin-form .admin-card-toggle {
+  flex-shrink: 0;
+}
+
+.admin-table .admin-card-head {
+  padding: 2px 2px 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 0;
+}
+
+.admin-table .table th:first-child,
+.admin-table .table td:first-child {
+  padding-left: 2px;
+}
+
+.admin-table .table th:last-child,
+.admin-table .table td:last-child {
+  padding-right: 2px;
+}
+/* Auto-provisioned workspace rows: the login/temp-password meta lines
+   truncate with ellipsis inside the fixed-layout table. */
+.admin-table .prov-row-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Owner bug report 2026-08-15 — the accounts table's action buttons must
+   never overlap: they wrap inside their fixed column instead of overflowing
+   into the neighboring cell (same pattern as the owner Leads tab's actions
+   column). */
+.admin-table .row-actions {
+  flex-wrap: wrap;
+}
+
+.password-row {
+  display: flex;
+  gap: 8px;
+}
+
+.password-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-row .btn {
+  flex: none;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.alert-success {
+  background: var(--green-dim);
+  border-color: rgba(124, 227, 139, 0.35);
+  color: #aef0b8;
+}
+
+.alert-success code {
+  background: rgba(124, 227, 139, 0.14);
+  border: 1px solid rgba(124, 227, 139, 0.3);
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 13px;
+  color: #d8fade;
+}
+
+.created-line {
+  margin: 3px 0;
+}
+
+.created-hint {
+  margin: 8px 0 0;
+  color: rgba(174, 240, 184, 0.75);
+  font-size: 12.5px;
+}
+
+.chip-owner {
+  background: var(--lime-dim);
+  border-color: rgba(214, 255, 63, 0.28);
+  color: var(--lime);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+/* 3g-3 — auto-provisioned-from-sold-lead chip (distinct from the lime owner
+   chip; blue signals "new, needs the owner's action"). */
+.chip-provisioned {
+  background: rgba(111, 179, 255, 0.1);
+  border-color: rgba(111, 179, 255, 0.3);
+  color: var(--blue);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+/* Owner 2026-08-29 — Active-account status chip (green = live account),
+   shown on every Active clients row; auto-provisioned rows keep the blue
+   chip + sold-lead note alongside it. */
+.chip-active {
+  background: var(--green-dim);
+  border-color: rgba(124, 227, 139, 0.3);
+  color: var(--green);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+/* 3g-3 — sold-lead auto-provisioning notices (owner Dashboard + Admin). */
+.prov-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.prov-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  background: rgba(111, 179, 255, 0.07);
+  border: 1px solid rgba(111, 179, 255, 0.25);
+}
+.prov-notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.prov-notice-text {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink-dim);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prov-notice-text strong {
+  color: var(--ink);
+}
+.prov-open {
+  font-size: 13px;
+}
+.prov-notice-meta {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+/* 3g-3 — auto-provisioned org row details (Admin tenant list). */
+.prov-row-meta {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.prov-row-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.prov-row-line b {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+.prov-row-line code {
+  background: rgba(242, 241, 236, 0.07);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  color: var(--lime);
+}
+
+/* The Admin layout is single-column at every width (form above, table
+   below) — the old 980px two-column collapse is no longer needed. */
 
 /* ── Modal ─────────────────────────────────────────────────── */
 
@@ -979,9 +2606,9 @@ legend.field-label {
   background: rgba(5, 5, 7, 0.72);
   backdrop-filter: blur(6px);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 5vh 18px 18px;
+  padding: 16px;
   overflow-y: auto;
   animation: fade 0.18s ease both;
 }
@@ -1002,7 +2629,25 @@ legend.field-label {
   box-shadow: var(--shadow);
   width: 100%;
   max-width: 640px;
+  /* Always fit inside the viewport (overlay has 16px padding, so a
+     dvh-capped modal can never clip top or bottom). vh line first as a
+     fallback for browsers without dvh support. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   animation: rise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.modal-lg {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-lg .modal-form {
+  overflow-y: auto;
+  padding-top: 16px;
+  padding-bottom: 0;
+  min-height: 0;
 }
 
 .modal-sm {
@@ -1024,14 +2669,63 @@ legend.field-label {
 }
 
 .modal-form {
-  padding: 20px 24px 24px;
+  padding: 20px 24px 0;
 }
 
+/* Visible scroll affordance on scrollable modal bodies (the tall client
+   form, and whole-modal scroll on mobile). Thin + always-visible so it's
+   obvious the body scrolls. */
+.modal-form,
+.modal {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.modal-form::-webkit-scrollbar,
+.modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal-form::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-form::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+
+/* Always-visible actions bar: sticky footer pinned to the bottom of the
+   scroll region while the form body scrolls beneath it. */
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 10px;
-  padding-top: 4px;
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--line-strong);
+  padding: 14px 24px 16px;
+  margin-top: 12px;
+}
+
+/* Actions inside a padded form (Client/Task/Invoice): cancel the form's
+   side padding with horizontal-only negative margins so the footer spans
+   the full modal width and sits flush with its bottom edge (horizontal-only,
+   so the sticky vertical offset stays correct). */
+.modal-form > .modal-actions {
+  margin: 12px -24px 0;
+  border-radius: 0 0 18px 18px;
+}
+
+/* Actions as a direct modal child (ConfirmDeleteModal): the modal has no
+   padding, so the bar already spans full width — just round the bottom
+   corners to match the modal. */
+.modal > .modal-actions {
+  border-radius: 0 0 18px 18px;
 }
 
 .confirm-body {
@@ -1042,6 +2736,22 @@ legend.field-label {
 
 .confirm-body strong {
   color: var(--ink);
+}
+
+/* Typed-delete confirmation (ConfirmDeleteModal) */
+.confirm-delete-msg {
+  margin: 0 0 14px;
+}
+.confirm-delete-note {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted-2);
+}
+.confirm-delete-field {
+  margin-top: 14px;
+}
+.confirm-delete-field .field-label {
+  margin-bottom: 2px;
 }
 
 /* ── Empty & skeleton ──────────────────────────────────────── */
@@ -1077,6 +2787,303 @@ legend.field-label {
   }
 }
 
+/* ── Tasks & Finance quick-add row (shared layout) ─────── */
+
+.task-add,
+.inv-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.task-add input,
+.task-add select,
+.inv-add input,
+.inv-add select {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  height: 40px;
+}
+
+.task-add input:focus,
+.task-add select:focus,
+.inv-add input:focus,
+.inv-add select:focus {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 3px rgba(214, 255, 63, 0.15);
+}
+
+.task-add input::placeholder,
+.inv-add input::placeholder {
+  color: var(--muted-2);
+}
+
+.task-add select,
+.inv-add select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 30px;
+  flex: 0 1 190px;
+}
+
+.task-add input[type="date"],
+.inv-add input[type="date"] {
+  flex: 0 1 150px;
+}
+
+.task-add-title {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.task-add .btn,
+.inv-add .btn {
+  flex: none;
+}
+
+/* $ prefix inside the invoice amount input */
+.inv-add-amount {
+  position: relative;
+  flex: 0 1 150px;
+}
+
+.inv-add-amount .inv-dollar {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #555;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.inv-add-amount input {
+  width: 100%;
+  padding-left: 26px;
+  /* Owner 2026-08-25 — "i cant see the numbers — white background black
+     lettering". The theme's `input { color: var(--ink) }` (near-white) applies
+     to EVERY input, but .inv-add-amount inputs sit OUTSIDE .field (which is
+     what normally supplies the dark background), so they rendered near-white
+     text on the browser's default white background → invisible. Force an
+     explicit white background + black text for these amount boxes (the
+     Pending-payment per-row boxes and the quick-add/"Bill a client account"
+     forms all share .inv-add-amount). .field input / .combobox-input keep
+     their dark styling untouched. */
+  background: #fff;
+  color: #000;
+  color-scheme: light;
+}
+.inv-add-amount input::placeholder {
+  color: #777;
+}
+
+.inv-add select[aria-label="Invoice status"] {
+  flex: 0 1 130px;
+}
+
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.task {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.task:last-child {
+  border-bottom: none;
+}
+
+.task:hover {
+  background: rgba(242, 241, 236, 0.025);
+}
+
+.task-check {
+  background: none;
+  border: none;
+  padding: 1px 0 0;
+  flex: none;
+}
+
+.task-checkbox {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line-strong);
+  color: var(--lime-ink);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.task-check:hover .task-checkbox {
+  border-color: var(--lime);
+}
+
+.task-checkbox.on {
+  background: var(--lime);
+  border-color: var(--lime);
+}
+
+.task-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-title-text {
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.task-done .task-title-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.task-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.task-due {
+  font-weight: 600;
+}
+
+.task-due.overdue {
+  color: var(--danger);
+}
+
+.task-due.today {
+  color: var(--amber);
+}
+
+.task-notes {
+  color: var(--muted-2);
+}
+
+/* ── Finance invoice list ──────────────────────────────── */
+
+.inv-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.inv {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inv:last-child {
+  border-bottom: none;
+}
+
+.inv:hover {
+  background: rgba(242, 241, 236, 0.025);
+}
+
+.inv-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.inv-client {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 180px;
+}
+
+.inv-noclient {
+  color: var(--muted-2);
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.inv-notes {
+  color: var(--muted-2);
+  font-size: 12.5px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* .inv-notes is a ONE-LINE table-note style (280px, nowrap, ellipsis). The
+   Finance cockpit footnotes reuse the class for multi-sentence paragraphs and
+   were cut off mid-word ("...org-scoped upd…"). Footnotes wrap like normal
+   prose instead. */
+p.inv-notes.cockpit-foot {
+  max-width: 72ch;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.inv-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.inv-amount {
+  font-weight: 700;
+  font-size: 15.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inv-due {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.inv-due.overdue {
+  color: var(--danger);
+}
+
 /* ── Responsive ────────────────────────────────────────────── */
 
 @media (max-width: 1020px) {
@@ -1084,12 +3091,31 @@ legend.field-label {
     grid-template-columns: repeat(3, 1fr);
   }
 
+  .task-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .kpi-row {
     grid-template-columns: 1fr;
+  }
+
+  .kpi-row-4 {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
 @media (max-width: 760px) {
+  .impersonate-banner {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 8px 16px;
+  }
+
+  .impersonate-return {
+    margin-left: 0;
+    width: 100%;
+  }
+
   .nav-inner {
     height: auto;
     padding: 10px 16px;
@@ -1103,6 +3129,12 @@ legend.field-label {
 
   .nav-right {
     margin-left: auto;
+  }
+
+  .tabs {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .main {
@@ -1120,6 +3152,10 @@ legend.field-label {
   .field-row {
     flex-direction: column;
     gap: 16px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 
   .toolbar {
@@ -1140,6 +3176,51 @@ legend.field-label {
     max-width: none;
   }
 
+  .task-add,
+  .inv-add {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-add input,
+  .task-add select,
+  .inv-add input,
+  .inv-add select {
+    flex: none;
+    width: 100%;
+  }
+
+  .inv-add-amount {
+    flex: none;
+    width: 100%;
+  }
+
+  .task-add .btn,
+  .inv-add .btn {
+    width: 100%;
+  }
+
+  .inv {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .inv-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .inv-meta {
+    margin-left: 0;
+  }
+
+  .inv-notes {
+    max-width: none;
+    white-space: normal;
+  }
+
   /* Table → stacked cards */
   .table,
   .table tbody,
@@ -1147,6 +3228,7 @@ legend.field-label {
   .table td {
     display: block;
     width: 100%;
+    min-width: 0;
   }
 
   .table thead {
@@ -1165,6 +3247,7 @@ legend.field-label {
   .table td {
     border: none;
     padding: 5px 16px;
+    text-align: left;
   }
 
   .table td::before {
@@ -1188,6 +3271,21 @@ legend.field-label {
 
   .cell-next {
     max-width: none;
+    white-space: normal;
+    overflow: visible;
+  }
+
+  .table td .cell-sub,
+  .cell-name,
+  .prov-row-line {
+    max-width: none;
+    white-space: normal;
+    overflow: visible;
+  }
+
+  .table .stage-cell .badge {
+    max-width: none;
+    overflow: visible;
   }
 
   .stage-cell {
@@ -1204,7 +3302,22 @@ legend.field-label {
   .modal {
     border-radius: 20px 20px 0 0;
     max-height: 92vh;
+    max-height: 92dvh;
     overflow-y: auto;
+  }
+
+  .modal.modal-lg {
+    max-height: 88vh;
+    max-height: 88dvh;
+    overflow: hidden;
+  }
+
+  /* Bottom sheet has square bottom corners — the pinned actions bar
+     should match instead of showing rounded-corner gaps. (Must beat the
+     `.modal-form > .modal-actions` 18px-bottom rule, hence the higher
+     specificity selector.) */
+  .modal .modal-actions {
+    border-radius: 0;
   }
 }
 
@@ -1218,7 +3331,1409 @@ legend.field-label {
     font-size: 26px;
   }
 
+  .kpi-row-4 {
+    grid-template-columns: 1fr;
+  }
+
   .brand-text {
     font-size: 15px;
   }
+
+  .cf-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cf-row .icon-btn {
+    justify-self: end;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Phase 3a — per-tenant branding + settings
+   ───────────────────────────────────────────────────────────── */
+/* The tenant's accent (set inline by App from user.accentColor) is exposed as
+   --accent; these rules mirror the lime defaults so owner branding is
+   pixel-identical until a tenant picks their own color. */
+.app {
+  --accent: var(--lime);
+}
+.brand-mark {
+  background: var(--accent);
+}
+.brand-text em {
+  color: var(--accent);
+}
+.tab.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Long tenant names must truncate instead of breaking the nav layout. */
+.brand-text {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brand-sub {
+  flex: none;
+}
+
+/* ── Settings page ─────────────────────────────────────────── */
+.accent-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+/* input.color-input / input.accent-hex carry an element for specificity:
+   the generic `.field input` rule (0,1,1) otherwise beats `.color-input`
+   (0,1,0), stretching the color swatch to the full row width and squeezing
+   the hex input to a sliver that overflowed the card edge (owner live-test
+   2026-08-28). Equal specificity + later in the file wins cleanly. */
+input.color-input {
+  width: 46px;
+  height: 36px;
+  padding: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel-2);
+  cursor: pointer;
+  flex: none;
+}
+input.accent-hex {
+  width: 120px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+input.accent-hex,
+.stage-row input {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input.accent-hex:focus,
+.stage-row input:focus {
+  border-color: var(--accent, var(--lime));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--lime)) 15%, transparent);
+}
+input.accent-hex::placeholder,
+.stage-row input::placeholder {
+  color: var(--muted-2);
+}
+.stage-list {
+  padding: 2px 0 4px;
+}
+.stage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.stage-row:last-child {
+  border-bottom: none;
+}
+.stage-idx {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+  width: 24px;
+  flex: none;
+  text-align: right;
+}
+.stage-row input {
+  flex: 1;
+  min-width: 0;
+}
+.stage-count-chip {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.stage-count-chip.has {
+  color: var(--amber);
+  border-color: rgba(255, 196, 107, 0.35);
+  background: rgba(255, 196, 107, 0.08);
+}
+.stage-row .icon-btn {
+  flex: none;
+}
+.stage-row .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.stage-add {
+  margin-top: 12px;
+}
+.stage-save {
+  margin-top: 14px;
+  text-align: right;
+}
+@media (max-width: 760px) {
+  .stage-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .stage-row input {
+    flex: 1 1 100%;
+    order: 2;
+  }
+  .stage-idx {
+    order: 1;
+  }
+  .stage-count-chip {
+    order: 3;
+  }
+  .stage-row .icon-btn {
+    order: 4;
+    margin-left: auto;
+  }
+}
+
+/* ── Custom fields (Phase 3b) ─────────────────────────────── */
+
+.cfdef-card {
+  grid-column: 1 / -1;
+}
+.cfdef-empty {
+  margin: 10px 0 2px;
+  max-width: 46em;
+}
+
+.cfdef-list {
+  padding: 2px 0 4px;
+}
+
+.cfdef-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cfdef-row:last-child {
+  border-bottom: none;
+}
+
+.cfdef-name {
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.cfdef-type {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  flex: none;
+}
+
+.cfdef-row > .icon-btn {
+  flex: none;
+  margin-left: auto;
+}
+/* 3f-1: a custom-field item (row + optional select-options editor). */
+.cfdef-item {
+  border-bottom: 1px solid var(--line);
+}
+.cfdef-item:last-child {
+  border-bottom: none;
+}
+.cfdef-item .cfdef-row {
+  border-bottom: none;
+}
+.cfdef-opts.cg-opts {
+  margin: 2px 0 10px 8px;
+}
+
+.cfdef-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cfdef-confirm-q {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.cfdef-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.cfdef-add input,
+.cfdef-add select {
+  background: var(--bg-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cfdef-add input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.cfdef-add select {
+  flex: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238f8f9a' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+.cfdef-add input:focus,
+.cfdef-add select:focus {
+  border-color: var(--accent, var(--lime));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--lime)) 15%, transparent);
+}
+
+.cfdef-add input::placeholder {
+  color: var(--muted-2);
+}
+/* ── Adaptive intake (Phase 1): Settings vertical-config controls ── */
+.intake-seg {
+  display: flex;
+  flex-wrap: wrap;
+}
+.intake-seg .seg-btn {
+  justify-content: center;
+}
+.intake-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 2px 0;
+}
+.intake-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.intake-opt input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--lime);
+  cursor: pointer;
+  flex: none;
+}
+
+/* Client modal — typed custom field values (one labeled control per def) */
+.cf-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.cf-values .field {
+  margin: 0;
+}
+
+.cf-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 2px 2px;
+}
+
+.cf-check input {
+  width: auto;
+}
+
+.cf-none-hint {
+  margin: 0;
+  max-width: 46em;
+}
+
+@media (max-width: 560px) {
+  .cf-values {
+    grid-template-columns: 1fr;
+  }
+  .cfdef-confirm {
+    justify-content: flex-start;
+  }
+}
+
+/* ── Adaptive intake (Phase 2): rules-driven sections in the client modal ── */
+/* Each rules-engine section gets a small-caps header; blocks inside the
+   section span both grid columns so the 2-col field grid stays clean. */
+.intake-section + .intake-section {
+  margin-top: 4px;
+}
+.intake-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.intake-section:first-of-type .intake-section-title {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+/* Full-width fields/blocks inside the 2-column intake grid (the grid is the
+   section body, so blocks need to span both tracks). */
+.intake-grid .intake-block,
+.intake-grid .field.intake-block,
+.intake-grid fieldset.intake-block {
+  grid-column: 1 / -1;
+}
+.intake-grid .field {
+  min-width: 0;
+}
+/* Owner 2026-08-27 — Lead information summary (deal value + package tier)
+   in the client/lead record's info window. Read-only panel styled like the
+   intake sections; lives OUTSIDE a section so it shows at every pipeline
+   stage (Leads / Onboarding / Sold) for the owner workspace. */
+.lead-info {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(242, 241, 236, 0.03);
+}
+.lead-info-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.lead-info-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  padding-top: 4px;
+  line-height: 1.35;
+}
+/* Compact yes/no toggle (PO required, COI, pet on premises). */
+.yesno-seg {
+  align-self: flex-start;
+}
+.yesno-seg .seg-btn {
+  min-width: 62px;
+  justify-content: center;
+}
+/* Business name / LLC collapsed tab (individual intake). */
+.llc-tab {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  padding: 4px 14px;
+}
+.llc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 10px 0;
+  cursor: pointer;
+  text-align: left;
+}
+.llc-caret {
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.llc-note {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+.llc-body {
+  padding: 2px 0 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.llc-body .field {
+  margin: 0;
+}
+/* Billing address fields (shown when "same as service address" is off). */
+.billing-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.billing-fields .field {
+  margin: 0;
+}
+
+/* ── Adaptive intake Phase 3: custom intake groups editor (Settings) ── */
+.cg-card {
+  max-width: 46em;
+}
+.cg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 2px 0 4px;
+}
+.cg-group {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px 16px;
+  background: var(--bg-soft);
+}
+.cg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.cg-head-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 280px;
+  flex-wrap: wrap;
+}
+.cg-enabled {
+  font-size: 13px;
+  flex: none;
+  white-space: nowrap;
+}
+.cg-name {
+  flex: 1;
+  min-width: 160px;
+}
+.cg-applies {
+  flex: none;
+}
+.cg-name,
+.cg-applies,
+.cg-flabel,
+.cg-fkey,
+.cg-fkind,
+.cg-opt input {
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cg-name:focus,
+.cg-applies:focus,
+.cg-flabel:focus,
+.cg-fkey:focus,
+.cg-fkind:focus,
+.cg-opt input:focus {
+  border-color: var(--accent, var(--lime));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--lime)) 15%, transparent);
+}
+.cg-name::placeholder,
+.cg-flabel::placeholder,
+.cg-fkey::placeholder,
+.cg-opt input::placeholder {
+  color: var(--muted-2);
+}
+.cg-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cg-field {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--bg);
+}
+.cg-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cg-flabel {
+  flex: 2;
+  min-width: 150px;
+}
+.cg-fkey {
+  flex: 1.4;
+  min-width: 130px;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+}
+.cg-fkind {
+  flex: none;
+}
+.cg-field-row > .icon-btn {
+  flex: none;
+}
+.cg-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-left: 4px;
+}
+.cg-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cg-opt input {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.cg-opt .icon-btn {
+  flex: none;
+}
+.cg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+/* Owner request 2026-08-14 — DNC warning banner inside table rows (the DNC
+   list view) and the status reason inputs in the client modal. */
+.dnc-banner-row {
+  display: block;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  color: #ffb3b3;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 6px 9px;
+}
+.dnc-banner + .form-grid {
+  margin-top: 12px;
+}
+.status-reason {
+  margin-top: 10px;
+}
+.status-reason input {
+  width: 100%;
+}
+
+/* ── Owner request 2026-08-14: MRR + revenue-model UI ─────────────── */
+.page-actions-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.page-actions-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.revenue-amount-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.revenue-amount {
+  font-size: 20px;
+  color: var(--lime);
+}
+@media (max-width: 760px) {
+  .page-actions-col {
+    align-items: flex-start;
+  }
+}
+
+/* ── Support tickets (owner direction 2026-08-15) ───────────────────────
+   Owner "Tickets" tab (every account's tickets + status control) and tenant
+   "Support" tab (own org only + submit form). Reuses the existing badge
+   tones / table / modal conventions; only the ticket-specific bits are here. */
+.tickets-table .ticket-subject {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink, #f2f1ec);
+  text-align: left;
+  cursor: pointer;
+}
+/* Ticket number chip (owner direction 2026-08-25): the readable TKT-#### sits
+   inline before the subject button. */
+.tickets-table .ticket-subject-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tickets-table .ticket-subject-cell .ticket-no {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.tickets-table .ticket-subject:hover {
+  text-decoration: underline;
+}
+.tickets-table .ticket-row.open .ticket-subject {
+  color: var(--accent, #d6ff3f);
+}
+.tickets-table .ticket-message {
+  margin: 8px 0 2px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.12);
+  white-space: pre-wrap;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  max-height: 220px;
+  overflow: auto;
+}
+.tickets-table .status-select {
+  width: 100%;
+  min-width: 118px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: var(--surface, #141417);
+  color: inherit;
+  font-size: 0.85rem;
+}
+.tickets-table .status-select:disabled {
+  opacity: 0.6;
+}
+/* Owner-only reply queue (backlog 58435d2b): expanded ticket shows replies
+   (draft/sent), the reviewer's draft textarea, and the per-draft "Approve &
+   send" button. Never rendered for tenants. */
+.tickets-table .ticket-replies {
+  margin: 10px 0 4px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  background: rgba(128, 128, 128, 0.06);
+}
+.tickets-table .ticket-replies-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tickets-table .ticket-replies-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tickets-table .ticket-reply {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.1);
+}
+.tickets-table .ticket-reply.reply-draft {
+  border-left: 3px solid var(--amber, #f5b942);
+}
+.tickets-table .ticket-reply.reply-sent {
+  border-left: 3px solid var(--green, #4ade80);
+}
+.tickets-table .ticket-reply-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  font-size: 0.85rem;
+}
+.tickets-table .ticket-reply-meta .btn-sm {
+  margin-left: auto;
+}
+.tickets-table .ticket-reply-body {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.tickets-table .ticket-reply-draft textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: var(--surface, #141417);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+.tickets-table .ticket-reply-draft-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.tickets-table .ticket-saving {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.78rem;
+}
+
+/* ── Team members (owner request 2026-08-14) — Settings members UI ──────── */
+.member-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 18px;
+}
+.member-form-grid .field:last-child {
+  grid-column: 1 / -1;
+}
+@media (max-width: 640px) {
+  .member-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .member-form-grid .field:last-child {
+    grid-column: auto;
+  }
+}
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+  margin: 6px 0 4px;
+}
+.perm-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.perm-picker-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted-1, #c9c9c2);
+  white-space: nowrap;
+}
+.perm-picker select {
+  min-width: 110px;
+  padding: 5px 8px;
+  font-size: 0.8rem;
+}
+.members-card .member-row {
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  padding: 14px 2px;
+}
+.members-card .member-row:first-child {
+  border-top: none;
+}
+.member-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 14px;
+}
+.member-email {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  min-width: 220px;
+}
+.member-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.member-added {
+  font-size: 0.78rem;
+  color: var(--muted-2, #8a8a84);
+}
+.member-access {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  flex-basis: 100%;
+  margin-top: 8px;
+}
+.member-access .badge {
+  font-size: 0.72rem;
+}
+.member-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.member-actions .btn-ghost.danger {
+  color: var(--red, #f0625f);
+}
+.member-actions .btn-ghost.danger:not(:disabled):hover {
+  background: var(--red, #f0625f);
+  color: #fff;
+}
+.member-inline-edit,
+.member-inline-reset {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border-radius: 12px;
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+}
+.member-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.member-inline-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.member-reset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 4px 0 6px;
+}
+.member-reset-row input {
+  min-width: 220px;
+  flex: 1;
+}
+
+/* ── Native e-signature (owner direction 2026-08-15) ────────────── */
+/* Owner Administration → Agreements → "Agreement template" textarea. */
+/* Owner direction 2026-08-17 — the agreement template textarea is a proper
+   SCROLL BOX: a fixed comfortable height with vertical scrolling, so the long
+   legal template (~20 000 chars) never stretches the page. resize: vertical
+   keeps the owner able to grow it; the scrollbar is themed to the app. */
+.agree-template-input { width: 100%; height: 440px; max-height: 70vh; overflow-y: auto; font-family: inherit; background: var(--bg, #0a0a0c); color: var(--ink, #f2f1ec); border: 1px solid var(--border, #2a2a31); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.55; resize: vertical; }
+.agree-template-input::-webkit-scrollbar { width: 10px; }
+.agree-template-input::-webkit-scrollbar-thumb { background: #33333b; border-radius: 6px; }
+.agree-template-input::-webkit-scrollbar-track { background: transparent; }
+/* Owner Onboarding → Agreement audit modal grid. */
+.audit-grid { display: grid; gap: 10px; }
+.audit-grid p { margin: 0; display: flex; gap: 10px; font-size: 14px; }
+.audit-grid p span { flex: 0 0 120px; color: var(--muted, #8b8a84); text-transform: uppercase; font-size: 11px; letter-spacing: .06em; padding-top: 2px; }
+.audit-grid a { color: var(--accent, #d6ff3f); }
+
+/* Audit modal (native e-signature) — overlay/modal primitives in case the
+   app shell's own modal styles are scoped elsewhere. */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 20px; }
+.modal { background: #131316; border: 1px solid #2a2a31; border-radius: 14px; max-width: 520px; width: 100%; max-height: 86vh; overflow: auto; }
+.modal-head { padding: 18px 22px 0; }
+.modal-body { padding: 14px 22px; }
+.modal-actions { padding: 0 22px 20px; display: flex; justify-content: flex-end; gap: 10px; }
+
+/* Owner 2026-08-20 sales rework — demo-outcome select + Schedule demo in the
+   owner's Leads row-actions, the owner's Client-accounts heading, and the
+   Calendar view. */
+.demo-outcome-select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: transparent;
+  color: inherit;
+  max-width: 92px;
+}
+.calendar-list { display: flex; flex-direction: column; gap: 20px; }
+.calendar-day { display: flex; flex-direction: column; gap: 8px; }
+.calendar-day-head {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #8a8a93);
+}
+.calendar-rows { display: flex; flex-direction: column; gap: 10px; }
+.calendar-row { display: flex; flex-direction: row; gap: 16px; align-items: flex-start; padding: 14px 18px; }
+.calendar-time {
+  flex: 0 0 84px;
+  font-weight: 600;
+  color: var(--accent, #d6ff3f);
+  padding-top: 2px;
+}
+/* Owner 2026-08-27 — the client's local time shown under the owner's MST
+   time in the calendar/appointments rows (only when a non-MST timezone is
+   set). Faint + break-anywhere so it never shoves the row. */
+.calendar-time-local {
+  display: block;
+  font-weight: 500;
+  font-size: 0.82em;
+  color: var(--ink-60, #9aa0a6);
+  white-space: normal;
+  min-width: 88px;
+}
+.calendar-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.calendar-actions { margin-left: auto; align-self: center; }
+.calendar-title { display: flex; flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
+.calendar-sub { display: flex; flex-direction: row; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Owner Sales-Flow UI (owner 2026-08-20) — the redesigned owner LEADS
+   (4 cols: name / contact / Schedule Demo / Actions) + owner ONBOARDING
+   (6 cols: name / contact / Next action / Agreement stages / Send payment
+   link / Edit) tables. Everything keeps the fixed table-fit rule (colgroup
+   sums to 100%, no horizontal page overflow). */
+.sales-leads .cell-name,
+.sales-onboarding .cell-name { white-space: normal; word-break: break-word; }
+
+/* Prominent "Schedule Demo" quick-action button (owner Leads col 3) — styled
+   like the existing Send Agreements / Start Onboarding quick actions but a
+   full, clearly clickable button. */
+.schedule-demo-btn {
+  background: rgba(214, 255, 63, 0.1);
+  border: 1px solid rgba(214, 255, 63, 0.45);
+  border-radius: 8px;
+  color: var(--lime);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 6px 12px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
+}
+.schedule-demo-btn:hover { background: rgba(214, 255, 63, 0.2); border-color: var(--lime); }
+.schedule-demo-btn:active { transform: translateY(1px); }
+.schedule-demo-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Owner Actions dropdown menu trigger (owner Leads col 4). */
+.owner-actions-menu { position: relative; display: inline-block; min-width: 0; }
+.owner-actions-trigger {
+  background: rgba(242, 241, 236, 0.06);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.owner-actions-trigger:hover { background: rgba(242, 241, 236, 0.12); border-color: var(--muted); }
+.owner-actions-trigger .caret { color: var(--lime); margin-left: 4px; }
+.owner-actions-trigger:disabled { opacity: 0.55; cursor: default; }
+.owner-actions-dropdown {
+  /* Owner 2026-08-21 — the owner Actions dropdown opens DOWNWARD (top edge is
+     set inline to the trigger's rect.bottom + 4) and renders position: fixed
+     so the `.table-wrap` overflow container can NEVER clip it. top/right come
+     from the inline style set in src/Clients.tsx on open. max-height +
+     overflow-y:auto remain as the safety net for very long item lists, and
+     z-index keeps it above the table. */
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #141519;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.owner-actions-dropdown [role="menuitem"] {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+  width: 100%;
+}
+.owner-actions-dropdown [role="menuitem"]:hover,
+.owner-actions-dropdown [role="menuitem"]:focus-visible {
+  background: rgba(214, 255, 63, 0.12);
+  color: var(--lime);
+  outline: none;
+}
+
+/* Owner Onboarding payment-link column: the prominent "Send payment link"
+   button stack plus the Sent/Paid badge + interim "Mark paid" flip. */
+.pay-col { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.payment-link-btn {
+  background: rgba(124, 227, 139, 0.1);
+  border: 1px solid rgba(124, 227, 139, 0.45);
+  border-radius: 8px;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 6px 12px;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.payment-link-btn:hover { background: rgba(124, 227, 139, 0.2); border-color: var(--green); }
+.payment-link-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Owner Onboarding "Edit" (col 6) — Edit + Audit, left-aligned in the cell. */
+.edit-col { justify-content: flex-start; }
+
+/* Demo-outcome editor inside the ClientModal (owner Leads tab). */
+.demo-outcome-field {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+.demo-sched-line { font-size: 12.5px; margin: 0 0 10px; line-height: 1.5; }
+
+/* Owner request 2026-08-25 — inline "Billing cycle" column on the Client
+   accounts table. The date input is compact and stays readable (white
+   background + black text, like every date picker) so the owner can set an
+   account's billing cycle date without the table overflowing. */
+.billing-cycle-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: nowrap;
+}
+.billing-cycle-value {
+  font-weight: 600;
+}
+.billing-cycle-date-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.billing-cycle-date-line .icon-btn {
+  color: var(--muted);
+}
+.billing-date-input {
+  width: 150px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: #000;
+  color-scheme: light;
+}
+.billing-cycle-cell .icon-btn {
+  padding: 2px 6px;
+}
+/* ── Owner 2026-08-27 — Client accounts table cleanup (Accounts.tsx) ─────
+   Every data point owns a clearly-labeled column and NOTHING truncates: the
+   shared .table ellipsis/nowrap behavior is intentionally not used here —
+   names and emails wrap fully instead. Strictly scoped to `.accounts-table`
+   so every OTHER table keeps the shared .cell-* rules untouched.
+   Owner 2026-08-28 privacy fix: the PASSWORD column is gone (a client's
+   password is private to the client — one-time handoff via the modals only),
+   so the table is TWELVE columns and the password-only styling
+   (.accounts-table .acc-note code) was removed with it. */
+.accounts-table {
+  table-layout: auto;
+}
+.accounts-table th {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  vertical-align: bottom;
+}
+.accounts-table td {
+  vertical-align: top;
+}
+/* Owner live-test 2026-08-27 — the previous fixed colgroup layout OVERLAPPED:
+   under table-layout:fixed every column is locked to its % width and any cell
+   content wider than that paints straight over the neighbouring column —
+   the nowrap .chip "auto-provisioned" spilled into Phone, the 4-button
+   .row-actions (flex-wrap existed only under .admin-table) spilled past the
+   table edge, the 150px billing date input and the nowrap cycle date+pen line
+   spilled into Deal value. FIX: columns size to their content (auto layout,
+   no fixed colgroup) + wrap guards so nothing can spill. Scoped strictly to
+   .accounts-table — every other table keeps the shared .table behavior. */
+/* Long UNBROKEN values (emails, account names) wrap inside their own
+   column via the targeted rules below (.acc-name/.acc-line/.acc-note carry
+   word-break: break-word). A blanket overflow-wrap:anywhere on every cell was
+   tried and REVERTED: it drives every column's min-content to ~0, so dates
+   wrapped mid-number ("Aug/27,/2026") and the status chip broke mid-word.
+   With per-cell guards, auto layout gives dates/chips their natural width and
+   only genuinely long strings wrap. */
+.accounts-table .row-actions {
+  flex-wrap: wrap;
+}
+
+/* Owner 2026-08-27 — Inactive clients window (backlog cb1c9700): a separate
+   window under the Active client accounts table. Inactive (canceled) rows are
+   slightly muted — retained data, blocked logins — but every column stays
+   readable; the same .accounts-table wrap guards apply (no overlap). */
+.accounts-inactive {
+  /* Owner 2026-08-29 — the Inactive clients window is a separate sibling
+     AFTER the .admin-grid (Create + Active accounts) on the page root, not a
+     .page-stack child, so it missed the shared vertical rhythm: give it the
+     same stack gap so there is a clear space below the Active accounts. */
+  margin-top: var(--stack-gap);
+}
+.accounts-inactive .row-inactive td {
+  color: var(--muted, #a9a9b3);
+}
+.accounts-inactive .row-inactive .acc-name {
+  color: inherit;
+}
+.accounts-table .chip {
+  white-space: normal;
+}
+.accounts-table .billing-date-input {
+  width: 100%;
+  max-width: 150px;
+}
+.accounts-table .acc-cycle-line {
+  flex-wrap: wrap;
+}
+.accounts-table .acc-strong {
+  font-weight: 600;
+}
+/* Phone/Email keep a small floor so long unbroken strings wrap into
+   readable chunks instead of 4-character slivers on tight viewports. */
+.accounts-table .acc-line {
+  min-width: 9ch;
+}
+/* Owner bug 2026-08-28 — COLUMN MISALIGNMENT (the "phone shows email,
+   email shows password" report): the PREVIOUS version of this rule applied
+   display: block to the elements THEMSELVES — and .acc-line sits ON the
+   Phone/Email <td> (.acc-name is the span inside the Account td). A
+   block-displayed table cell leaves the column grid, so every value from
+   Phone onward painted one column LEFT of its header. The td keeps its
+   native table-cell display; only the .acc-name SPAN stays display:block. */
+.accounts-table .acc-name,
+.accounts-table td.acc-line {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  word-break: break-word;
+  line-height: 1.45;
+}
+.accounts-table .acc-name {
+  display: block;
+}
+.accounts-table .acc-note {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  word-break: break-word;
+}
+.accounts-table .acc-muted {
+  color: var(--muted);
+}
+.accounts-table .acc-cycle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+/* Created dates and subscription amounts are short fixed-format values —
+   keep them on one line so auto column sizing gives them their natural
+   width instead of wrapping mid-value ("Aug 28," / "2026"). */
+.accounts-table td[data-label="Created"],
+.accounts-table td[data-label="Subscription"] {
+  white-space: nowrap;
+}
+.accounts-table .acc-cycle-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.accounts-table .acc-cycle-line .icon-btn {
+  padding: 2px 6px;
+  color: var(--muted);
+}
+
+/* Appointments "Schedule" box (owner direction 2026-08-26): dark card matching
+   the rest of the app — the earlier white background is REVERSED. The box is
+   .card.schedule-box in both owner and tenant contexts; keep its heading,
+   muted cells and inputs readable on the dark background. */
+.schedule-box {
+  background: var(--panel);
+  color: var(--ink);
+}
+.schedule-box h3 {
+  color: var(--ink);
+}
+.schedule-box .cell-muted {
+  color: var(--muted);
+}
+.schedule-box input {
+  background: var(--bg-soft);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  font-size: 14.5px;
+  color-scheme: dark;
+}
+.schedule-box input::placeholder {
+  color: var(--muted-2);
+}
+
+/* Agreements editor dropdown on Documents (owner direction 2026-08-25) */
+.agreements-editor {
+  overflow: hidden;
+}
+.agreements-dropdown-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: var(--bg-soft);
+  border: 0;
+  padding: 14px 18px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.agreements-dropdown-bar:hover {
+  background: var(--panel-2);
+}
+.agreements-dropdown-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+.agreements-dropdown-title em {
+  color: var(--lime);
+}
+.agreements-dropdown-chevron {
+  color: var(--muted);
+  font-size: 14px;
+  transition: transform 0.15s ease;
+}
+.agreements-pin-box,
+.agreements-editor-body {
+  padding: 0 18px 18px;
+  border-top: 1px solid var(--line);
+}
+.agreements-pin-box {
+  padding-top: 14px;
+}
+
+
+/* ── Paying clients hub (Finance, owner 2026-08-27, backlog 8b9bbe2c) ── */
+/* Owner 2026-08-29 — even spacing inside the Finance windows: the Stripe
+   status + Paying clients windows rendered flush against their card borders
+   (generic .card sets only background/border/radius). Same inset as the
+   admin windows (.admin-form/.admin-table). */
+.paying-hub,
+.pending-bills {
+  padding: 22px 24px 24px;
+}
+.paying-table .cell-name {
+  display: block;
+  font-weight: 700;
+}
+.paying-table td .badge {
+  margin-top: 4px;
+}
+.paying-table .hub-money {
+  display: inline-flex;
+  min-width: 96px;
+}
+.paying-table .hub-money input {
+  width: 100%;
+}
+.paying-table select {
+  max-width: 190px;
+}
+.hub-bill-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hub-bill-actions .hub-money {
+  min-width: 84px;
+}
+
+/* Owner 2026-08-27 — the account's auto-seeded onboarding checklist window
+   (package-selector feature). Compact checkbox list inside the modal. */
+.onb-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.onb-item label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+}
+.onb-item label:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+.onb-item.onb-done span {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+.onb-item input[type="checkbox"] {
+  accent-color: currentColor;
+  width: 1rem;
+  height: 1rem;
+  flex: none;
 }

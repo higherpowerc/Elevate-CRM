@@ -3,9 +3,12 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
+import { renderSignPage, readAgreementPdf, backfillSignedClients, backfillBrandRename } from "./agreements";
+import { renderConfirmPage, renderReschedulePage } from "./appointmentPages";
+import { db } from "./db";
 
 /**
- * Elevate CRM — single Bun server: serves the built React frontend from
+ * Revzenta CRM — single Bun server: serves the built React frontend from
  * ./dist and the JSON API under /api. One process, one port, real SQLite
  * file. Designed to be deployed as a single unit to any Bun-capable host.
  */
@@ -27,7 +30,23 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".txt": "text/plain; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".pdf": "application/pdf",
 };
+
+/** Best-effort client IP for the e-signature delivery stamp: X-Forwarded-For
+ *  first (the app runs behind Render's proxy in production), else Bun's
+ *  server.requestIP (the fetch handler's second argument is the Server). */
+function clientIp(req: Request, server: { requestIP(req: Request): { address: string } | null }): string {
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff && xff.trim() !== "") return xff.split(",")[0].trim();
+  try {
+    const ip = server.requestIP(req);
+    if (ip?.address) return ip.address;
+  } catch {
+    /* ignore */
+  }
+  return "";
+}
 
 function serveStatic(pathname: string): Response {
   let rel = pathname === "/" ? "/index.html" : pathname;
@@ -56,9 +75,40 @@ function serveStatic(pathname: string): Response {
   });
 }
 
+// Boot-time branding backfill (2026-08-18): "Elevate Studio" → "Revzenta".
+// Runs BEFORE the admin seeder so the pre-rename owner org (still stored under
+// the legacy name) is renamed + its stored agreement template scrubbed before
+// ensureDefaultOrg() looks the default org up by its new name — the live org
+// is adopted, never duplicated. Idempotent; failure must never block startup.
+try {
+  const b = backfillBrandRename(db);
+  if (b.renamed) {
+    console.log(
+      `[crm] Branding backfill: owner org renamed to Revzenta (agreement template ${b.templates > 0 ? "re-brushed" : "already clean"}).`,
+    );
+  }
+} catch (err) {
+  console.error("[crm] Branding backfill failed (continuing boot):", err);
+}
+
 // Seed the admin account at startup if ADMIN_EMAIL / ADMIN_PASSWORD are set.
 const seed = await ensureAdmin();
 console.log(seed.message);
+
+// Boot-time signed-client backfill (live-test finding 2026-08-15): records
+// marked signed BEFORE the sign-time auto-advance (PR #60) existed still sit
+// in a non-terminal stage (live client id 59 "Joe"). Advance them exactly
+// like a fresh signature would (terminal stage + deduped account task +
+// next_action). Idempotent; run defensively so a failure can never block
+// startup — the app must still boot and serve.
+try {
+  const advanced = backfillSignedClients(db);
+  if (advanced > 0) {
+    console.log(`[crm] Signed-client backfill: advanced ${advanced} record(s) to their terminal stage.`);
+  }
+} catch (err) {
+  console.error("[crm] Signed-client backfill failed (continuing boot):", err);
+}
 
 if (!existsSync(join(DIST_DIR, "index.html"))) {
   console.log("[crm] dist/index.html missing — run `bun run build` to build the frontend.");
@@ -67,16 +117,54 @@ if (!existsSync(join(DIST_DIR, "index.html"))) {
 const server = serve({
   port: PORT,
   hostname: "0.0.0.0",
-  fetch(req) {
+  fetch(req, srv) {
     const url = new URL(req.url);
     if (url.pathname.startsWith("/api/")) {
-      return handleApi(req, url);
+      return handleApi(req, url, srv);
+    }
+    /* Native e-signature — PUBLIC routes (the emailed link is the credential).
+       /sign/<token> renders the sign/decline page (recording delivery on
+       first open); /agreement-pdf/<pdfId> serves the generated PDF (the id is
+       an unguessable random, and the page links it for the signer). These
+       must be checked BEFORE the SPA fallback. */
+    if (req.method === "GET" && url.pathname.startsWith("/sign/")) {
+      const token = decodeURIComponent(url.pathname.slice("/sign/".length));
+      return renderSignPage(token, clientIp(req, srv));
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/agreement-pdf/")) {
+      const pdfId = url.pathname.slice("/agreement-pdf/".length);
+      const bytes = readAgreementPdf(pdfId);
+      if (!bytes) return new Response("Not found", { status: 404 });
+      return new Response(bytes as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type": MIME[".pdf"],
+          "Cache-Control": "private, max-age=3600",
+          "Content-Disposition": `inline; filename="agreement-${pdfId}.pdf"`,
+        },
+      });
+    }
+    /* Appointments production (backlog 5a104eae) — PUBLIC Confirm / Reschedule
+       landing pages. The day-before reminder email links here
+       (`/appointment/<token>/confirm` and `/appointment/<token>/reschedule`);
+       the token is the credential, single-org, no session. The forms POST the
+       JSON action to the public API routes (/api/appointment/<token>/…). Like
+       /sign/<token>, these must be checked BEFORE the SPA fallback. */
+    if (req.method === "GET" && url.pathname.startsWith("/appointment/")) {
+      const rest = url.pathname.slice("/appointment/".length);
+      const slash = rest.indexOf("/");
+      if (slash > 0) {
+        const token = decodeURIComponent(rest.slice(0, slash));
+        const action = rest.slice(slash + 1);
+        if (action === "confirm") return renderConfirmPage(token);
+        if (action === "reschedule") return renderReschedulePage(token);
+      }
     }
     return serveStatic(url.pathname);
   },
 });
 
-console.log(`[crm] Elevate CRM listening on http://localhost:${PORT}`);
+console.log(`[crm] Revzenta CRM listening on http://localhost:${PORT}`);
 console.log(`[crm] Database: ${process.env.DATA_DIR ?? join(import.meta.dir, "..", "data")}/crm.db`);
 
 // Keep the process alive if all handlers detach (paranoia guard).

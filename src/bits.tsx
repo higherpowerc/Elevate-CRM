@@ -1,11 +1,15 @@
-import type { Client, Service, Stage } from "./types";
-import { STAGE_TONE } from "./types";
+import type { Stage } from "./types";
+import { stageTone } from "./types";
 
-export function StageBadge({ stage }: { stage: Stage }) {
-  return <span className={`badge tone-${STAGE_TONE[stage]}`}>{stage}</span>;
+/** Stage badge; tone follows the stage's position in the tenant's stage list
+ *  (index 0 = gray, cycling through the palette) because stage names are
+ *  tenant-defined. */
+export function StageBadge({ stage, index = 0 }: { stage: Stage; index?: number }) {
+  // title so a truncated stage badge in a table row still shows the full name
+  return <span className={`badge tone-${stageTone(index)}`} title={stage}>{stage}</span>;
 }
 
-export function ServiceChips({ services }: { services: Service[] }) {
+export function ServiceChips({ services }: { services: string[] }) {
   if (!services.length) return <span className="cell-muted">—</span>;
   return (
     <span className="chips">
