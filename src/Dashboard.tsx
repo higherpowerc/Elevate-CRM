@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { api } from "./api";
 import { stageTone, money, fmtDate, type DashboardData, type Invoice, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
@@ -54,6 +54,14 @@ function dueInfo(dueDate: string): { tone: "" | "overdue" | "today" | "soon"; la
   return { tone: "", label: `Due ${fmtDate(dueDate)}` };
 }
 
+const REVENUE_COLORS_KEY = "crm:revenue-card-colors";
+const DEFAULT_REVENUE_COLORS = {
+  totalBilled: "#171a1f",
+  paid: "#13251a",
+  outstanding: "#201d14",
+  overdue: "#291719",
+};
+
 function EyeIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -89,11 +97,21 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
     outstanding: number;
     overdue: number;
   } | null>(null);
+  const [revenueCardColors, setRevenueCardColors] = useState(DEFAULT_REVENUE_COLORS);
 
   /* Global privacy eye (2026-08-14 owner request): blur client/company names
      on this page too (task overview rows + Recently updated). The eye itself
      lives in the top nav (App.tsx); this just consumes its state. */
   const pii = usePii();
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(REVENUE_COLORS_KEY) ?? "null");
+      if (stored && typeof stored === "object") setRevenueCardColors((colors) => ({ ...colors, ...stored }));
+    } catch {
+      /* use defaults when browser storage is unavailable */
+    }
+  }, []);
 
   /* Privacy eye (2026-08-14 owner request): blur/hide every money figure on
      the dashboard (the projected-pipeline KPI and the Deal column of Recently
@@ -465,22 +483,22 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
         <section aria-label="Revenue summary">
           <h2 className="section-title">Revenue</h2>
           <div className="kpi-row kpi-row-4">
-            <div className="card kpi">
+            <div className="card kpi" style={{ backgroundColor: revenueCardColors.totalBilled } as CSSProperties}>
               <span className="kpi-label">Total billed</span>
               <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(revenue.invoiced)}</span>
               <span className="kpi-note">All invoices — draft + sent + paid</span>
             </div>
-            <div className="card kpi">
+            <div className="card kpi" style={{ backgroundColor: revenueCardColors.paid } as CSSProperties}>
               <span className="kpi-label">Paid</span>
               <span className={`kpi-value green${blur(moneyHidden)}`}>{money(revenue.paid)}</span>
               <span className="kpi-note">Marked paid — money in</span>
             </div>
-            <div className="card kpi">
+            <div className="card kpi" style={{ backgroundColor: revenueCardColors.outstanding } as CSSProperties}>
               <span className="kpi-label">Outstanding</span>
               <span className={`kpi-value${blur(moneyHidden)}`}>{money(revenue.outstanding)}</span>
               <span className="kpi-note">Sent, not yet paid</span>
             </div>
-            <div className="card kpi">
+            <div className="card kpi" style={{ backgroundColor: revenueCardColors.overdue } as CSSProperties}>
               <span className="kpi-label">Overdue</span>
               <span className={`kpi-value red${blur(moneyHidden)}`}>{money(revenue.overdue)}</span>
               <span className="kpi-note">Sent, past due date</span>

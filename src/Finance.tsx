@@ -480,6 +480,83 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
         </div>
       </div>
 
+      <div className="toolbar">
+        <div className="seg">
+          {(["all", ...INVOICE_STATUSES] as Filter[]).map((f) => (
+            <button
+              key={f}
+              className={filter === f ? "seg-btn active" : "seg-btn"}
+              onClick={() => setFilter(f)}
+            >
+              {f === "all" ? "All" : invoiceStatusLabel(f)}
+              <span className="seg-count">{counts[f]}</span>
+            </button>
+          ))}
+        </div>
+        <input
+          className="search"
+          type="search"
+          placeholder="Search clients…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search clients"
+        />
+      </div>
+
+      {canEdit && (
+        <form className="card inv-add" onSubmit={handleQuickAdd}>
+          <SearchableSelect
+            piiBlur={pii}
+            className="inv-add-client"
+            value={clientId}
+            onChange={setClientId}
+            options={clients.map((c) => ({
+              value: String(c.id),
+              label: c.companyName + (c.archived ? " (archived)" : ""),
+            }))}
+            placeholder="Search clients…"
+            ariaLabel="Invoice client"
+            emptyLabel="No client"
+          />
+          <div className="inv-add-amount">
+            <span className="inv-dollar" aria-hidden="true">
+              $
+            </span>
+            <input
+              type="number"
+              ref={amountRef}
+              min="0.01"
+              step="0.01"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              aria-label="Invoice amount"
+            />
+          </div>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            aria-label="Invoice due date"
+          />
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as InvoiceStatus)}
+            aria-label="Invoice status"
+          >
+            {INVOICE_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {invoiceStatusLabel(s)}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-primary" disabled={busy}>
+            Add
+          </button>
+        </form>
+      )}
+
       {/* Finance cockpit / reporting (backlog a8241fea) — OWNER-only analytics
           over real product records. The revenue figures are "based on invoices
           recorded" — the business is still in Stripe TEST mode, so nothing here
@@ -650,60 +727,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
         </div>
       )}
 
-      {canEdit && (
-      <form className="card inv-add" onSubmit={handleQuickAdd}>
-        <SearchableSelect
-          piiBlur={pii}
-          className="inv-add-client"
-          value={clientId}
-          onChange={setClientId}
-          options={clients.map((c) => ({
-            value: String(c.id),
-            label: c.companyName + (c.archived ? " (archived)" : ""),
-          }))}
-          placeholder="Search clients…"
-          ariaLabel="Invoice client"
-          emptyLabel="No client"
-        />
-        <div className="inv-add-amount">
-          <span className="inv-dollar" aria-hidden="true">
-            $
-          </span>
-          <input
-            type="number"
-            ref={amountRef}
-            min="0.01"
-            step="0.01"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0.00"
-            aria-label="Invoice amount"
-          />
-        </div>
-        <input
-          type="date"
-          value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
-          aria-label="Invoice due date"
-        />
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as InvoiceStatus)}
-          aria-label="Invoice status"
-        >
-          {INVOICE_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {invoiceStatusLabel(s)}
-            </option>
-          ))}
-        </select>
-        <button className="btn btn-primary" disabled={busy}>
-          Add
-        </button>
-      </form>
-      )}
-
       {ownerOrg && canEdit && (
         <div className="card stripe-bill paying-hub" aria-label="Paying clients">
           <div className="page-head" style={{ marginBottom: "var(--stack-gap)" }}>
@@ -848,29 +871,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
           </p>
         </div>
       )}
-
-      <div className="toolbar">
-        <div className="seg">
-          {(["all", ...INVOICE_STATUSES] as Filter[]).map((f) => (
-            <button
-              key={f}
-              className={filter === f ? "seg-btn active" : "seg-btn"}
-              onClick={() => setFilter(f)}
-            >
-              {f === "all" ? "All" : invoiceStatusLabel(f)}
-              <span className="seg-count">{counts[f]}</span>
-            </button>
-          ))}
-        </div>
-        <input
-          className="search"
-          type="search"
-          placeholder="Search clients…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search clients"
-        />
-      </div>
 
       {visible.length === 0 ? (
         <div className="card empty">

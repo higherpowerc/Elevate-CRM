@@ -23,6 +23,19 @@ const MAX_CUSTOM_FIELDS = 20;
 const MAX_INTAKE_GROUPS = 10;
 const MAX_GROUP_FIELDS = 20;
 const GROUP_KEY_RE = /^[a-z][a-z0-9_]*$/;
+const REVENUE_COLORS_KEY = "crm:revenue-card-colors";
+type RevenueCardColors = {
+  totalBilled: string;
+  paid: string;
+  outstanding: string;
+  overdue: string;
+};
+const DEFAULT_REVENUE_COLORS: RevenueCardColors = {
+  totalBilled: "#171a1f",
+  paid: "#13251a",
+  outstanding: "#201d14",
+  overdue: "#291719",
+};
 
 /** Stable id for a brand-new group (Settings only — the server accepts any
  *  string id ≤ 60 chars). */
@@ -81,6 +94,7 @@ export default function Settings({
   const [accentColor, setAccentColor] = useState("#d6ff3f");
   // Dashboard color picker (owner 2026-08-29) — '' = theme defaults.
   const [dashboardColor, setDashboardColor] = useState("");
+  const [revenueCardColors, setRevenueCardColors] = useState<RevenueCardColors>(DEFAULT_REVENUE_COLORS);
 
   /* Custom fields (Phase 3b; 3f-1 adds select fields with options) */
   const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
@@ -408,6 +422,12 @@ export default function Settings({
       setOrgName(settings.orgName);
       setAccentColor(settings.accentColor);
       setDashboardColor(settings.dashboardColor ?? "");
+      try {
+        const stored = JSON.parse(localStorage.getItem(REVENUE_COLORS_KEY) ?? "null") as Partial<RevenueCardColors> | null;
+        if (stored) setRevenueCardColors({ ...DEFAULT_REVENUE_COLORS, ...stored });
+      } catch {
+        setRevenueCardColors(DEFAULT_REVENUE_COLORS);
+      }
       setCustomFields(settings.customFields);
       setServiceModel(settings.serviceModel);
       setDeliveryType(settings.deliveryType);
@@ -443,6 +463,7 @@ export default function Settings({
     setBusy(true);
     try {
       await api.updateSettings({ orgName: orgName.trim(), accentColor, dashboardColor });
+      localStorage.setItem(REVENUE_COLORS_KEY, JSON.stringify(revenueCardColors));
       setSaved("Workspace branding saved.");
       await load(); // refresh orgName/accent from the server
     } catch (err) {
@@ -1005,6 +1026,30 @@ export default function Settings({
                 Colors the figures and labels on your dashboard. Leave empty for the theme
                 default.
               </span>
+            </div>
+            <div className="field">
+              <span className="field-label">Revenue dashboard windows</span>
+              <div className="revenue-color-grid">
+                {([
+                  ["totalBilled", "Total billed"],
+                  ["paid", "Paid"],
+                  ["outstanding", "Outstanding"],
+                  ["overdue", "Overdue"],
+                ] as const).map(([key, label]) => (
+                  <label className="revenue-color-item" key={key}>
+                    <span>{label}</span>
+                    <input
+                      type="color"
+                      className="color-input"
+                      value={revenueCardColors[key]}
+                      onChange={(e) => setRevenueCardColors((colors) => ({ ...colors, [key]: e.target.value }))}
+                      aria-label={`${label} window color`}
+                      disabled={!canEdit}
+                    />
+                  </label>
+                ))}
+              </div>
+              <span className="field-hint">Choose a separate background color for each Revenue window.</span>
             </div>
             {canEdit && (
               <button className="btn btn-primary" disabled={busy} type="submit">
