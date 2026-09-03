@@ -444,16 +444,6 @@ export default function App() {
                 Onboarding
               </button>
             )}
-            {/* Owner 2026-08-20 sales rework — the owner's Calendar view:
-                demo-call appointments, owner-workspace only. */}
-            {isOwnerOrg && (
-              <button
-                className={effectiveView === "calendar" ? "tab active" : "tab"}
-                onClick={() => setView("calendar")}
-              >
-                Calendar
-              </button>
-            )}
             {/* Appointments production (backlog 5a104eae): the general
                 appointments tab. The owner sees it alongside (not instead of)
                 their demo-call Calendar; each client account sees its own

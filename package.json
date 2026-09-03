@@ -7,8 +7,8 @@
   "scripts": {
     "build": "bun build ./index.html --outdir ./dist --minify",
     "start": "bun ./server/index.ts",
-    "start:local": "PORT=3001 bun ./server/index.ts",
-    "dev": "PORT=3001 bun --watch ./server/index.ts",
+    "start:local": "cross-env PORT=3001 bun ./server/index.ts",
+    "dev": "cross-env PORT=3001 bun --watch ./server/index.ts",
     "seed": "bun ./server/seed.ts",
     "db:reset": "rm -f data/crm.db data/crm.db-shm data/crm.db-wal"
   },
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "@types/react": "^19.1.0",
-    "@types/react-dom": "^19.1.0"
+    "@types/react-dom": "^19.1.0",
+    "cross-env": "^7.0.0"
   }
 }
