@@ -160,58 +160,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
     return { mrr, activeCount: active.length };
   }, [ownerOrg, clients]);
 
-  /** Revenue by client — sums the ledger's invoices per client (invoiced ·
-   *  paid · outstanding), with that client's monthlyAmount as context.
-   *  Unassigned invoices roll up under a single "Unassigned" row. */
-  const revenueByClient = useMemo(() => {
-    if (!invoices) return [];
-    const map = new Map<
-      string,
-      { name: string; clientId: number | null; monthlyAmount: number; invoiced: number; paid: number; outstanding: number }
-    >();
-    for (const i of invoices) {
-      const key = i.clientId != null ? `c:${i.clientId}` : `u:${i.clientName || ""}`;
-      let row = map.get(key);
-      if (!row) {
-        const c = i.clientId != null ? clients.find((x) => x.id === i.clientId) : undefined;
-        row = {
-          name: i.clientName || "Unassigned",
-          clientId: i.clientId ?? null,
-          monthlyAmount: c ? Number(c.monthlyAmount) || 0 : 0,
-          invoiced: 0,
-          paid: 0,
-          outstanding: 0,
-        };
-        map.set(key, row);
-      }
-      row.invoiced += i.amount;
-      if (i.status === "paid") row.paid += i.amount;
-      if (i.status === "sent") row.outstanding += i.amount;
-    }
-    return Array.from(map.values()).sort((a, b) => b.invoiced - a.invoiced);
-  }, [invoices, clients]);
-
-  /** Lost / churned — every owner client that is explicitly lost (lost=true,
-   *  with lostReason), a demo that ended "not_sold", and the harsher subset:
-   *  clients who were signed/paid (real accounts) and have since been lost —
-   *  i.e. churned. Each row carries a reason + kind tag. */
-  const lostChurned = useMemo(() => {
-    if (!ownerOrg) return [];
-    return clients.filter((c) => c.lost || c.demoOutcome === "not_sold").map((c) => {
-      if (c.lost && (c.agreementStatus === "signed" || c.paymentStatus === "paid")) {
-        return {
-          client: c,
-          kind: "churned" as const,
-          reason: c.lostReason ? `${c.lostReason} · was a signed/paid client` : "Was a signed/paid client — churned",
-        };
-      }
-      if (c.lost) {
-        return { client: c, kind: "lost" as const, reason: c.lostReason || "Marked lost" };
-      }
-      return { client: c, kind: "not_sold" as const, reason: "Demo call — not sold" };
-    });
-  }, [ownerOrg, clients]);
-
   async function handleQuickAdd(e: FormEvent) {
     e.preventDefault();
     const a = Number(amount);
@@ -532,6 +480,83 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
         </div>
       </div>
 
+      <div className="toolbar">
+        <div className="seg">
+          {(["all", ...INVOICE_STATUSES] as Filter[]).map((f) => (
+            <button
+              key={f}
+              className={filter === f ? "seg-btn active" : "seg-btn"}
+              onClick={() => setFilter(f)}
+            >
+              {f === "all" ? "All" : invoiceStatusLabel(f)}
+              <span className="seg-count">{counts[f]}</span>
+            </button>
+          ))}
+        </div>
+        <input
+          className="search"
+          type="search"
+          placeholder="Search clients…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search clients"
+        />
+      </div>
+
+      {canEdit && (
+        <form className="card inv-add" onSubmit={handleQuickAdd}>
+          <SearchableSelect
+            piiBlur={pii}
+            className="inv-add-client"
+            value={clientId}
+            onChange={setClientId}
+            options={clients.map((c) => ({
+              value: String(c.id),
+              label: c.companyName + (c.archived ? " (archived)" : ""),
+            }))}
+            placeholder="Search clients…"
+            ariaLabel="Invoice client"
+            emptyLabel="No client"
+          />
+          <div className="inv-add-amount">
+            <span className="inv-dollar" aria-hidden="true">
+              $
+            </span>
+            <input
+              type="number"
+              ref={amountRef}
+              min="0.01"
+              step="0.01"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              aria-label="Invoice amount"
+            />
+          </div>
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            aria-label="Invoice due date"
+          />
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as InvoiceStatus)}
+            aria-label="Invoice status"
+          >
+            {INVOICE_STATUSES.map((s) => (
+              <option key={s} value={s}>
+                {invoiceStatusLabel(s)}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-primary" disabled={busy}>
+            Add
+          </button>
+        </form>
+      )}
+
       {/* Finance cockpit / reporting (backlog a8241fea) — OWNER-only analytics
           over real product records. The revenue figures are "based on invoices
           recorded" — the business is still in Stripe TEST mode, so nothing here
@@ -570,63 +595,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
               <span className="kpi-note">Sold · agreement signed · payment received</span>
             </div>
           </div>
-
-          <h3 className="cockpit-sub">
-            Revenue by client <span className="cockpit-sub-note">per invoice · monthlyAmount context</span>
-          </h3>
-          {revenueByClient.length === 0 ? (
-            <p className="cockpit-empty">No invoiced clients yet.</p>
-          ) : (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Client</th>
-                    <th className="num">Monthly</th>
-                    <th className="num">Invoiced</th>
-                    <th className="num">Paid</th>
-                    <th className="num">Outstanding</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {revenueByClient.map((r) => (
-                    <tr key={r.clientId ?? r.name}>
-                      <td className="cell-strong">
-                        <span className={`cell-name${blurPii(pii)}`}>{r.name}</span>
-                      </td>
-                      <td className="num cell-muted">{r.monthlyAmount > 0 ? money(r.monthlyAmount) + "/mo" : "—"}</td>
-                      <td className="num cell-strong">{money(r.invoiced)}</td>
-                      <td className="num cell-strong cockpit-paid">{money(r.paid)}</td>
-                      <td className="num">{money(r.outstanding)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <h3 className="cockpit-sub">
-            Lost / churned <span className="cockpit-sub-note">why accounts were lost</span>
-          </h3>
-          {lostChurned.length === 0 ? (
-            <p className="cockpit-empty">No lost or churned clients recorded.</p>
-          ) : (
-            <ul className="inv-list" style={{ margin: 0 }}>
-              {lostChurned.map(({ client: c, kind, reason }) => (
-                <li key={c.id} className="inv">
-                  <div className="inv-body">
-                    <div className="inv-client">
-                      <span className={`chip${blurPii(pii)}`}>{c.companyName}</span>
-                      <span className={`badge ${kind === "churned" ? "tone-red" : kind === "lost" ? "tone-amber" : "tone-gray"}`}>
-                        {kind === "churned" ? "Churned" : kind === "lost" ? "Lost" : "Not sold"}
-                      </span>
-                      <span className="inv-notes">{reason}</span>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
 
           <p className="inv-notes cockpit-foot">
             Owner-only view over your own invoices and client records — figures are never fabricated and no
@@ -757,60 +725,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
             </>
           )}
         </div>
-      )}
-
-      {canEdit && (
-      <form className="card inv-add" onSubmit={handleQuickAdd}>
-        <SearchableSelect
-          piiBlur={pii}
-          className="inv-add-client"
-          value={clientId}
-          onChange={setClientId}
-          options={clients.map((c) => ({
-            value: String(c.id),
-            label: c.companyName + (c.archived ? " (archived)" : ""),
-          }))}
-          placeholder="Search clients…"
-          ariaLabel="Invoice client"
-          emptyLabel="No client"
-        />
-        <div className="inv-add-amount">
-          <span className="inv-dollar" aria-hidden="true">
-            $
-          </span>
-          <input
-            type="number"
-            ref={amountRef}
-            min="0.01"
-            step="0.01"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0.00"
-            aria-label="Invoice amount"
-          />
-        </div>
-        <input
-          type="date"
-          value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
-          aria-label="Invoice due date"
-        />
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as InvoiceStatus)}
-          aria-label="Invoice status"
-        >
-          {INVOICE_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {invoiceStatusLabel(s)}
-            </option>
-          ))}
-        </select>
-        <button className="btn btn-primary" disabled={busy}>
-          Add
-        </button>
-      </form>
       )}
 
       {ownerOrg && canEdit && (
@@ -957,29 +871,6 @@ export default function Finance({ canEdit = true, ownerOrg = false }: { canEdit?
           </p>
         </div>
       )}
-
-      <div className="toolbar">
-        <div className="seg">
-          {(["all", ...INVOICE_STATUSES] as Filter[]).map((f) => (
-            <button
-              key={f}
-              className={filter === f ? "seg-btn active" : "seg-btn"}
-              onClick={() => setFilter(f)}
-            >
-              {f === "all" ? "All" : invoiceStatusLabel(f)}
-              <span className="seg-count">{counts[f]}</span>
-            </button>
-          ))}
-        </div>
-        <input
-          className="search"
-          type="search"
-          placeholder="Search clients…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search clients"
-        />
-      </div>
 
       {visible.length === 0 ? (
         <div className="card empty">

@@ -420,6 +420,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     if (scope === "middle") return orgStages.length > 2 ? orgStages.slice(1, -1) : [];
     return orgStages.length > 0 ? orgStages.slice(0, -1) : [];
   }, [scope, orgStages]);
+  const terminalStage = orgStages.length > 0 ? orgStages[orgStages.length - 1] : null;
   /* The Dashboard deep-links "View →" per stage card; a stage outside this
      view's scope (e.g. the terminal stage) has no chip here, so the link
      opens the pipeline on "All" (the stale stage name is ignored). */
@@ -602,8 +603,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
         // update, so a stale spread would write the PRE-SAVE demoOutcome back
         // over the freshly-saved one (a real clobber). Mirror handleDemoOutcome's
         // single merged PUT so the new outcome survives the relocation.
-        if (input.demoOutcome === "sold" && onboardingStage && editing.stage !== onboardingStage) {
-          await api.updateClient(editing.id, { ...input, stage: onboardingStage });
+        if (input.demoOutcome === "sold" && terminalStage && editing.stage !== terminalStage) {
+          await api.updateClient(editing.id, { ...input, stage: terminalStage });
         } else if (input.demoOutcome === "not_sold" && !editing.lost) {
           await api.updateClient(editing.id, { ...input, lost: true, lostReason: "Not sold after demo" });
         }
@@ -845,8 +846,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
     try {
       const patch: ClientInput = { ...c, demoOutcome: outcome };
       if (ownerLeadsTab) {
-        if (outcome === "sold" && onboardingStage && c.stage !== onboardingStage) {
-          patch.stage = onboardingStage;
+        if (outcome === "sold" && terminalStage && c.stage !== terminalStage) {
+          patch.stage = terminalStage;
         } else if (outcome === "not_sold" && !c.lost) {
           patch.lost = true;
           patch.lostReason = "Not sold after demo";

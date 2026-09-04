@@ -4695,8 +4695,30 @@ input.accent-hex::placeholder,
 .paying-table .hub-money input {
   width: 100%;
 }
+.paying-table input,
+.paying-table select {
+  background: #fff;
+  color: #000;
+  border-color: #c7c7c7;
+}
+.paying-table input::placeholder {
+  color: #555;
+}
 .paying-table select {
   max-width: 190px;
+}
+.revenue-color-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.revenue-color-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
 }
 .hub-bill-actions {
   flex-wrap: wrap;

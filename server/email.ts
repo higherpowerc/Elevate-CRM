@@ -331,9 +331,7 @@ export function sendDemoCallEmail(opts: {
 }): Promise<SendEmailResult> {
   const when = fmtMstDateTime(opts.scheduledAt);
   const text: string[] = [
-    `Hi ${opts.clientName},`,
-    "",
-    "Thanks for your interest in Revzenta CRM.",
+    `Great news, ${opts.clientName}!`,
     "",
     `Your demo call is scheduled for ${when}.`,
   ];
