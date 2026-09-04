@@ -19,7 +19,7 @@ const STATUS_META: Record<AgreementStatus, { label: string; tone: string }> = {
   declined: { label: "Declined", tone: "tone-red" },
 };
 
-export default function Documents() {
+export default function Documents({ verticalLabel }: { verticalLabel?: "agreements" } = {}) {
   const [agreements, setAgreements] = useState<AgreementEnvelope[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -78,10 +78,12 @@ export default function Documents() {
       <div className="page-head">
         <div>
           <h1>
-            Documents
+            {verticalLabel === "agreements" ? <>Agreements</> : <>Documents</>}
           </h1>
           <p className="page-sub">
-            Every agreement envelope across all client accounts — status, signer, audit trail and the PDF copy.
+            {verticalLabel === "agreements"
+              ? "Your agreements — status, signer, audit trail and the PDF copy."
+              : "Every agreement envelope across all client accounts — status, signer, audit trail and the PDF copy."}
           </p>
         </div>
       </div>

@@ -467,6 +467,11 @@ export interface User {
    *  prefers it over the raw email when present; not yet sent by the server,
    *  so owner sessions fall back to "Owner" and tenant users to their email. */
   name?: string;
+  /** Wholesale Biz custom menu (owner 2026-09-04) — the session org's
+   *  business type (orgs.vertical_key). Switches a client workspace to the
+   *  wholesale tab set when it equals "wholesalebiz". Additive on
+   *  /api/auth/me + login. */
+  verticalKey?: string;
   /** The tenant's ordered pipeline stages (Phase 3a). */
   stages?: string[];
   /** The tenant's brand accent (hex). */
@@ -482,6 +487,19 @@ export interface User {
  * always visible; tenants never see "Leads" — owner-only). Server-enforced:
  * reads of a tab the member lacks → 403; writes on a tab they have view-only
  * → 403. Org admins bypass everything. */
+/** Wholesale Real Estate vertical (owner direction 2026-09-04) — one end
+ *  buyer on the wholesale account's Buyers list. Org-scoped; tenant-only. */
+export interface Buyer {
+  id: number;
+  name: string;
+  phone: string;
+  /** What they buy, e.g. "3BR/2BA under $150k, any city in Maricopa". */
+  criteria: string;
+  /** What they've bought (free text). */
+  bought: string;
+  createdAt: string;
+  updatedAt: string;
+}
 export const TENANT_TABS = ["clients", "tasks", "finance", "settings", "support"] as const;
 export type TenantTab = (typeof TENANT_TABS)[number];
 

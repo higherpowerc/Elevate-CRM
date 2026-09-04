@@ -57,6 +57,7 @@ import {
   type StoredFieldDef,
   type VerticalTemplate,
 } from "../src/verticals";
+import type { Buyer } from "../src/types";
 import { isKnownTimezone, DEFAULT_CLIENT_TIMEZONE } from "../src/timezone";
 import {
   createSession,
@@ -1359,6 +1360,69 @@ function validateClient(
 
 /** Row shape for task queries: tasks row joined with the client name. */
 type TaskRowJoined = TaskRow & { client_name: string | null };
+/* ── Wholesale Real Estate vertical (owner 2026-09-04): Buyers entity ── */
+interface BuyerRow {
+  id: number;
+  org_id: number;
+  name: string;
+  phone: string;
+  criteria: string;
+  bought: string;
+  created_at: string;
+  updated_at: string;
+}
+function toBuyer(r: BuyerRow): Buyer {
+  return {
+    id: r.id,
+    name: r.name,
+    phone: r.phone ?? "",
+    criteria: r.criteria ?? "",
+    bought: r.bought ?? "",
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+function fetchBuyer(id: number, orgId: number): Buyer | undefined {
+  const row = db.query("SELECT * FROM buyers WHERE id = ? AND org_id = ?").get(id, orgId) as BuyerRow | null;
+  return row ? toBuyer(row) : undefined;
+}
+/** Buyers input validation: name required (1-120 chars) and trimmed; the
+ *  other fields are optional free text (phone 60, criteria/bought 1000). */
+function parseBuyerFields(
+  v: unknown,
+): { ok: true; value: { name?: string; phone?: string; criteria?: string; bought?: string } } | { ok: false; error: string } {
+  if (v === null || typeof v !== "object") return { ok: false, error: "Invalid buyer payload." };
+  const o = v as Record<string, unknown>;
+  const out: { name?: string; phone?: string; criteria?: string; bought?: string } = {};
+  if (o.name !== undefined) {
+    if (typeof o.name !== "string") return { ok: false, error: "Buyer name must be text." };
+    const t = o.name.trim();
+    if (!t) return { ok: false, error: "Buyer name is required." };
+    if (t.length > 120) return { ok: false, error: "Buyer name must be under 121 characters." };
+    out.name = t;
+  } else {
+    return { ok: false, error: "Buyer name is required." };
+  }
+  if (o.phone !== undefined) {
+    if (typeof o.phone !== "string") return { ok: false, error: "Phone must be text." };
+    const t = o.phone.trim();
+    if (t.length > 60) return { ok: false, error: "Phone must be under 61 characters." };
+    out.phone = t;
+  }
+  if (o.criteria !== undefined) {
+    if (typeof o.criteria !== "string") return { ok: false, error: "Buying criteria must be text." };
+    const t = o.criteria.trim();
+    if (t.length > 1000) return { ok: false, error: "Buying criteria must be under 1001 characters." };
+    out.criteria = t;
+  }
+  if (o.bought !== undefined) {
+    if (typeof o.bought !== "string") return { ok: false, error: "Bought must be text." };
+    const t = o.bought.trim();
+    if (t.length > 1000) return { ok: false, error: "Bought must be under 1001 characters." };
+    out.bought = t;
+  }
+  return { ok: true, value: out };
+}
 
 function toTask(row: TaskRowJoined) {
   return {
@@ -1960,6 +2024,10 @@ function deleteOrgCascade(id: number): void {
     db.query("DELETE FROM agreement_envelopes WHERE org_id = ?").run(id);
     // Package-selector onboarding checklist (owner 2026-08-27).
     db.query("DELETE FROM onboarding_items WHERE org_id = ?").run(id);
+    // Wholesale Real Estate vertical (owner 2026-09-04) — the account's
+    // end-buyer list dies with the account (buyer rows FK orgs with no
+    // cascade, mirroring the appointments guard above).
+    db.query("DELETE FROM buyers WHERE org_id = ?").run(id);
     db.query("DELETE FROM clients WHERE org_id = ?").run(id);
     // Owner direction 2026-08-26 — deleting an account deletes its linked
     // SOLD client ENTIRELY (the owner-org record pointing at this workspace
@@ -2974,6 +3042,61 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return json({ ok: true, clientId: client.id, orgId: out.orgId, email: out.email });
   }
 
+  /* Wholesale Biz custom menu (owner direction 2026-09-04) — set an
+     org's business type (vertical) AFTER creation. Owner-only
+     (requireAdmin, like every /api/admin route): the PM calls this for a
+     live account (e.g. the Wholesale biz account created before the
+     wholesale type existed). Generic by design — no org is hardcoded.
+     Body: {"vertical": "<template key>"}. On a known key the template is
+     applied ADDITIVELY, reusing the EXACT Settings apply-template semantics
+     (append missing stages case-insensitively + append missing custom
+     fields; update industry/service_model/delivery_type/vertical_key;
+     revenue model follows the template like a fresh provision) — existing
+     stages/fields/records are never renamed, removed or reordered, so no
+     client/property data is clobbered. "general" resets the vertical
+     config to defaults and touches no stages/fields. Unknown key → 400. */
+  const adminOrgVerticalMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)\/vertical$/);
+  if (adminOrgVerticalMatch && method === "POST") {
+    const admin = requireAdmin(req);
+    if (admin instanceof Response) return admin;
+    const id = Number(adminOrgVerticalMatch[1]);
+    const org = db.query("SELECT * FROM orgs WHERE id = ?").get(id) as OrgRow | null;
+    if (!org) return err("Org not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    if (typeof body.vertical !== "string") return err("Business type must be one of the provided options.", 400);
+    const key = body.vertical.trim().toLowerCase();
+    if (key === "" || key === "general") {
+      db.query("UPDATE orgs SET vertical_key = '', industry = '', service_model = 'both', delivery_type = 'both' WHERE id = ?").run(id);
+      return json({ ok: true, orgId: id, verticalKey: "" });
+    }
+    const tpl = VERTICAL_MAP[key];
+    if (!tpl) return err(`Unknown business type: ${body.vertical}.`, 400);
+    // Additive stage/field merge — identical logic to the tenant Settings
+    // apply-template path (see the /api/settings PUT), so the two never
+    // diverge. The org's existing stage order and field list are kept.
+    const prevStages = parseStages(org.stages);
+    const nextStages = [...prevStages];
+    for (const st of tpl.defaultStages) {
+      if (!nextStages.some((x) => x.toLowerCase() === st.toLowerCase())) nextStages.push(st);
+    }
+    const vs = validateStages(nextStages);
+    if (!vs.ok) return err(`Cannot apply ${tpl.label}: ${vs.error}.`, 400);
+    const prevFields = parseCustomFields(org.custom_fields);
+    const tplDefs = templateFieldDefs(tpl.defaultFields) as CustomFieldDef[];
+    const nextFields: CustomFieldDef[] = [...prevFields];
+    for (const f of tplDefs) {
+      if (!nextFields.some((x) => x.name.toLowerCase() === f.name.toLowerCase())) {
+        nextFields.push({ name: f.name, type: f.type, ...(f.options ? { options: f.options } : {}) });
+      }
+    }
+    const vf = validateCustomFields(nextFields);
+    if (!vf.ok) return err(`Cannot apply ${tpl.label}: ${vf.error}.`, 400);
+    db.query(
+      `UPDATE orgs SET stages = ?, custom_fields = ?, vertical_key = ?, industry = ?, service_model = ?, delivery_type = ?, revenue_model = ? WHERE id = ?`,
+    ).run(JSON.stringify(vs.value), JSON.stringify(vf.value), tpl.key, tpl.industry, tpl.serviceModel, tpl.deliveryType, tpl.revenueModel, id);
+    return json({ ok: true, orgId: id, verticalKey: tpl.key });
+  }
   const adminOrgMatch = pathname.match(/^\/api\/admin\/orgs\/(\d+)$/);
   if (adminOrgMatch && method === "DELETE") {
     const admin = requireAdmin(req);
@@ -4832,6 +4955,77 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     return err("Method not allowed.", 405);
   }
 
+  /* ── Wholesale Real Estate vertical (owner 2026-09-04): Buyers entity ──
+     Org-scoped CRUD for the wholesale account's end-buyer list. TENANT-ONLY:
+     every route reads/writes only the session org's rows (WHERE org_id = ?),
+     the owner's cross-account cockpit has no buyers surface, and there is no
+     admin buyers route — no cross-account leak is even expressible. Reads
+     follow the tasks tab's gate (an owner/org-admin or a member holding the
+     "tasks" grant); writes additionally require edit on "tasks", so a
+     view-only team member can browse buyers but not change them. */
+  if (pathname === "/api/buyers" && method === "GET") {
+    const deniedRead = denyTabRead(auth, "tasks");
+    if (deniedRead) return deniedRead;
+    const rows = db
+      .query("SELECT * FROM buyers WHERE org_id = ? ORDER BY id DESC")
+      .all(orgId) as BuyerRow[];
+    return json({ buyers: rows.map(toBuyer) });
+  }
+  if (pathname === "/api/buyers" && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "tasks");
+    if (deniedWrite) return deniedWrite;
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+    const v = parseBuyerFields(body);
+    if (!v.ok) return err(v.error, 400);
+    const info = db
+      .query(
+        `INSERT INTO buyers (org_id, name, phone, criteria, bought)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(orgId, v.value.name, v.value.phone ?? "", v.value.criteria ?? "", v.value.bought ?? "");
+    const buyer = fetchBuyer(Number(info.lastInsertRowid), orgId);
+    return json({ buyer }, 201);
+  }
+  const buyerMatch = pathname.match(/^\/api\/buyers\/(\d+)$/);
+  if (buyerMatch) {
+    const id = Number(buyerMatch[1]);
+    const find = () => db.query("SELECT * FROM buyers WHERE id = ? AND org_id = ?").get(id, orgId) as BuyerRow | null;
+    if (method === "PUT") {
+      const deniedWrite = denyTabWrite(auth, "tasks");
+      if (deniedWrite) return deniedWrite;
+      const row = find();
+      if (!row) return err("Buyer not found.", 404);
+      const body = await readBody(req);
+      if (!body) return err("Invalid JSON body.", 400);
+      const v = parseBuyerFields(body);
+      if (!v.ok) return err(v.error, 400);
+      const f = v.value;
+      db.query(
+        `UPDATE buyers SET
+           name = ?, phone = ?, criteria = ?, bought = ?,
+           updated_at = datetime('now')
+         WHERE id = ? AND org_id = ?`,
+      ).run(
+        f.name ?? row.name,
+        f.phone ?? row.phone,
+        f.criteria ?? row.criteria,
+        f.bought ?? row.bought,
+        id,
+        orgId,
+      );
+      return json({ buyer: fetchBuyer(id, orgId) });
+    }
+    if (method === "DELETE") {
+      const deniedWrite = denyTabWrite(auth, "tasks");
+      if (deniedWrite) return deniedWrite;
+      const row = find();
+      if (!row) return err("Buyer not found.", 404);
+      db.query("DELETE FROM buyers WHERE id = ? AND org_id = ?").run(id, orgId);
+      return json({ ok: true });
+    }
+    return err("Method not allowed.", 405);
+  }
   /* Invoices collection */
   if (pathname === "/api/invoices" && method === "GET") {
     const deniedRead = denyTabRead(auth, "finance");

@@ -1234,6 +1234,29 @@ db.exec(`CREATE TABLE IF NOT EXISTS onboarding_items (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 /**
+ * buyers: the WHOLESALE REAL ESTATE vertical's end-buyer list (owner
+ * direction 2026-09-04). One row per cash buyer a wholesaler markets their
+ * assignments to — name (required), phone, buying criteria (e.g. "3BR/2BA
+ * under $150k, any city in Maricopa") and what they've bought (free text).
+ * Org-scoped like every tenant table (row-level isolation by org_id — a
+ * buyer belongs to exactly one account and NEVER crosses accounts). The
+ * entity is tenant-only: no owner cross-account view exists (the owner's
+ * cockpit has no buyers surface and the server has no admin buyers route).
+ * Wholesale-only data: other verticals never see the tab, but the rows are
+ * plain org-scoped data and survive a vertical change harmlessly.
+ */
+db.exec(`CREATE TABLE IF NOT EXISTS buyers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id INTEGER NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  criteria TEXT NOT NULL DEFAULT '',
+  bought TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_buyers_org ON buyers(org_id)`);
+/**
  * Owner pipeline migration (3g-2, owner direction 2026-08-14). Idempotent —
  * safe on every boot.
  *
