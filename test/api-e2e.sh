@@ -6864,6 +6864,7 @@ echo "-- 50e. Sales-Flow UI (PR #78): meeting-link invite, follow-up note, sold-
 code -b "$JA50" "$B50/api/settings" > /dev/null
 FIRST50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
 MID50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][1])")
+TERM50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
 echo "     (owner buckets: Leads=\"$FIRST50\", onboarding first-middle=\"$MID50\")"
 S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Meeting Link Co\",\"contactName\":\"Miles M\",\"email\":\"miles@meet.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$FIRST50\"}" "$B50/api/clients")
@@ -6926,28 +6927,30 @@ assert me in leads_bucket, "maybe lead not in the first-stage Leads bucket"
 print("  ✓ 50e: maybe lead still appears in the owner Leads bucket (first stage)")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50e: maybe lead left the Leads bucket"; cat "$PASS_TMP"; fi
-# (c) Demo outcome 'sold' relocates the lead out of Leads INTO Onboarding. The
-#     edit modal's save performs exactly one updateClient with the full record
-#     (demoOutcome=sold) + stage=onboardingStage (orgStages[1]) — mirror that
-#     same call here.
+# (c) Demo outcome 'sold' relocates the lead out of Leads INTO the TERMINAL
+#     stage (owner Roo rework, PR #125: the sold quick-action writes
+#     stage=terminalStage = orgStages[-1], replacing the old onboarding
+#     relocation). The edit modal's save performs exactly one updateClient
+#     with the full record (demoOutcome=sold) + stage=terminalStage — mirror
+#     that same call here.
 S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Meeting Link Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$MID50\"}" "$B50/api/clients/$ML_ID")
-check "50e: owner marks lead sold and relocates it into Onboarding -> 200" 200 "$S"
-grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$MID50\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: sold outcome + Onboarding stage persisted"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: payload: $(cat /tmp/body.json)"; }
+  -d "{\"companyName\":\"Meeting Link Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$TERM50\"}" "$B50/api/clients/$ML_ID")
+check "50e: owner marks lead sold and relocates it into the terminal stage -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$TERM50\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: sold outcome + terminal stage persisted"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: payload: $(cat /tmp/body.json)"; }
 code -b "$JA50" "$B50/api/clients?archived=1" > /dev/null
-if ML_ID="$ML_ID" FIRST50="$FIRST50" MID50="$MID50" python3 - <<'PY' 2>"$PASS_TMP"
+if ML_ID="$ML_ID" FIRST50="$FIRST50" TERM50="$TERM50" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['ML_ID'])][0]
-first, mid = os.environ['FIRST50'], os.environ['MID50']
-assert me['stage'] == mid, me['stage']
+first, term = os.environ['FIRST50'], os.environ['TERM50']
+assert me['stage'] == term, me['stage']
 leads_bucket = [c for c in clients if c['stage'] == first]
 assert me not in leads_bucket, "sold lead still in the Leads bucket"
-onboard_bucket = [c for c in clients if c['stage'] == mid]
-assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
-print("  ✓ 50e: sold lead left the Leads bucket and now sits in the Onboarding bucket")
+terminal_bucket = [c for c in clients if c['stage'] == term]
+assert me in terminal_bucket, "sold lead not in the terminal-stage bucket"
+print("  ✓ 50e: sold lead left the Leads bucket and now sits in the terminal-stage bucket")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 50e: sold-lead relocation (Leads -> Onboarding) verified"; else FAIL=$((FAIL+1)); echo "  ✗ 50e: sold relocation failed"; cat "$PASS_TMP"; fi
+then PASS=$((PASS+1)); echo "  ✓ 50e: sold-lead relocation (Leads -> terminal stage) verified"; else FAIL=$((FAIL+1)); echo "  ✗ 50e: sold relocation failed"; cat "$PASS_TMP"; fi
 # (d) Source markers — the owner Leads tab is the 4-col layout (Name | Contact |
 #     Schedule Demo | Actions) with Edit/DNC/Lost inside the Actions dropdown
 #     (no inline Demo dropdown / no inline Lost/DNC buttons); Onboarding is the
@@ -7030,6 +7033,11 @@ if grep -Fq 'from "./demoTime"' src/Calendar.tsx && grep -Fq 'fmtDemoTime(t)' sr
   PASS=$((PASS+1)); echo "  ✓ source: Calendar renders demo time as 12-hour AM/PM + MST, never through a Date.toLocaleTimeString (no local-tz shift)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Calendar Arizona MST AM/PM markers missing from src/Calendar.tsx"
+fi
+if grep -Fq 'Great news, ${opts.clientName}!' server/email.ts && ! grep -Fq 'Thanks for your interest in Revzenta CRM.' server/email.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: demo invite opens with the Great-news greeting (owner Roo rework, PR #125)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: demo invite greeting drift — expected 'Great news, <name>!' in server/email.ts"
 fi
 if grep -Fq 'MST' server/email.ts && grep -Fq 'fmtMstTime' server/email.ts && grep -Fq 'Your demo call is scheduled for ${when}' server/email.ts && ! grep -Fq 'Your demo call is scheduled for ${opts.scheduledAt}' server/email.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: demo invite email formats the datetime as Arizona MST AM/PM via fmtMstTime"
@@ -7126,33 +7134,35 @@ echo "-- 52a. OwnerActionsMenu one-click demo outcomes: the owner Leads row's Ac
 code -b "$JAR" "$BASE/api/settings" > /dev/null
 F52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
 M52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][1])")
-echo "     (owner buckets: Leads=\"$F52\", onboarding=\"$M52\")"
+T52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
+echo "     (owner buckets: Leads=\"$F52\", terminal=\"$T52\")"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"One-Click Sale Co\",\"contactName\":\"Oscar O\",\"email\":\"oscar@oneclick.example\",\"clientType\":\"commercial\",\"dealValue\":5000,\"stage\":\"$F52\"}" "$BASE/api/clients")
 check "52a: owner creates a fresh lead in the first stage -> 201" 201 "$S"
 OC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 # The dropdown's Sold quick action calls handleDemoOutcome(c,'sold'), which fires a
-# SINGLE updateClient carrying demoOutcome=sold AND stage=onboardingStage together
-# (never a stale two-PUT that would clobber the outcome) — replay that call verbatim.
+# SINGLE updateClient carrying demoOutcome=sold AND stage=terminalStage together
+# (owner Roo rework, PR #125: sold relocates to the pipeline's LAST stage;
+# never a stale two-PUT that would clobber the outcome) — replay verbatim.
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"One-Click Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$M52\"}" "$BASE/api/clients/$OC_ID")
-check "52a: one-click Sold PUTs demoOutcome=sold + onboarding stage together -> 200" 200 "$S"
-grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$M52\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52a: sold lead now carries demoOutcome=sold and sits in the Onboarding stage (single PUT)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52a: payload: $(cat /tmp/body.json)"; }
+  -d "{\"companyName\":\"One-Click Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$T52\"}" "$BASE/api/clients/$OC_ID")
+check "52a: one-click Sold PUTs demoOutcome=sold + terminal stage together -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$T52\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52a: sold lead now carries demoOutcome=sold and sits in the terminal stage (single PUT)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52a: payload: $(cat /tmp/body.json)"; }
 code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
-if OC_ID="$OC_ID" F52="$F52" M52="$M52" python3 - <<'PY' 2>"$PASS_TMP"
+if OC_ID="$OC_ID" F52="$F52" T52="$T52" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['OC_ID'])][0]
-first, mid = os.environ['F52'], os.environ['M52']
-assert me['stage'] == mid, me['stage']
+first, term = os.environ['F52'], os.environ['T52']
+assert me['stage'] == term, me['stage']
 assert me['demoOutcome'] == 'sold', me['demoOutcome']
 leads_bucket = [c for c in clients if c['stage'] == first]
-onboard_bucket = [c for c in clients if c['stage'] == mid]
+terminal_bucket = [c for c in clients if c['stage'] == term]
 assert me not in leads_bucket, "sold lead still in the Leads bucket"
-assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
-print("  ✓ 52a: one-click Sold moved the lead out of the Leads bucket into the Onboarding bucket (demoOutcome retained)")
+assert me in terminal_bucket, "sold lead not in the terminal-stage bucket"
+print("  ✓ 52a: one-click Sold moved the lead out of the Leads bucket into the terminal-stage bucket (demoOutcome retained)")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 52a: sold relocation via the dropdown path verified (Leads -> Onboarding)"; else FAIL=$((FAIL+1)); echo "  ✗ 52a: sold relocation failed"; cat "$PASS_TMP"; fi
+then PASS=$((PASS+1)); echo "  ✓ 52a: sold relocation via the dropdown path verified (Leads -> terminal stage)"; else FAIL=$((FAIL+1)); echo "  ✗ 52a: sold relocation failed"; cat "$PASS_TMP"; fi
 # (b) 'Not sold' quick action: keeps the lead but flags it lost (not-interested),
 #     the same side-effect the edit modal applies.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -7165,7 +7175,7 @@ check "52b: one-click Not sold PUTs demoOutcome=not_sold + lost flag -> 200" 200
 grep -q '"demoOutcome":"not_sold"' /tmp/body.json && grep -q '"lost":true' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52b: not_sold lead flagged lost (not-interested)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52b: payload: $(cat /tmp/body.json)"; }
 # (c) Source markers — the owner Leads Actions dropdown ships Edit / Sold / Not sold /
 #     Maybe / DNC / Lost in that order, wired to handleDemoOutcome; and
-#     handleDemoOutcome itself performs the sold -> onboarding relocation (owner Leads).
+#     handleDemoOutcome itself performs the sold -> terminal-stage relocation (owner Leads; owner Roo rework PR #125).
 if python3 - <<'PY'
 ts = open('src/Clients.tsx').read()
 oa = ts.index('function OwnerActionsMenu')
@@ -7191,11 +7201,11 @@ ts = open('src/Clients.tsx').read()
 hd = ts.index('async function handleDemoOutcome')
 blk = ts[hd:hd+1100]
 assert 'ownerLeadsTab' in blk, 'no ownerLeadsTab gate'
-assert '"sold"' in blk and 'onboardingStage' in blk, 'no sold relocate wiring'
-assert 'c.stage !== onboardingStage' in blk, 'no stage-compare guard'
-assert 'patch.stage = onboardingStage' in blk, 'no onboarding stage write on the patch'
+assert '"sold"' in blk and 'terminalStage' in blk, 'no sold relocate wiring'
+assert 'c.stage !== terminalStage' in blk, 'no stage-compare guard'
+assert 'patch.stage = terminalStage' in blk, 'no terminal stage write on the patch'
 assert 'demoOutcome: outcome' in blk and 'patch' in blk, 'single-PUT merge missing'
-print("  ✓ source: handleDemoOutcome performs the sold -> Onboarding relocate in a single PUT (owner Leads tab)")
+print("  ✓ source: handleDemoOutcome performs the sold -> terminal-stage relocate in a single PUT (owner Leads tab; owner Roo rework PR #125)")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleDemoOutcome sold-relocate logic missing from src/Clients.tsx"; fi
 # (d) Shipped bundle carries the quick-action labels.
@@ -7215,9 +7225,9 @@ fi
 #     `...editing` spread (whose PRE-SAVE demoOutcome would be written back over
 #     the new "sold"). Replay the exact two-PUT sequence handleSave performs:
 #     (1) save `input` (demoOutcome=sold, stage still first), then (2) the merged
-#     relocate `{...input, stage:onboardingStage}` — assert outcome+relocation
+#     relocate `{...input, stage:terminalStage}` — assert outcome+relocation
 #     BOTH persist. With the old stale-spread code, (2) was `{...editing,
-#     stage:onboardingStage}` and rewrote demoOutcome back to the stale value.
+#     stage:terminalStage}` and rewrote demoOutcome back to the stale value.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Edit Modal Sale Co\",\"contactName\":\"Emma E\",\"email\":\"emma@editmodal.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$F52\"}" "$BASE/api/clients")
 check "52e: owner creates a lead for the edit-modal path -> 201" 201 "$S"
@@ -7234,24 +7244,24 @@ S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$F52\"}" "$BASE/api/clients/$EM_ID")
 check "52e: edit-modal first PUT saves demoOutcome=sold -> 200" 200 "$S"
 grep -q '"demoOutcome":"sold"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52e: first PUT carried demoOutcome=sold"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52e: payload: $(cat /tmp/body.json)"; }
-# (2) The merged relocate `{...input, stage:onboardingStage}` — input already
+# (2) The merged relocate `{...input, stage:terminalStage}` — input already
 #     carries demoOutcome=sold, so it must NOT be clobbered back to 'maybe'.
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$M52\"}" "$BASE/api/clients/$EM_ID")
+  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$T52\"}" "$BASE/api/clients/$EM_ID")
 check "52e: edit-modal merged relocate (demoOutcome=sold kept) -> 200" 200 "$S"
 code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
-if EM_ID="$EM_ID" F52="$F52" M52="$M52" python3 - <<'PY' 2>"$PASS_TMP"
+if EM_ID="$EM_ID" F52="$F52" T52="$T52" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['EM_ID'])][0]
-first, mid = os.environ['F52'], os.environ['M52']
-assert me['stage'] == mid, me['stage']
+first, term = os.environ['F52'], os.environ['T52']
+assert me['stage'] == term, me['stage']
 assert me['demoOutcome'] == 'sold', ("demoOutcome clobbered: " + repr(me['demoOutcome']))
 leads_bucket = [c for c in clients if c['stage'] == first]
-onboard_bucket = [c for c in clients if c['stage'] == mid]
+terminal_bucket = [c for c in clients if c['stage'] == term]
 assert me not in leads_bucket, "sold lead still in the Leads bucket"
-assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
-print("  ✓ 52e: edit-modal sold lead relocated to Onboarding with demoOutcome=sold PERSISTED (no stale-spread clobber)")
+assert me in terminal_bucket, "sold lead not in the terminal-stage bucket"
+print("  ✓ 52e: edit-modal sold lead relocated to the terminal stage with demoOutcome=sold PERSISTED (no stale-spread clobber)")
 PY
 then PASS=$((PASS+1)); echo "  ✓ 52e: edit-modal sold relocation + retained outcome verified (no clobber)"; else FAIL=$((FAIL+1)); echo "  ✗ 52e: edit-modal sold relocate/clobber check failed"; cat "$PASS_TMP"; fi
 if python3 - <<'PY'
@@ -7259,10 +7269,10 @@ ts = open('src/Clients.tsx').read()
 hd = ts.index('async function handleSave')
 blk = ts[hd:ts.index('async function handleDelete', hd)]
 assert 'ownerLeadsTab' in blk, 'no ownerLeadsTab gate'
-assert '...input, stage: onboardingStage' in blk, 'sold relocate must merge into input, not a stale spread'
-assert 'editing, stage: onboardingStage' not in blk, 'stale ...editing spread still present in sold relocate'
+assert '...input, stage: terminalStage' in blk, 'sold relocate must merge into input, not a stale spread'
+assert 'editing, stage: terminalStage' not in blk, 'stale ...editing spread still present in sold relocate'
 assert '...input, lost: true' in blk, 'not_sold relocate must merge into input'
-print("  ✓ source: handleSave sold/not_sold relocates merge into the freshly-saved input (no stale ...editing spread)")
+print("  ✓ source: handleSave sold/not_sold relocates merge into the freshly-saved input (no stale ...editing spread; sold -> terminal stage, owner Roo rework PR #125)")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleSave stale ...editing spread not fully removed from src/Clients.tsx"; fi
 echo "  ✓ 52: OwnerActionsMenu one-click demo outcomes complete"
