@@ -1,6 +1,23 @@
 #!/bin/bash
 # End-to-end API test for Revzenta CRM. Points at $BASE (default :3001).
 #
+# ── PRE-DEPLOY GATE (run in this order; every step must pass) ─────────────
+#   1. bunx tsc --noEmit            # type-check ERRORS fail the gate
+#                                   #   (catches TDZ/hoisting ReferenceErrors
+#                                   #    that bun build never checks — the
+#                                   #    2026-09-04 blank-screen root cause)
+#   2. canonical e2e from clean:    # this suite, against a freshly built
+#                                   #   bundle + db:reset (below)
+#   3. bash test/render-smoke.sh    # browser render smoke: proves the built
+#                                   #   SPA actually renders (login + owner +
+#                                   #   tenant + wholesale states) with a clean
+#                                   #   console and NO fatal boundary — the
+#                                   #   second gate that would have caught the
+#                                   #   blank screen (the API suite never
+#                                   #   renders the React app)
+#   THEN deploy. `bun run build` itself runs `tsc --noEmit` first, so a build
+#   with type errors cannot even produce a bundle.
+# ───────────────────────────────────────────────────────────────────────────
 # CANONICAL RUN (what produced the green result — this sandbox exports PORT=80
 # and REAL Stripe/Resend secrets, so the main server must be booted with the
 # Stripe keys deliberately stripped; otherwise §48a's "no key -> 503" test makes

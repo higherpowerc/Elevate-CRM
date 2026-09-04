@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Elevate Studio CRM — universal client pipeline management app (product track).",
   "scripts": {
-    "build": "bun build ./index.html --outdir ./dist --minify",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && bun build ./index.html --outdir ./dist --minify",
+    "check": "bun run typecheck && bun run build",
     "start": "bun ./server/index.ts",
     "start:local": "cross-env PORT=3001 bun ./server/index.ts",
     "dev": "cross-env PORT=3001 bun --watch ./server/index.ts",
@@ -22,6 +24,7 @@
     "@types/bun": "^1.2.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "cross-env": "^7.0.0"
+    "cross-env": "^7.0.0",
+    "typescript": "^7.0.2"
   }
 }
