@@ -10551,7 +10551,7 @@ else
 fi
 echo "-- 77d. MAO field override: the recorded MAO becomes the offered amount =="
 S=$(code -b "$JAROFF" -X PUT -H 'Content-Type: application/json' \
-  -d '{"companyName":"101 Main St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"Max allowable offer (MAO)","value":"248000"}]}' "$BASE/api/clients/$OFFER_CLIENT77")
+  -d '{"companyName":"101 Main St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"Property address","value":"101 Main St, Phoenix AZ"},{"name":"ARV","value":"325000"},{"name":"Repair estimate","value":"40000"},{"name":"Max allowable offer (MAO)","value":"248000"}]}' "$BASE/api/clients/$OFFER_CLIENT77")
 check "77d: add the MAO field (248000) → 200" 200 "$S"
 S=$(code -b "$JAROFF" -X POST -H 'Content-Type: application/json' -d '{}' "$BASE/api/clients/$OFFER_CLIENT77/offer-package")
 check "77d: POST offer-package (MAO override path) → 200" 200 "$S"
