@@ -24,6 +24,32 @@
 # Assumes: repo root CWD; `bun install` done; agent-browser installed;
 # ports 3008 + 3190 free; no server already on those ports.
 # Exit 0 = all states rendered clean. Non-zero = a gate failed (blocks ship).
+#
+# 2026-09-04/05 hardening (fix for the 12/4 run):
+#   - The #root/fatal assertions now POLL for React to mount (#root non-empty)
+#     instead of firing once right after `networkidle` + `sleep 2`. On first
+#     load the old single eval ran before React had rendered #root, so
+#     "exists=no, len=0" + "FATAL BOUNDARY PRESENT" fired while the actual DOM
+#     was already showing the login card (the follow-up eval showed
+#     {"fatal":false} + full login text). Test-only timing false-positive.
+#   - root + fatal are read in ONE eval (single atomic snapshot) so a parse
+#     failure can never report one half of the page and not the other.
+#   - Logins use CSS selectors (`input[type="email"]`, `input[type="password"]`,
+#     `button[type="submit"]`) for EVERY state instead of hard-coded @e1/@e2/@e3
+#     refs. Accessibility refs are assigned fresh on every snapshot and go stale
+#     the moment the page changes; after `close --all` + re-open the login
+#     form's refs are NOT e1/e2/e3 (on a first load Email already shows as
+#     @e4), so the old state-3/4 script typed into the wrong elements and
+#     ended up on the password-RESET screen instead of the tenant dashboard.
+#     The app was fine — member/tenant logins are covered in api-e2e.sh
+#     (member login → 200) — this was a test-side stale-ref bug.
+#   - After submitting a login the script POLLS the snapshot for the expected
+#     dashboard/nav text (up to ~15s) instead of a blind `sleep 3`, so a slow
+#     workstation can't false-fail a successful login.
+#   - The exit status is explicit: the script prints RESULT + SMOKE_EXIT and
+#     `exit 1` when any assertion failed (never masked by a pipe), and also
+#     writes SMOKE_EXIT to /tmp/revzenta-render-smoke-exit.txt so a wrapper
+#     can verify the script's own exit without trusting a pipe's.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
@@ -41,6 +67,7 @@ WHOLESALE_PASSWORD="smoke-wholesale-pass-123"
 SMOKE_DIR="/tmp/revzenta-render-smoke"
 DATA_DIR="${SMOKE_DIR}/data"
 JAR="${SMOKE_DIR}/cookies.txt"
+EXIT_MARKER="/tmp/revzenta-render-smoke-exit.txt"
 PASS=0
 FAIL=0
 step() { printf '\n=== %s ===\n' "$1"; }
@@ -52,6 +79,80 @@ cleanup() {
   rm -rf "${SMOKE_DIR}"
 }
 trap cleanup EXIT
+
+# Single atomic read of the page: prints "yes <len> no" =
+# (root exists+non-empty? <innerHTML len> <fatal boundary present?>).
+# IMPORTANT: agent-browser prints an OBJECT literal (e.g. `({...})`) as
+# parseable pretty JSON, but prints a STRING (JSON.stringify(...)) as a
+# JSON-QUOTED escaped string (`"{\"...\"}"`) which json.load once canNOT
+# parse (it needs a double load). So this eval returns a plain object and
+# the JSON.parse happens once. A parse/eval failure prints "no -1 yes" —
+# the gate treats "cannot see the page" as FAILED, never as PASSED.
+page_state() {
+  agent-browser eval '({exists: !!document.getElementById("root"), len: document.getElementById("root") ? document.getElementById("root").innerHTML.length : -1, fatal: !!document.querySelector(".fatal-error")})' 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); e='yes' if d['exists'] and int(d['len'])>0 else 'no'; print(e, int(d['len']), 'yes' if d['fatal'] else 'no')" 2>/dev/null \
+    || echo "no -1 yes"
+}
+# console error-signal count
+console_count() {
+  agent-browser console 2>/dev/null | grep -icE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" || true
+}
+
+# Wait up to ~20s for #root to exist with non-empty innerHTML (React mounted).
+wait_root_mounted() {
+  local i st out="no -1 yes"
+  for i in $(seq 1 40); do
+    st=$(page_state)
+    case "${st}" in
+      yes*) out="${st}"; break ;;
+    esac
+    sleep 0.5
+  done
+  echo "${out}"
+}
+
+# Wait up to ~15s for the page snapshot to contain one of the given regex
+# alternatives (e.g. post-login nav text). Echoes the LAST snapshot on success
+# (so callers can also run diagnostics on it) or "no-match" after timeout.
+wait_for_snapshot_text() {
+  local pattern="$1" i snap
+  for i in $(seq 1 30); do
+    snap=$(agent-browser snapshot 2>/dev/null || true)
+    if printf '%s' "${snap}" | grep -qE "${pattern}"; then
+      printf '%s' "${snap}"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "no-match"
+}
+
+# Post-login verdict for states 2/3/4: runs the snapshot-text poll, then the
+# root/fatal/console assertions. $1 = label  $2 = snapshot-text pattern
+post_login_asserts() {
+  local label="$1" pattern="$2"
+  local snap st len fatal console
+  snap=$(wait_for_snapshot_text "${pattern}")
+  if [ "${snap}" = "no-match" ]; then
+    snap=$(agent-browser snapshot 2>/dev/null)
+    bad "${label}: expected page text NOT visible (snapshot head follows — if this shows the password-RESET screen the login form was not filled correctly)"
+    echo "${snap}" | head -20
+  else
+    ok "${label}: expected page text visible"
+  fi
+  st=$(wait_root_mounted)
+  len=$(echo "${st}" | awk '{print $2}')
+  fatal=$(echo "${st}" | awk '{print $3}')
+  case "${st}" in
+    yes*) ok "${label}: #root non-empty (innerHTML length ${len})" ;;
+    *)     bad "${label}: #root missing or empty after mount wait (state=${st})" ;;
+  esac
+  [ "${fatal}" = "no" ] && ok "${label}: no fatal error boundary" || bad "${label}: FATAL BOUNDARY PRESENT (\"Something went wrong\") — render crashed"
+  console=$(console_count)
+  [ "${console}" = "0" ] \
+    && ok "${label}: console clean (no uncaught / component-error / TypeError / ReferenceError)" \
+    || { bad "${label}: console shows error signals (count ~ ${console}):"; agent-browser console 2>/dev/null | grep -iE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" | head -6; }
+}
 
 step "setup"
 rm -rf "${SMOKE_DIR}"
@@ -107,138 +208,61 @@ S=$(curl -s -b "${JAR}" -c "${JAR}" -X POST -H 'Content-Type: application/json' 
 rm -f "${JAR}"
 
 # ── browser assertions ──────────────────────────────────────────────────────
-# A single helper: opens a URL, waits for React to settle, then checks
-#   root exists + non-empty, no fatal boundary, no console error signals.
-# $1 = label   $2 = url
-check_page() {
-  local label="$1" url="$2"
-  step "${label}"
-  agent-browser open "${url}" > "${SMOKE_DIR}/ab-open.log" 2>&1
-  agent-browser wait --load networkidle > "${SMOKE_DIR}/ab-wait.log" 2>&1
-  sleep 2
-  # (a) #root exists + non-empty
-  local root_json
-  root_json=$(agent-browser eval 'JSON.stringify({exists: !!document.getElementById("root"), len: document.getElementById("root") ? document.getElementById("root").innerHTML.length : -1})' 2>/dev/null)
-  local root_exists root_len
-  root_exists=$(echo "${root_json}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d['exists'] else 'no')" 2>/dev/null || echo no)
-  root_len=$(echo "${root_json}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(int(d['len']))" 2>/dev/null || echo 0)
-  [ "${root_exists}" = "yes" ] && [ "${root_len}" -gt 0 ] \
-    && ok "${label}: #root exists, innerHTML length ${root_len} (> 0)" \
-    || bad "${label}: #root missing or empty (exists=${root_exists}, len=${root_len})"
-  # (b) the FatalBoundary panel must be ABSENT
-  local fatal
-  fatal=$(agent-browser eval 'JSON.stringify({fatal: !!document.querySelector(".fatal-error"), txt: document.body ? document.body.innerText.slice(0,400) : ""})' 2>/dev/null)
-  local fatal_present
-  fatal_present=$(echo "${fatal}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d['fatal'] else 'no')" 2>/dev/null || echo yes)
-  [ "${fatal_present}" = "no" ] \
-    && ok "${label}: no fatal error boundary rendered" \
-    || { bad "${label}: FATAL BOUNDARY PRESENT (\"Something went wrong\") — render crashed"; echo "${fatal}" | head -c 400; echo; }
-  # (c) console: no uncaught errors / no React component error banner
-  local console
-  console=$(agent-browser console 2>/dev/null | grep -icE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" || true)
-  [ "${console}" = "0" ] \
-    && ok "${label}: console clean (no uncaught / component-error / TypeError / ReferenceError)" \
-    || bad "${label}: console shows error signals (count ~ ${console}):"
-  if [ "${console}" != "0" ]; then agent-browser console 2>/dev/null | grep -iE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" | head -6; fi
-}
-
 # State 1 — unauthenticated first load: login screen
-check_page "state 1: unauthenticated first load" "${BASE}/"
+step "state 1: unauthenticated first load"
+agent-browser open "${BASE}/" > "${SMOKE_DIR}/ab-open.log" 2>&1
+agent-browser wait --load networkidle > "${SMOKE_DIR}/ab-wait.log" 2>&1
+st=$(wait_root_mounted)
+len=$(echo "${st}" | awk '{print $2}')
+fatal=$(echo "${st}" | awk '{print $3}')
+case "${st}" in
+  yes*) ok "state 1: #root non-empty (innerHTML length ${len})" ;;
+  *)     bad "state 1: #root missing or empty after mount wait (state=${st})" ;;
+esac
+[ "${fatal}" = "no" ] && ok "state 1: no fatal error boundary rendered" || bad "state 1: FATAL BOUNDARY PRESENT (\"Something went wrong\") — render crashed"
+console=$(console_count)
+[ "${console}" = "0" ] \
+  && ok "state 1: console clean (no uncaught / component-error / TypeError / ReferenceError)" \
+  || { bad "state 1: console shows error signals (count ~ ${console}):"; agent-browser console 2>/dev/null | grep -iE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" | head -6; }
 SNAP=$(agent-browser snapshot 2>/dev/null)
 echo "${SNAP}" | grep -qE "Sign in|Revzenta|Client pipeline CRM" \
   && ok "state 1: login screen visible (brand + sign-in text present)" \
   || { bad "state 1: login screen NOT visible (snapshot head follows)"; echo "${SNAP}" | head -20; }
 
+# ── CSS-selector login helper (used by states 2/3/4) ────────────────────────
+# $1 = email   $2 = password — fresh session, stable CSS selectors, submit.
+css_login() {
+  agent-browser close --all >/dev/null 2>&1
+  agent-browser open "${BASE}/" > "${SMOKE_DIR}/ab-open-login.log" 2>&1
+  agent-browser wait --load networkidle > "${SMOKE_DIR}/ab-wait-login.log" 2>&1
+  wait_root_mounted >/dev/null
+  agent-browser fill 'input[type="email"]' "$1" >/dev/null 2>&1
+  agent-browser fill 'input[type="password"]' "$2" >/dev/null 2>&1
+  agent-browser click 'button[type="submit"]' >/dev/null 2>&1
+}
+
 # State 2 — owner login -> dashboard
 step "state 2: owner login"
-agent-browser snapshot -i > "${SMOKE_DIR}/snap2.log" 2>&1
-EMAIL_REF=$(grep -oE "@e[0-9]+ \[?textbox[^]]*\]?|textbox \"Email\"" "${SMOKE_DIR}/snap2.log" | head -1 | grep -oE "@e[0-9]+" || echo "")
-PW_REF=$(grep -oE "@e[0-9]+ \[?textbox[^]]*\]?|textbox \"Password\"" "${SMOKE_DIR}/snap2.log" | head -1 | grep -oE "@e[0-9]+" || echo "")
-SIGN_REF=$(grep -oE "@e[0-9]+ \[?button[^]]*\]?|button \"Sign in\"" "${SMOKE_DIR}/snap2.log" | head -1 | grep -oE "@e[0-9]+" || echo "")
-if [ -n "${EMAIL_REF}" ] && [ -n "${PW_REF}" ] && [ -n "${SIGN_REF}" ]; then
-  agent-browser type "${EMAIL_REF}" "${ADMIN_EMAIL}" >/dev/null 2>&1
-  agent-browser type "${PW_REF}" "${ADMIN_PASSWORD}" >/dev/null 2>&1
-  agent-browser click "${SIGN_REF}" >/dev/null 2>&1
-  sleep 3
-  root_json=$(agent-browser eval 'JSON.stringify({len: document.getElementById("root") ? document.getElementById("root").innerHTML.length : -1})' 2>/dev/null)
-  root_len=$(echo "${root_json}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(int(d['len']))" 2>/dev/null || echo 0)
-  fatal=$(agent-browser eval 'JSON.stringify({fatal: !!document.querySelector(".fatal-error")})' 2>/dev/null)
-  fatal_present=$(echo "${fatal}" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d['fatal'] else 'no')" 2>/dev/null || echo yes)
-  console=$(agent-browser console 2>/dev/null | grep -icE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" || true)
-  [ "${root_len}" -gt 0 ] && ok "state 2: #root non-empty after owner login (${root_len})" || bad "state 2: #root empty after owner login"
-  [ "${fatal_present}" = "no" ] && ok "state 2: no fatal boundary after owner login" || bad "state 2: fatal boundary after owner login"
-  [ "${console}" = "0" ] && ok "state 2: console clean after owner login" || bad "state 2: console errors after owner login (${console})"
-  SNAP=$(agent-browser snapshot 2>/dev/null)
-  echo "${SNAP}" | grep -qE "Dashboard|Client MRR|Owner|Sign out|Pipeline" \
-    && ok "state 2: owner cockpit visible (dashboard/nav text)" \
-    || { bad "state 2: owner dashboard text NOT visible (snapshot head)"; echo "${SNAP}" | head -20; }
-else
-  echo "  (interactive refs not resolved — falling back to CSS-selector login)"
-  agent-browser open "${BASE}/" >/dev/null 2>&1
-  agent-browser wait --load networkidle >/dev/null 2>&1
-  sleep 2
-  agent-browser type 'input[type="email"]' "${ADMIN_EMAIL}" >/dev/null 2>&1
-  agent-browser type 'input[type="password"]' "${ADMIN_PASSWORD}" >/dev/null 2>&1
-  agent-browser click 'button[type="submit"]' >/dev/null 2>&1
-  sleep 3
-  root_len=$(agent-browser eval 'document.getElementById("root") ? document.getElementById("root").innerHTML.length : -1' 2>/dev/null | tr -d '"')
-  fatal_present=$(agent-browser eval '!!document.querySelector(".fatal-error") ? "yes" : "no"' 2>/dev/null | tr -d '"')
-  console=$(agent-browser console 2>/dev/null | grep -icE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" || true)
-  [ "${root_len}" -gt 0 ] && ok "state 2 (css): #root non-empty (${root_len})" || bad "state 2 (css): #root empty"
-  [ "${fatal_present}" = "no" ] && ok "state 2 (css): no fatal boundary" || bad "state 2 (css): fatal boundary present"
-  [ "${console}" = "0" ] && ok "state 2 (css): console clean" || bad "state 2 (css): console errors (${console})"
-  SNAP=$(agent-browser snapshot 2>/dev/null)
-  echo "${SNAP}" | grep -qE "Dashboard|Client MRR|Owner|Sign out|Pipeline" \
-    && ok "state 2 (css): owner cockpit visible" \
-    || { bad "state 2 (css): owner dashboard text NOT visible"; echo "${SNAP}" | head -20; }
-fi
+css_login "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}"
+post_login_asserts "state 2: owner login" "Dashboard|Client MRR|Owner|Sign out|Pipeline"
 
 # State 3 — normal tenant login -> tenant nav (fresh browser session)
 step "state 3: tenant login"
-agent-browser close --all >/dev/null 2>&1
-agent-browser open "${BASE}/" > "${SMOKE_DIR}/ab-open3.log" 2>&1
-agent-browser wait --load networkidle >/dev/null 2>&1
-sleep 2
-agent-browser snapshot -i > "${SMOKE_DIR}/snap3.log" 2>&1
-EMAIL_REF=$(grep -oE "@e[0-9]+" "${SMOKE_DIR}/snap3.log" | head -1 || echo "")
-agent-browser type "@e1" "${TENANT_EMAIL}" >/dev/null 2>&1
-agent-browser type "@e2" "${TENANT_PASSWORD}" >/dev/null 2>&1
-agent-browser click "@e3" >/dev/null 2>&1
-sleep 3
-root_len=$(agent-browser eval 'document.getElementById("root") ? document.getElementById("root").innerHTML.length : -1' 2>/dev/null | tr -d '"')
-fatal_present=$(agent-browser eval '!!document.querySelector(".fatal-error") ? "yes" : "no"' 2>/dev/null | tr -d '"')
-console=$(agent-browser console 2>/dev/null | grep -icE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" || true)
-[ "${root_len}" -gt 0 ] && ok "state 3: #root non-empty after tenant login (${root_len})" || bad "state 3: #root empty after tenant login"
-[ "${fatal_present}" = "no" ] && ok "state 3: no fatal boundary" || bad "state 3: fatal boundary present"
-[ "${console}" = "0" ] && ok "state 3: console clean" || bad "state 3: console errors (${console})"
-SNAP=$(agent-browser snapshot 2>/dev/null)
-echo "${SNAP}" | grep -qE "Dashboard|Leads|Sign out|Smoke Tenant|Settings" \
-  && ok "state 3: tenant nav visible" \
-  || { bad "state 3: tenant nav NOT visible (snapshot head)"; echo "${SNAP}" | head -20; }
+css_login "${TENANT_EMAIL}" "${TENANT_PASSWORD}"
+post_login_asserts "state 3: tenant login" "Dashboard|Leads|Sign out|Smoke Tenant|Settings"
 
 # State 4 — wholesale tenant login -> wholesale nav (Buyers)
 step "state 4: wholesale tenant login"
-agent-browser close --all >/dev/null 2>&1
-agent-browser open "${BASE}/" > "${SMOKE_DIR}/ab-open4.log" 2>&1
-agent-browser wait --load networkidle >/dev/null 2>&1
-sleep 2
-agent-browser snapshot -i > "${SMOKE_DIR}/snap4.log" 2>&1
-agent-browser type "@e1" "${WHOLESALE_EMAIL}" >/dev/null 2>&1
-agent-browser type "@e2" "${WHOLESALE_PASSWORD}" >/dev/null 2>&1
-agent-browser click "@e3" >/dev/null 2>&1
-sleep 3
-root_len=$(agent-browser eval 'document.getElementById("root") ? document.getElementById("root").innerHTML.length : -1' 2>/dev/null | tr -d '"')
-fatal_present=$(agent-browser eval '!!document.querySelector(".fatal-error") ? "yes" : "no"' 2>/dev/null | tr -d '"')
-console=$(agent-browser console 2>/dev/null | grep -icE "uncaught|error occurred in the|TypeError|ReferenceError|an error occurred" || true)
-[ "${root_len}" -gt 0 ] && ok "state 4: #root non-empty after wholesale login (${root_len})" || bad "state 4: #root empty after wholesale login"
-[ "${fatal_present}" = "no" ] && ok "state 4: no fatal boundary" || bad "state 4: fatal boundary present"
-[ "${console}" = "0" ] && ok "state 4: console clean" || bad "state 4: console errors (${console})"
-SNAP=$(agent-browser snapshot 2>/dev/null)
-echo "${SNAP}" | grep -qE "Buyers|Properties|Dashboard|Sign out" \
-  && ok "state 4: wholesale nav visible (Buyers present)" \
-  || { bad "state 4: wholesale nav NOT visible (snapshot head)"; echo "${SNAP}" | head -20; }
+css_login "${WHOLESALE_EMAIL}" "${WHOLESALE_PASSWORD}"
+post_login_asserts "state 4: wholesale tenant login" "Buyers|Properties|Dashboard|Sign out"
 
 step "summary"
-printf '\nRESULT render-smoke: %d passed, %d failed\n' "${PASS}" "${FAIL}"
-[ "${FAIL}" = "0" ] || exit 1
-exit 0
+if [ "${FAIL}" = "0" ]; then
+  printf '\nRESULT render-smoke: %d passed, %d failed — GATE PASS\n' "${PASS}" "${FAIL}"
+  RC=0
+else
+  printf '\nRESULT render-smoke: %d passed, %d failed — GATE FAIL\n' "${PASS}" "${FAIL}"
+  RC=1
+fi
+printf 'SMOKE_EXIT=%d\n' "${RC}" | tee /tmp/revzenta-render-smoke-exit.txt
+exit "${RC}"
