@@ -1509,16 +1509,32 @@ assert d['serviceModel'] == 'commercial_only', d['serviceModel']
 assert d['deliveryType'] == 'both', d['deliveryType']
 assert d['revenueModel'] == 'sales', d['revenueModel']
 names = [f['name'] for f in d['customFields']]
-assert names == ["Property address","ARV","Repair estimate","Purchase price","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"], names
+assert names == ["Property address","ARV","Repair estimate","Purchase price","Max allowable offer (MAO)","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"], names
 types = {f['name']: f['type'] for f in d['customFields']}
 assert types["Motivated seller"] == 'checkbox' and types["Clear title"] == 'checkbox', types
-assert types["ARV"] == 'text' and types["Property address"] == 'text', types
-print("  ✓ wholesalebiz seeds: 5 wholesale stages in order + key/industry/serviceModel/delivery/revenue + 9 deal fields (7 text, 2 checkbox)")
+assert types["ARV"] == 'text' and types["Property address"] == 'text' and types["Max allowable offer (MAO)"] == 'text', types
+print("  ✓ wholesalebiz seeds: 5 wholesale stages in order + key/industry/serviceModel/delivery/revenue + 10 deal fields (8 text incl. MAO, 2 checkbox)")
 PY
 S=$(code -b "$JARWSB" -X POST -H 'Content-Type: application/json' \
   -d '{"companyName":"123 Maple St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"ARV","value":"325000"},{"name":"Assignment fee","value":"12000"},{"name":"End buyer","value":"Riverside Capital LLC"},{"name":"Motivated seller","value":true}]}' "$BASE/api/clients")
 check "wholesalebiz org creates a deal in its own stage with its own fields → 201" 201 "$S"
 grep -q '"stage":"Property Under Contract"' /tmp/body.json && grep -q '"name":"ARV","value":"325000"' /tmp/body.json && grep -q '"name":"Motivated seller","value":"1"' /tmp/body.json && echo "  ✓ wholesale deal values round-trip (text + yes/no checkbox)" || echo "  ✗ wholesale deal: $(cat /tmp/body.json)"
+WSB_CLIENT_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
+echo "-- 23f2. Wholesale property record: MAO roundtrip (Phase A1) =="
+S=$(code -b "$JARWSB" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"456 Oak Ave (assignment)","clientType":"commercial","stage":"Marketing to Buyers","customFields":[{"name":"Max allowable offer (MAO)","value":"248000"},{"name":"Purchase price","value":"230000"},{"name":"Assignment fee","value":"18000"},{"name":"Clear title","value":true}]}' "$BASE/api/clients/$WSB_CLIENT_ID")
+check "23f2: wholesale PUT property with MAO → 200" 200 "$S"
+grep -q '"name":"Max allowable offer (MAO)","value":"248000"' /tmp/body.json && grep -q '"name":"Purchase price","value":"230000"' /tmp/body.json && grep -q '"name":"Clear title","value":"1"' /tmp/body.json && echo "  ✓ wholesale property values round-trip (MAO + purchase price + yes/no)" || echo "  ✗ wholesale property PUT: $(cat /tmp/body.json)"
+S=$(code -b "$JARWSB" "$BASE/api/clients/$WSB_CLIENT_ID")
+check "23f2: wholesale GET property record → 200" 200 "$S"
+grep -q '"companyName":"456 Oak Ave (assignment)"' /tmp/body.json && grep -q '"name":"Max allowable offer (MAO)","value":"248000"' /tmp/body.json && echo "  ✓ wholesale property GET roundtrip incl. MAO" || echo "  ✗ wholesale property GET: $(cat /tmp/body.json)"
+S=$(code -b "$JARB2B" "$BASE/api/settings")
+check "23f2: plain b2b org settings still 200 → 200" 200 "$S"
+if ! grep -q 'Properties' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ non-wholesale org has NO Properties nav marker in its settings"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ non-wholesale org settings leaked a Properties marker: $(cat /tmp/body.json)"
+fi
 S=$(code -b "$JAR" "$BASE/api/settings")
 check "owner settings → 200" 200 "$S"
 if grep -qv 'Property Under Contract' /tmp/body.json && grep -qv '"verticalKey":"wholesalebiz"' /tmp/body.json; then
@@ -1533,8 +1549,8 @@ check "admin deletes Wholesale Pilot LLC → 200" 200 $(code -b "$JAR" -X DELETE
 echo "-- 23g. UI surface strings in the built bundle =="
 NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
-  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q '"Wholesale Real Estate"' "$NEWEST_JS" && grep -q "Property Under Contract" "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C/Wholesale catalogs"
+  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q '"Wholesale Real Estate"' "$NEWEST_JS" && grep -q "Property Under Contract" "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS" && grep -q "Max allowable offer (MAO)" "$NEWEST_JS" && grep -q "+ New property" "$NEWEST_JS" && grep -q "Deal info" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C/Wholesale catalogs + wholesale Properties (MAO, New property, Deal info)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ B2B/B2C strings missing from $NEWEST_JS"
   fi
@@ -10310,10 +10326,10 @@ for s in ["Lead Sources","Property Under Contract","Marketing to Buyers","Buyer 
 assert len(st) == 8, st
 names = [f['name'] for f in d['customFields']]
 assert names[0] == 'Source note', names
-for f in ["Property address","ARV","Repair estimate","Purchase price","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"]:
+for f in ["Property address","ARV","Repair estimate","Purchase price","Max allowable offer (MAO)","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"]:
     assert names.count(f) == 1, names
-assert len(names) == 10, names
-print("  ✓ apply is ADDITIVE: pre-existing stage+field survive; 5 wholesale stages + 9 fields appended once")
+assert len(names) == 11, names
+print("  ✓ apply is ADDITIVE: pre-existing stage+field survive; 5 wholesale stages + 10 fields appended once")
 PY
 echo "-- 76b. general reset + empty string + unknown vertical + unknown org =="
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
