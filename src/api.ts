@@ -413,6 +413,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ scheduledAt, meetingLink, duration }),
     }),
+  /* Phase A2 — owner 2026-09-05: wholesale Offer Package Generator. The
+     wholesale Properties view's per-property action posts here; the server
+     computes the 70%-rule MAO (ARV × 0.70 − repair estimate, overridden by
+     the record's MAO field when set), builds the offer PDF, stores it under
+     offers/<pdfId>.pdf and returns the public /offer-pdf/<id> url. */
+  offerPackage: (clientId: number) =>
+    request<{
+      ok: true;
+      offerId: string;
+      url: string;
+      offeredAmount: string;
+      computedMao: string | null;
+    }>(`/api/clients/${clientId}/offer-package`, { method: "POST", body: JSON.stringify({}) }),
   /* Owner 2026-08-20 — the calendar: every org's demo-call appointments with
      the linked client name. Owner-only. */
   appointments: () => request<{ appointments: Appointment[] }>("/api/appointments"),

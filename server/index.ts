@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
 import { renderSignPage, readAgreementPdf, backfillSignedClients, backfillBrandRename } from "./agreements";
+import { readOfferPdf } from "./offers";
 import { renderConfirmPage, renderReschedulePage } from "./appointmentPages";
 import { db } from "./db";
 
@@ -141,6 +142,23 @@ const server = serve({
           "Content-Type": MIME[".pdf"],
           "Cache-Control": "private, max-age=3600",
           "Content-Disposition": `inline; filename="agreement-${pdfId}.pdf"`,
+        },
+      });
+    }
+    /* Phase A2 — wholesale Offer Package (owner 2026-09-05). PUBLIC route for
+       the generated offer PDFs, mirroring /agreement-pdf/<pdfId>: the id is an
+       unguessable random (newPdfId), so the link itself is the credential;
+       unknown/missing id → 404. Must be checked BEFORE the SPA fallback. */
+    if (req.method === "GET" && url.pathname.startsWith("/offer-pdf/")) {
+      const pdfId = url.pathname.slice("/offer-pdf/".length);
+      const bytes = readOfferPdf(pdfId);
+      if (!bytes) return new Response("Not found", { status: 404 });
+      return new Response(bytes as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type": MIME[".pdf"],
+          "Cache-Control": "private, max-age=3600",
+          "Content-Disposition": `inline; filename="offer-${pdfId}.pdf"`,
         },
       });
     }

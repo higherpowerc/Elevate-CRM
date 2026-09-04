@@ -854,6 +854,38 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       setBusy(false);
     }
   }
+  /** Phase A2 (owner 2026-09-05) — the wholesale Properties view's per-property
+   *  "Generate offer package" action. POSTs to the org-scoped offer-package
+   *  route (the server computes the 70%-rule MAO — ARV × 0.70 − repair
+   *  estimate, overridden by the record's MAO field when set — renders the
+   *  offer PDF and stores it under offers/<pdfId>.pdf), opens the returned
+   *  /offer-pdf/<id> url in a NEW TAB (the same target=_blank pattern the
+   *  agreement PDF links use) and shows a small success note with the offer
+   *  amount. 403/404/network errors surface as an alert note. */
+  const [offerNotice, setOfferNotice] = useState<{ kind: "success" | "warn"; text: string } | null>(null);
+  async function handleOfferPackage(c: Client) {
+    setBusy(true);
+    setError(null);
+    setOfferNotice(null);
+    try {
+      const r = await api.offerPackage(c.id);
+      window.open(r.url, "_blank", "noopener,noreferrer");
+      setOfferNotice({
+        kind: "success",
+        text: `Offer package generated for ${c.companyName} — offered amount ${r.offeredAmount}. The PDF opened in a new tab.`,
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setError("You don't have permission to generate offer packages for this property.");
+      } else if (e instanceof ApiError && e.status === 404) {
+        setError("Property not found — it may have been removed from this account.");
+      } else {
+        setError(e instanceof Error ? e.message : "Could not generate the offer package.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
   /** Owner 2026-08-20 sales rework — the demo-outcome dropdown. Owner Leads
    *  tab only. Records the demo result on a lead: Sold / Not sold / Maybe
    *  ('' clears it back to no-demo). "sold" is a RECORDED state — it does NOT
@@ -2021,6 +2053,24 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             Payment link
                           </button>
                         )}
+                        {/* Phase A2 (owner 2026-09-05) — the wholesale Properties view:
+                            per-property "Generate offer package" action. POSTs to the
+                            org-scoped offer-package route, opens the generated
+                            /offer-pdf/<id> in a new tab and shows the offer amount.
+                            Wholesale properties only (isWholesaleProps) — hidden for
+                            owner/tenant client pipelines. */}
+                        {isWholesaleProps && canEdit && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title={`Generate the offer package for ${c.companyName} — the 70% MAO worksheet + offer letter as a PDF`}
+                            aria-label={`Generate offer package for ${c.companyName}`}
+                            onClick={() => handleOfferPackage(c)}
+                            disabled={busy}
+                          >
+                            Generate offer package
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             className="icon-btn danger"
@@ -2111,6 +2161,14 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           role={demoNotice.kind === "success" ? "status" : "alert"}
         >
           {demoNotice.text}
+        </div>
+      )}
+      {offerNotice && (
+        <div
+          className={offerNotice.kind === "success" ? "alert alert-success" : "alert alert-warn"}
+          role={offerNotice.kind === "success" ? "status" : "alert"}
+        >
+          {offerNotice.text}
         </div>
       )}
       {demoTarget && (

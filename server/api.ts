@@ -83,6 +83,7 @@ import {
   deleteAgreementPdf,
 } from "./agreements";
 import { randomBytes } from "node:crypto";
+import { cfValue, parseMoney, moneyUsd, OFFER_MAO_MULTIPLIER, generateOfferPdf, storeOfferPdf } from "./offers";
 
 export const SESSION_COOKIE = "elevate_session";
 /** Map a sendEmail result to the emailStatus vocabulary the UI renders:
@@ -4604,6 +4605,62 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
             { company_name: string } | null)?.company_name
         : undefined;
     return json({ ok: true, appointment: toAppointment({ ...appt, status: "cancelled" }, clientName) });
+  }
+  /* Phase A2 — wholesale Offer Package Generator (owner 2026-09-05; builds
+     on the Phase A1 wholesale Properties view + MAO custom field). The
+     wholesale Properties view's per-property "Generate offer package" action
+     posts here. ORG-SCOPED exactly like every other client route: the client
+     record is looked up by id AND org_id (the caller's own org only — a
+     different tenant or the owner hitting a wholesale property gets a 404),
+     and the write is gated the SAME way as the client PUT (denyTabWrite —
+     a view-only restricted member gets 403). The route is deliberately NOT
+     vertical-locked: any org can generate the package for its own property
+     records. Behaviour: reads the property's custom_fields (ARV, Repair
+     estimate, MAO, Purchase price, Assignment fee, End buyer, Closing date,
+     Property address), computes the 70%-rule MAO (ARV × 0.70 − repair
+     estimate — shown WITH the math in the PDF), uses the MAO FIELD as the
+     offered amount when set (else the computed figure), renders ONE PDF
+     (US Letter, wrapped Helvetica — the agreements.ts conventions) with an
+     MAO worksheet + offer letter (amount in words+figures, "valid for"
+     line, buyer/offeror + seller/acceptance signature blocks), stores it
+     under <data dir>/offers/<pdfId>.pdf and returns
+     { offerId, url: "/offer-pdf/<pdfId>", offeredAmount, computedMao } with
+     money formatted for the UI. */
+  const offerMatch = pathname.match(/^\/api\/clients\/(\d+)\/offer-package$/);
+  if (offerMatch && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "clients");
+    if (deniedWrite) return deniedWrite;
+    const id = Number(offerMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
+    if (!client) return err("Client not found.", 404);
+    const address = cfValue(client, "Property address");
+    const arv = parseMoney(cfValue(client, "ARV"));
+    const repair = parseMoney(cfValue(client, "Repair estimate"));
+    const maoField = parseMoney(cfValue(client, "Max allowable offer (MAO)"));
+    const computedMao = arv !== null && repair !== null ? Math.round((arv * OFFER_MAO_MULTIPLIER) - repair) : null;
+    const offeredAmount = maoField !== null ? maoField : computedMao !== null ? computedMao : 0;
+    const purchasePrice = parseMoney(cfValue(client, "Purchase price"));
+    const assignmentFee = parseMoney(cfValue(client, "Assignment fee"));
+    const pdfBytes = await generateOfferPdf({
+      propertyAddress: address,
+      arv,
+      repairEstimate: repair,
+      computedMao,
+      maoField,
+      offeredAmount,
+      purchasePrice,
+      assignmentFee,
+      endBuyer: cfValue(client, "End buyer"),
+      closingDate: cfValue(client, "Closing date"),
+    });
+    const offerId = storeOfferPdf(pdfBytes);
+    return json({
+      ok: true,
+      offerId,
+      url: `/offer-pdf/${offerId}`,
+      offeredAmount: moneyUsd(offeredAmount),
+      computedMao: computedMao !== null ? moneyUsd(computedMao) : null,
+    });
   }
   /* Client item */
   const itemMatch = pathname.match(/^\/api\/clients\/(\d+)$/);
