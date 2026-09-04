@@ -67,6 +67,14 @@ interface Props {
    *  view opens on the Lost listing. Only read on first mount (the state below
    *  initializes from it); null/undefined → "active". */
   initialFilter?: Filter;
+  /** Wholesale Real Estate vertical (owner 2026-09-04/05) — when true this
+   *  page is the account's PROPERTIES pipeline: the wholesale deal records
+   *  get property wording (heading + CTAs) and a dedicated deal-fields block
+   *  (ARV / Repair estimate / Purchase price / MAO / Assignment fee /
+   *  Closing date / End buyer) rendered as its own column group in the
+   *  pipeline table, fed from the same custom-fields data as the chips.
+   *  Purely presentational — records and the clients API are untouched. */
+  verticalKey?: string;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -75,6 +83,27 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   if (def.type === "checkbox") return value === "1" ? "✓" : "✕";
   if (def.type === "date") return fmtDate(value);
   return value;
+}
+/** Wholesale Real Estate Properties (Phase A1) — the per-deal fields a
+ *  wholesaler tracks, in display order, fed from the record's custom-fields
+ *  values (the same data the chips render). The table's wholesale "Deal
+ *  info" cell renders each present value as a compact labelled line. */
+const WHOLESALE_DEAL_FIELDS = [
+  "Property address",
+  "ARV",
+  "Repair estimate",
+  "Purchase price",
+  "Max allowable offer (MAO)",
+  "Assignment fee",
+  "End buyer",
+  "Closing date",
+  "Motivated seller",
+  "Clear title",
+] as const;
+/** Pull a record's value for one custom field by name (case-insensitive). */
+function cfValue(c: Client, name: string): string {
+  const hit = c.customFields.find((cf) => cf.name.toLowerCase() === name.toLowerCase());
+  return hit ? hit.value : "";
 }
 
 /** GLOBAL name rule (owner direction 2026-08-16, amended 2026-08-29 — owner
@@ -374,7 +403,7 @@ function OwnerActionsMenu({ client, busy, onEdit, onDemo, onFlag }: {
     </div>
   );
 }
-export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true }: Props) {
+export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true, verticalKey = "" }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -1015,25 +1044,28 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
      Tenant orgs (role=member) keep the single pipeline — every stage except
      terminal — with "clients" wording for their records. Same page, same
      data — only the visible wording and the scoped stage slice differ. */
-  const heading = scope === "middle" ? "Onboarding" : ownerOrg ? "Leads" : (<>
+  const isWholesaleProps = verticalKey === "wholesalebiz" && !ownerOrg;
+  const heading = scope === "middle" ? "Onboarding" : ownerOrg ? "Leads" : isWholesaleProps ? "Properties" : (<>
     Client <em className="serif">book</em>
   </>);
-  const addCta = ownerOrg ? "+ New lead" : "+ New client";
+  const addCta = ownerOrg ? "+ New lead" : isWholesaleProps ? "+ New property" : "+ New client";
   const emptyTitle = scope === "middle" ? "No onboarding clients yet"
     : ownerOrg && scope === "first" ? "No prospects yet"
-    : ownerOrg ? "No leads yet" : "No clients yet";
+    : ownerOrg ? "No leads yet" : isWholesaleProps ? "No properties yet" : "No clients yet";
   const emptySub = scope === "middle"
     ? "Intake leads between your first and final pipeline stages live here — move one into your final stage and it becomes a client."
     : ownerOrg && scope === "first"
     ? "Add your first prospect to start tracking the pipeline."
     : ownerOrg
     ? "Add your first lead to start tracking the pipeline."
+    : isWholesaleProps
+    ? "Add your first property to start tracking the wholesale pipeline."
     : "Add your first client to start tracking the pipeline.";
   const emptyCta = scope === "middle"
     ? "Add your first lead"
     : ownerOrg && scope === "first"
     ? "Add your first prospect"
-    : ownerOrg ? "Add your first lead" : "Add your first client";
+    : ownerOrg ? "Add your first lead" : isWholesaleProps ? "Add your first property" : "Add your first client";
 
   return (
     <div className="page page-stack">
@@ -1679,7 +1711,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                     Services column with the DocuSign Agreement column; client
                     accounts and the owner Leads tab keep "Services". */}
                 <th>{ownerOnboardingTab ? "Agreement" : "Services"}</th>
-                <th className="num">Deal</th>
+                {isWholesaleProps ? <th className="num">Deal info</th> : <th className="num">Deal</th>}
                 {!ownerLeadsTab && <th>Stage</th>}
                 <th>Next action</th>
                 {/* Owner direction 2026-08-18 — the Payment column: owner
@@ -1761,9 +1793,44 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         <ServiceChips services={c.services} />
                       </td>
                     )}
-                    <td className="num cell-strong" data-label="Deal">
-                      {money(c.dealValue)}
-                    </td>
+                    {isWholesaleProps ? (
+                      <td data-label="Deal info">
+                        <div className="wholesale-deal-cell" aria-label="Wholesale deal fields">
+                          {WHOLESALE_DEAL_FIELDS.map((fname) => {
+                            const v = cfValue(c, fname);
+                            if (!v.trim() && fname !== "Motivated seller" && fname !== "Clear title") return null;
+                            const yesNo =
+                              fname === "Motivated seller" || fname === "Clear title"
+                                ? v === "1"
+                                  ? "Yes"
+                                  : v === "0"
+                                    ? "No"
+                                    : ""
+                                : null;
+                            if (yesNo !== null && !yesNo) return null;
+                            return (
+                              <span className="deal-line" key={fname}>
+                                <span className="deal-label">{fname}:</span>{" "}
+                                {yesNo !== null ? yesNo : <span className="cell-strong">{v}</span>}
+                              </span>
+                            );
+                          })}
+                          {!WHOLESALE_DEAL_FIELDS.some(
+                            (fname) =>
+                              (cfValue(c, fname).trim() !== "" || fname === "Motivated seller" || fname === "Clear title") &&
+                              (fname === "Motivated seller" || fname === "Clear title"
+                                ? cfValue(c, fname) === "1" || cfValue(c, fname) === "0"
+                                  ? cfValue(c, fname) !== "0"
+                                  : false
+                                : true),
+                          ) && <span className="cell-muted">—</span>}
+                        </div>
+                      </td>
+                    ) : (
+                      <td className="num cell-strong" data-label="Deal">
+                        {money(c.dealValue)}
+                      </td>
+                    )}
                     {!ownerLeadsTab && (
                       <td data-label="Stage">
                         {/* Owner direction 2026-08-15 (PR #53) — the OWNER's

@@ -671,6 +671,7 @@ export default function App() {
             initialStage={leadsStage}
             initialFilter={leadsFilter}
             canEdit={canEditTab("clients")}
+            verticalKey={verticalKey}
           />
         ) : effectiveViewFinal === "onboarding" ? (
           /* Owner request 2026-08-15 — OWNER ONLY: the Onboarding tab scopes

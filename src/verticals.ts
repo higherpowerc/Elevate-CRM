@@ -116,6 +116,7 @@ export const WHOLESALE_VERTICAL: VerticalTemplate = {
     { label: "ARV", type: "text" },
     { label: "Repair estimate", type: "text" },
     { label: "Purchase price", type: "text" },
+    { label: "Max allowable offer (MAO)", type: "text" },
     { label: "Assignment fee", type: "text" },
     { label: "End buyer", type: "text" },
     { label: "Closing date", type: "text" },
