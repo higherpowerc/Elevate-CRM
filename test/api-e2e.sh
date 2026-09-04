@@ -1465,11 +1465,53 @@ S=$(code -b "$JARB2C" -X POST -H 'Content-Type: application/json' \
 check "b2c org writes its own field value → 201" 201 "$S"
 grep -q '"name":"Extra field","value":"y"' /tmp/body.json && echo "  ✓ own text field value round-trips" || echo "  ✗ b2c client: $(cat /tmp/body.json)"
 
-echo "-- 23f. UI surface strings in the built bundle =="
+echo "-- 23f. Wholesale Real Estate (owner 2026-09-03): wholesalebiz seeds the house-wholesaling pipeline + deal fields =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Wholesale Pilot LLC","email":"wsb@example.com","password":"wsbpass123","vertical":"wholesalebiz"}' "$BASE/api/admin/orgs")
+check "admin creates Wholesale Pilot LLC (vertical=wholesalebiz) → 201" 201 "$S"
+WSB_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARWSB=$(mktemp)
+S=$(code -c "$JARWSB" -b "$JARWSB" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"wsb@example.com","password":"wsbpass123"}' "$BASE/api/auth/login")
+check "wholesalebiz org login → 200" 200 "$S"
+S=$(code -b "$JARWSB" "$BASE/api/settings")
+check "wholesalebiz org GET settings → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+assert d['stages'] == ["Lead Sources","Property Under Contract","Marketing to Buyers","Buyer Under Contract","Closing"], d['stages']
+assert d['verticalKey'] == 'wholesalebiz', d['verticalKey']
+assert d['industry'] == 'professional', d['industry']
+assert d['serviceModel'] == 'commercial_only', d['serviceModel']
+assert d['deliveryType'] == 'both', d['deliveryType']
+assert d['revenueModel'] == 'sales', d['revenueModel']
+names = [f['name'] for f in d['customFields']]
+assert names == ["Property address","ARV","Repair estimate","Purchase price","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"], names
+types = {f['name']: f['type'] for f in d['customFields']}
+assert types["Motivated seller"] == 'checkbox' and types["Clear title"] == 'checkbox', types
+assert types["ARV"] == 'text' and types["Property address"] == 'text', types
+print("  ✓ wholesalebiz seeds: 5 wholesale stages in order + key/industry/serviceModel/delivery/revenue + 9 deal fields (7 text, 2 checkbox)")
+PY
+S=$(code -b "$JARWSB" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"123 Maple St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"ARV","value":"325000"},{"name":"Assignment fee","value":"12000"},{"name":"End buyer","value":"Riverside Capital LLC"},{"name":"Motivated seller","value":true}]}' "$BASE/api/clients")
+check "wholesalebiz org creates a deal in its own stage with its own fields → 201" 201 "$S"
+grep -q '"stage":"Property Under Contract"' /tmp/body.json && grep -q '"name":"ARV","value":"325000"' /tmp/body.json && grep -q '"name":"Motivated seller","value":"1"' /tmp/body.json && echo "  ✓ wholesale deal values round-trip (text + yes/no checkbox)" || echo "  ✗ wholesale deal: $(cat /tmp/body.json)"
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "owner settings → 200" 200 "$S"
+if grep -qv 'Property Under Contract' /tmp/body.json && grep -qv '"verticalKey":"wholesalebiz"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ owner org has NO wholesale stages/key (isolation)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ owner org touched by wholesale seed: $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JARB2B" "$BASE/api/settings")
+check "b2b org settings after wholesale creation → 200" 200 "$S"
+grep -q '"verticalKey":"b2b"' /tmp/body.json && grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ b2b org unaffected by wholesalebiz creation (isolation)" || echo "  ✗ b2b org: $(cat /tmp/body.json)"
+check "admin deletes Wholesale Pilot LLC → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$WSB_ORG_ID")
+echo "-- 23g. UI surface strings in the built bundle =="
 NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
-  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C generic pipeline"
+  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q '"Wholesale Real Estate"' "$NEWEST_JS" && grep -q "Property Under Contract" "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C/Wholesale catalogs"
   else
     FAIL=$((FAIL+1)); echo "  ✗ B2B/B2C strings missing from $NEWEST_JS"
   fi
