@@ -115,6 +115,9 @@ export interface User {
    *  Additive key on /api/auth/me + login (and every user payload); drives the
    *  Settings "Team members" section and admin-bypass rendering. */
   isOrgAdmin: boolean;
+  /** Branding rename (2026-08-18) — true for the platform OWNER session
+   *  (owner org AND role='admin'); drives the owner cockpit UI. */
+  isOwner: boolean;
   orgName: string;
   verticalKey: string;
   /** The tenant's ordered pipeline stages (Phase 3a) — the client stage

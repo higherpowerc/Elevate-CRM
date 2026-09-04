@@ -30,7 +30,6 @@ import {
   INTAKE_OPT_GROUPS,
   DEFAULT_ORG_NAME,
   ensureDefaultOrg,
-  getOwnerOrgId,
   type ClientRow,
   type CustomField,
   type CustomFieldDef,
@@ -1798,6 +1797,10 @@ interface OrgRow {
    *  Owner-only admin data. */
   onboarding_total: number;
   onboarding_done: number;
+  /** Vertical-apply endpoint (admin/orgs/:id/vertical) reads these from the
+   *  SELECT * row; mirror the db.ts OrgRow columns so the cast type-checks. */
+  stages: string;
+  custom_fields: string;
 }
 
 function toOrg(row: OrgRow) {
@@ -4983,7 +4986,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         `INSERT INTO buyers (org_id, name, phone, criteria, bought)
          VALUES (?, ?, ?, ?, ?)`,
       )
-      .run(orgId, v.value.name, v.value.phone ?? "", v.value.criteria ?? "", v.value.bought ?? "");
+      .run(orgId, v.value.name ?? "", v.value.phone ?? "", v.value.criteria ?? "", v.value.bought ?? "");
     const buyer = fetchBuyer(Number(info.lastInsertRowid), orgId);
     return json({ buyer }, 201);
   }

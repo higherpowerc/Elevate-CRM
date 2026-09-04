@@ -1632,6 +1632,9 @@ export interface ClientRow {
   /** Owner 2026-08-27 — IANA timezone ('' = unset → owner's Arizona/MST).
    *  Owner-only, like tier/agreement_status. Drives the calendar conversion. */
   timezone: string;
+  /** Owner 2026-08-27 — package tier ('' unset | tier1..4). OWNER-only, the
+   *  same rule as agreement_status: tenant orgs never receive/write it. */
+  tier: string;
 }
 
 export interface TaskRow {

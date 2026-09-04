@@ -449,5 +449,20 @@ export const api = {
   /* Owner — force the day-before reminder sweep. */
   runAppointmentReminders: () =>
     request<{ ok: true; sent: number }>("/api/appointments/reminders", { method: "POST" }),
+  /* Wholesale Real Estate vertical (owner 2026-09-04) — Buyers entity.
+     Org-scoped CRUD over /api/buyers (tenant-only; the owner cockpit has no
+     buyers surface). */
+  buyers: () => request<{ buyers: Buyer[] }>("/api/buyers"),
+  createBuyer: (data: { name: string; phone?: string; criteria?: string; bought?: string }) =>
+    request<{ buyer: Buyer }>("/api/buyers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateBuyer: (id: number, data: { name?: string; phone?: string; criteria?: string; bought?: string }) =>
+    request<{ buyer: Buyer }>(`/api/buyers/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteBuyer: (id: number) => request<{ ok: true }>(`/api/buyers/${id}`, { method: "DELETE" }),
 };
 

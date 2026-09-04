@@ -821,7 +821,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
                       <td className="num" data-label="Subscription" title="Monthly subscription value">
                         {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
-                          `${money(o.monthlySubscriptionAmount)}/mo`
+                          `${money(o.monthlySubscriptionAmount ?? 0)}/mo`
                         ) : (
                           <span className="acc-muted">&mdash;</span>
                         )}
@@ -1024,7 +1024,7 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                     </td>
                     <td className="num" data-label="Subscription" title="Monthly subscription value">
                       {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
-                        `${money(o.monthlySubscriptionAmount)}/mo`
+                        `${money(o.monthlySubscriptionAmount ?? 0)}/mo`
                       ) : (
                         <span className="acc-muted">&mdash;</span>
                       )}
