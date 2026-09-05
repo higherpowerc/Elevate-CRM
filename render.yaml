@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: elevate-crm
+    name: revzenta-crm
     runtime: bun
     plan: free
     buildCommand: bun install && bun run build

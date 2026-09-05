@@ -1,9 +1,9 @@
 {
-  "name": "elevate-crm",
+  "name": "revzenta-crm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Elevate Studio CRM — universal client pipeline management app (product track).",
+  "description": "Revzenta CRM — universal client pipeline management app.",
   "scripts": {
     "build": "bun build ./index.html --outdir ./dist --minify",
     "start": "bun ./server/index.ts",
