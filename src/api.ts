@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User } from "./types";
+import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User, WholesaleOffer } from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -58,6 +58,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  batchCreateClients: (clients: ClientInput[]) =>
+    request<{ count: number }>("/api/clients/batch", {
+      method: "POST",
+      body: JSON.stringify({ clients }),
+    }),
   /* Partial PUT (AZ defect D4, 2026-08-17): the server persists ONLY the
    * fields the body carries — an omitted key never clobbers the stored value.
    * The type says so, so owner-workspace callers (e.g. the Client accounts
@@ -69,6 +74,96 @@ export const api = {
     }),
   deleteClient: (id: number) =>
     request<{ ok: true }>(`/api/clients/${id}`, { method: "DELETE" }),
+
+  saveDealCalculation: (
+    id: number,
+    data: {
+      arv?: number;
+      repairs?: number;
+      assignmentFee?: number;
+      offerAmount?: number;
+      rulePct?: number;
+      offerType?: string;
+      purchasePrice?: number;
+      listedPrice?: number;
+      downPayment?: number;
+      interestRate?: number;
+      amortizationYears?: number;
+      monthlyPayment?: number;
+      isInterestOnly?: boolean;
+      balloonYears?: number;
+      balloonBalance?: number;
+      buyerEntryFee?: number;
+      monthlyRent?: number;
+      monthlyCashFlow?: number;
+      cashOnCashReturn?: number;
+      subtoTotalDebt?: number;
+      subtoMonthlyPayment?: number;
+    }
+  ) =>
+    request<{ ok: true; client: Client }>(`/api/clients/${id}/calculate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  sendOfferEmail: (
+    id: number,
+    data: {
+      to: string;
+      subject: string;
+      message: string;
+      html?: string;
+      businessName?: string;
+      fontFamily?: string;
+      offerType?: "cash" | "subto" | "creative" | "all";
+      selectedOffers?: string[];
+      propertyAddress?: string;
+      sellerName?: string;
+      offerAmount?: number;
+      purchasePrice?: number;
+      arv?: number;
+      repairs?: number;
+      assignmentFee?: number;
+      rulePct?: number;
+      subtoDebt?: number;
+      subtoCashToSeller?: number;
+      subtoMonthlyPayment?: number;
+      downPayment?: number;
+      monthlyPayment?: number;
+      interestRate?: number;
+      balloonYears?: number;
+      totalPaidToSeller?: number;
+      closingDays?: number;
+      includeAssignability?: boolean;
+    }
+  ) =>
+    request<{
+      ok: true;
+      client: Client;
+      emailStatus: "sent" | "failed";
+      emailError?: string;
+      offerAmount: number;
+      stage: string;
+      pdfUrl?: string;
+      businessName?: string;
+    }>(`/api/clients/${id}/offer-email`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  offers: (clientId?: number) =>
+    request<{ ok: true; offers: WholesaleOffer[] }>(
+      `/api/offers${clientId ? `?client_id=${clientId}` : ""}`
+    ),
+  updateOffer: (id: number, data: { status?: string; notes?: string }) =>
+    request<{ ok: true; offer: WholesaleOffer }>(`/api/offers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteOffer: (id: number) =>
+    request<{ ok: true }>(`/api/offers/${id}`, {
+      method: "DELETE",
+    }),
 
   tasks: (done?: "0" | "1") =>
     request<{ tasks: Task[] }>(`/api/tasks${done ? `?done=${done}` : ""}`),

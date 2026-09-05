@@ -69,9 +69,10 @@ import {
   hashPassword,
   toUser,
 } from "./auth";
-import { sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, sendAppointmentReminderEmail, sendTicketOwnerAlertEmail, sendTicketReplyEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
+import { sendEmail, sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, sendAgreementEmail, sendPaymentLinkEmail, sendInvoiceEmail, sendDemoCallEmail, sendAppointmentReminderEmail, sendTicketOwnerAlertEmail, sendTicketReplyEmail, appUrlFrom, RESEND_KEY_MISSING_ERROR, type SendEmailResult } from "./email";
 import Stripe from "stripe";
 import { generateInvoicePdf } from "./invoices";
+import { generateOfferPdf, storeOfferPdf, newOfferPdfId } from "./offerPdf";
 import { stripeClient } from "./stripe";
 import {
   AGREEMENT_TOKEN_TTL_MS,
@@ -468,8 +469,22 @@ function toClient(row: ClientRow, ownerOrg = false) {
   } catch {
     /* keep empty */
   }
+  let offersCount = 0;
+  try {
+    const res = db.query(`
+      SELECT COUNT(*) AS c FROM offers
+      WHERE (client_id = ? OR (property_address = ? AND property_address != ''))
+    `).get(row.id, row.address || "") as { c: number } | null;
+    offersCount = res?.c ?? 0;
+  } catch {
+    offersCount = 0;
+  }
+  if (offersCount === 0 && (row.custom_fields?.includes("Offer PDF") || row.notes?.includes("Offer Sent"))) {
+    offersCount = 1;
+  }
   return {
     id: row.id,
+    offersCount,
     companyName: row.company_name,
     contactName: row.contact_name,
     email: row.email,
@@ -489,6 +504,9 @@ function toClient(row: ClientRow, ownerOrg = false) {
     zip: row.zip,
     website: row.website,
     leadSource: row.lead_source,
+    agentName: row.agent_name,
+    agentEmail: row.agent_email,
+    agentPhone: row.agent_phone,
     // Adaptive intake Phase 1: optional billing + intake fields.
     billingAddress: row.billing_address,
     billingCity: row.billing_city,
@@ -694,7 +712,7 @@ async function maybeSendAppointmentReminders(req: Request): Promise<number> {
   }
   return sent;
 }
-export const CLIENT_TYPES = ["commercial", "residential"] as const;
+export const CLIENT_TYPES = ["commercial", "residential", "single_family", "multi_family", "buyer"] as const;
 export type ClientType = (typeof CLIENT_TYPES)[number];
 
 export function isClientType(v: unknown): v is ClientType {
@@ -817,6 +835,9 @@ interface ClientInput {
   zip: string;
   website: string;
   leadSource: string;
+  agentName?: string;
+  agentEmail?: string;
+  agentPhone?: string;
   /** Adaptive intake Phase 1: optional billing/intake fields. Every key is
    *  OPTIONAL — on create, absent keys default ('' / 0); on update, absent
    *  keys leave the stored value untouched (only keys present in the body
@@ -968,6 +989,33 @@ const INTAKE_COLS: string[] = [
  * AND apply to the client type being written), and yes/no fields normalize
  * their value to "1"/"0".
  */
+export const WHOLESALE_CUSTOM_FIELDS = new Set([
+  "arv",
+  "repairs",
+  "assignment fee",
+  "mao offer",
+  "investor rule",
+  "offer structure",
+  "purchase price",
+  "listed price",
+  "down payment",
+  "interest rate",
+  "monthly payment",
+  "balloon due",
+  "buyer entry fee",
+  "rental revenue",
+  "net cash flow",
+  "cash-on-cash return",
+  "offer sent",
+  "cash offer",
+  "creative price",
+  "offer pdf",
+  "subto debt",
+  "subto cash to seller",
+  "subto monthly payment",
+  "closing days",
+]);
+
 function validateClient(
   body: Record<string, unknown>,
   stages: string[],
@@ -1149,6 +1197,20 @@ function validateClient(
         continue;
       }
 
+      // Wholesale property & buyer fields (ARV, Repairs, Buyer Type, POF, MAO Offer, etc.)
+      if (
+        clientType === "single_family" ||
+        clientType === "multi_family" ||
+        clientType === "buyer" ||
+        WHOLESALE_CUSTOM_FIELDS.has(name.toLowerCase()) ||
+        name.toLowerCase().startsWith("offer ") ||
+        name.toLowerCase().startsWith("subto ") ||
+        name.toLowerCase().startsWith("creative ")
+      ) {
+        customFields.push({ name, value: String(raw ?? "").trim().slice(0, 500) });
+        continue;
+      }
+
       return { ok: false, error: `Unknown custom field: ${name}.` };
     }
   }
@@ -1170,12 +1232,15 @@ function validateClient(
   }
 
   let stage: Stage = stages[0] ?? "Prospect";
-  if (body.stage !== undefined && body.stage !== null && body.stage !== "") {
+  if (clientType === "buyer" || body.stage === "Buyer") {
+    stage = "Buyer";
+  } else if (body.stage !== undefined && body.stage !== null && body.stage !== "") {
     const s = typeof body.stage === "string" ? body.stage.trim() : "";
-    if (!s || !stages.includes(s)) {
-      return { ok: false, error: `Stage must be one of: ${stages.join(", ")}.` };
+    if (s && stages.includes(s)) {
+      stage = s;
+    } else if (stages.length > 0) {
+      stage = stages[0];
     }
-    stage = s;
   }
 
   // Owner 2026-08-27 — package tier (OWNER-only, the agreementStatus rule):
@@ -1309,6 +1374,9 @@ function validateClient(
     zip: zip.value,
     website: website.value,
     leadSource: leadSource.value,
+    agentName: str(body.agentName, 200),
+    agentEmail: str(body.agentEmail, 254),
+    agentPhone: str(body.agentPhone, 60),
     ...(ownerOrg && body.tier !== undefined && body.tier !== null ? { tier } : {}),
   
     ...(ownerOrg && timezone !== undefined ? { timezone } : {}),
@@ -3324,7 +3392,22 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
        while the Active bin looks empty). demo_outcome is NOT NULL DEFAULT ''
        (server/db.ts), so the plain != comparison is NULL-safe. */
     let projected = value.v;
-    if (isOwnerSession(auth)) {
+    const isWholesaleOrg = Boolean(
+      org && (
+        org.vertical_key === "wholesale" ||
+        org.name.toLowerCase().includes("wholesale")
+      )
+    );
+    if (isWholesaleOrg) {
+      const projRow = db.query(`
+        SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients 
+        WHERE org_id = ? AND archived = 0 AND lost = 0 
+          AND (client_type IS NULL OR client_type != 'buyer')
+          AND LOWER(TRIM(stage)) != 'buyer'
+          AND LOWER(TRIM(stage)) != 'sold'
+      `).get(orgId) as { v: number };
+      projected = projRow.v;
+    } else if (isOwnerSession(auth)) {
       const firstStage = orgStages.length > 0 ? orgStages[0] : "";
       projected = firstStage
         ? (db
@@ -3415,9 +3498,42 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       }
     ).v;
 
+    // Wholesale — total assignment fees for properties marked "Sold" in stages
+    let soldAssignmentFees = 0;
+    try {
+      const soldClients = db.query(`
+        SELECT deal_value, custom_fields FROM clients
+        WHERE org_id = ? AND archived = 0 AND lost = 0
+          AND LOWER(TRIM(stage)) = 'sold'
+      `).all(orgId) as { deal_value: number; custom_fields: string }[];
+
+      for (const sc of soldClients) {
+        let fee = 0;
+        try {
+          const cf = JSON.parse(sc.custom_fields || "[]");
+          for (const f of cf) {
+            if (f.name && f.name.toLowerCase() === "assignment fee") {
+              const parsed = Number(String(f.value).replace(/[^0-9.]/g, ""));
+              if (!isNaN(parsed) && parsed > 0) {
+                fee = parsed;
+                break;
+              }
+            }
+          }
+        } catch {}
+        if (fee === 0 && sc.deal_value > 0) {
+          fee = sc.deal_value;
+        }
+        soldAssignmentFees += fee;
+      }
+    } catch {
+      soldAssignmentFees = 0;
+    }
+
     const resp: Record<string, unknown> = {
       stageCounts,
       projectedPipeline: projected,
+      soldAssignmentFees,
       totalClients: total.c,
       archivedClients: archived.c,
       recentClients: recent,
@@ -4044,8 +4160,8 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const intake = intakeColumns(c);
     const info = db
       .query(
-        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier, timezone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?, ?)`,
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, agent_name, agent_email, agent_phone, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?, ?)`,
       )
       .run(
         orgId,
@@ -4053,6 +4169,9 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
         c.archived ? 1 : 0,
         c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
+        c.agentName ?? "",
+        c.agentEmail ?? "",
+        c.agentPhone ?? "",
         c.monthlyAmount ?? 0,
         ...intake.values,
         ...statusValues(c),
@@ -4063,6 +4182,64 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       );
     const row = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(info.lastInsertRowid, orgId) as ClientRow;
     return json({ client: toClient(row, isOwnerSession(auth)) }, 201);
+  }
+
+  if (pathname === "/api/clients/batch" && method === "POST") {
+    const deniedWrite = denyTabWrite(auth, "clients");
+    if (deniedWrite) return deniedWrite;
+    const body = await readBody(req);
+    if (!body || !Array.isArray(body.clients)) return err("Invalid JSON body, expected clients array.", 400);
+    const org = getOrg(orgId);
+    const stages = org ? parseStages(org.stages) : [...DEFAULT_STAGES];
+    const defs = org ? parseCustomFields(org.custom_fields) : [];
+    const intakeGroups = org ? parseCustomIntakeGroups(org.custom_intake_groups) : [];
+    const isOwner = isOwnerSession(auth);
+
+    const validatedList: ClientInput[] = [];
+    for (let i = 0; i < body.clients.length; i++) {
+      const item = body.clients[i];
+      if (!item || typeof item !== "object") continue;
+      const v = validateClient(item as Record<string, unknown>, stages, defs, intakeGroups, isOwner);
+      if (!v.ok) {
+        return err(`Row ${i + 1} error: ${v.error}`, 400);
+      }
+      validatedList.push(v.value);
+    }
+
+    if (validatedList.length === 0) {
+      return err("No valid client rows provided.", 400);
+    }
+
+    const insertStmt = db.prepare(
+      `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, agent_name, agent_email, agent_phone, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier, timezone)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?, ?)`,
+    );
+
+    let insertedCount = 0;
+    db.transaction(() => {
+      for (const c of validatedList) {
+        const intake = intakeColumns(c);
+        insertStmt.run(
+          orgId,
+          c.companyName, c.contactName, c.email, c.phone, c.industry,
+          JSON.stringify(c.services), JSON.stringify(c.customFields), c.dealValue, c.stage, c.nextAction, c.notes,
+          c.archived ? 1 : 0,
+          c.clientType, c.address, c.city, c.state, c.zip, c.website, c.leadSource,
+          c.agentName ?? "",
+          c.agentEmail ?? "",
+          c.agentPhone ?? "",
+          c.monthlyAmount ?? 0,
+          ...intake.values,
+          ...statusValues(c),
+          c.agreementStatus ?? "not_sent",
+          c.tier ?? "",
+          c.timezone ?? DEFAULT_CLIENT_TIMEZONE,
+        );
+        insertedCount++;
+      }
+    })();
+
+    return json({ count: insertedCount }, 201);
   }
 
   /* Phase 5 — Stripe billing for a client account (owner direction
@@ -4263,6 +4440,458 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       },
       201,
     );
+  }
+
+  /* Wholesale — Save deal calculation metrics onto a property */
+  const calcSaveMatch = pathname.match(/^\/api\/clients\/(\d+)\/calculate$/);
+  if (calcSaveMatch && method === "POST") {
+    const id = Number(calcSaveMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
+    if (!client) return err("Property not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    // Traditional cash offer fields
+    const offerAmount = typeof body.offerAmount === "number" ? body.offerAmount : 0;
+    const arv = typeof body.arv === "number" ? body.arv : 0;
+    const repairs = typeof body.repairs === "number" ? body.repairs : 0;
+    const assignmentFee = typeof body.assignmentFee === "number" ? body.assignmentFee : 0;
+    const rulePct = typeof body.rulePct === "number" ? body.rulePct : 70;
+
+    // Creative Offer Oven fields
+    const offerType = typeof body.offerType === "string" ? body.offerType : "cash";
+    const purchasePrice = typeof body.purchasePrice === "number" ? body.purchasePrice : 0;
+    const listedPrice = typeof body.listedPrice === "number" ? body.listedPrice : 0;
+    const downPayment = typeof body.downPayment === "number" ? body.downPayment : 0;
+    const interestRate = typeof body.interestRate === "number" ? body.interestRate : 0;
+    const amortizationYears = typeof body.amortizationYears === "number" ? body.amortizationYears : 30;
+    const monthlyPayment = typeof body.monthlyPayment === "number" ? body.monthlyPayment : 0;
+    const isInterestOnly = Boolean(body.isInterestOnly);
+    const balloonYears = typeof body.balloonYears === "number" ? body.balloonYears : 0;
+    const balloonBalance = typeof body.balloonBalance === "number" ? body.balloonBalance : 0;
+    const buyerEntryFee = typeof body.buyerEntryFee === "number" ? body.buyerEntryFee : 0;
+    const monthlyRent = typeof body.monthlyRent === "number" ? body.monthlyRent : 0;
+    const monthlyCashFlow = typeof body.monthlyCashFlow === "number" ? body.monthlyCashFlow : 0;
+    const cashOnCashReturn = typeof body.cashOnCashReturn === "number" ? body.cashOnCashReturn : 0;
+    const subtoTotalDebt = typeof body.subtoTotalDebt === "number" ? body.subtoTotalDebt : 0;
+    const subtoMonthlyPayment = typeof body.subtoMonthlyPayment === "number" ? body.subtoMonthlyPayment : 0;
+
+    let customFields: Array<{ name: string; value: string }> = [];
+    try {
+      customFields = JSON.parse(client.custom_fields || "[]");
+    } catch {
+      customFields = [];
+    }
+
+    const setField = (name: string, value: string) => {
+      const idx = customFields.findIndex((f) => f.name.toLowerCase() === name.toLowerCase());
+      if (idx >= 0) customFields[idx].value = value;
+      else customFields.push({ name, value });
+    };
+
+    setField("Offer Structure", offerType === "seller_finance" ? "Seller Finance" : offerType === "subto" ? "Subject-To (SubTo)" : "Cash (MAO)");
+    if (arv > 0) setField("ARV", `$${arv.toLocaleString()}`);
+    if (repairs > 0) setField("Repairs", `$${repairs.toLocaleString()}`);
+    if (assignmentFee > 0) setField("Assignment Fee", `$${assignmentFee.toLocaleString()}`);
+    if (offerAmount > 0) setField("MAO Offer", `$${offerAmount.toLocaleString()}`);
+    setField("Investor Rule", `${rulePct}%`);
+
+    if (purchasePrice > 0) setField("Purchase Price", `$${purchasePrice.toLocaleString()}`);
+    if (listedPrice > 0) setField("Listed Price", `$${listedPrice.toLocaleString()}`);
+    if (downPayment > 0) setField("Down Payment", `$${downPayment.toLocaleString()}`);
+    if (interestRate > 0) setField("Interest Rate", `${interestRate}%`);
+    if (monthlyPayment > 0) setField("Monthly Payment", `$${monthlyPayment.toLocaleString()}/mo`);
+    if (balloonYears > 0) setField("Balloon Due", `${balloonYears} yrs ($${balloonBalance.toLocaleString()})`);
+    if (buyerEntryFee > 0) setField("Buyer Entry Fee", `$${buyerEntryFee.toLocaleString()}`);
+    if (monthlyRent > 0) setField("Rental Revenue", `$${monthlyRent.toLocaleString()}/mo`);
+    if (monthlyCashFlow !== 0) setField("Net Cash Flow", `$${monthlyCashFlow.toLocaleString()}/mo`);
+    if (cashOnCashReturn > 0) setField("Cash-on-Cash Return", `${cashOnCashReturn.toFixed(2)}%`);
+    if (subtoTotalDebt > 0) setField("SubTo Debt", `$${subtoTotalDebt.toLocaleString()} ($${subtoMonthlyPayment.toLocaleString()}/mo)`);
+
+    const newDealValue = assignmentFee > 0 ? assignmentFee : purchasePrice > 0 ? purchasePrice : (offerAmount > 0 ? offerAmount : client.deal_value);
+
+    db.query(
+      `UPDATE clients
+          SET custom_fields = ?, deal_value = ?, updated_at = datetime('now')
+        WHERE id = ? AND org_id = ?`
+    ).run(JSON.stringify(customFields), newDealValue, id, orgId);
+
+    const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
+    return json({ ok: true, client: toClient(updated, true) });
+  }
+
+  /* Wholesale — Send Cash / Creative Offer Email + save calculation metrics on property */
+  const offerEmailMatch = pathname.match(/^\/api\/clients\/(\d+)\/offer-email$/);
+  if (offerEmailMatch && method === "POST") {
+    const id = Number(offerEmailMatch[1]);
+    const client = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow | null;
+    if (!client) return err("Property not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const propertyAddress = typeof body.propertyAddress === "string" && body.propertyAddress.trim()
+      ? body.propertyAddress.trim()
+      : client.company_name;
+    const sellerName = typeof body.sellerName === "string" && body.sellerName.trim()
+      ? body.sellerName.trim()
+      : client.contact_name || "";
+    const selectedOffers = Array.isArray(body.selectedOffers) && body.selectedOffers.length > 0
+      ? (body.selectedOffers as string[])
+      : typeof body.offerType === "string"
+        ? body.offerType === "all" ? ["cash", "subto", "creative"] : [body.offerType]
+        : ["cash", "subto", "creative"];
+
+    const to = typeof body.to === "string" && body.to.trim() ? body.to.trim() : client.email.trim();
+    if (!to) return err("Recipient email address is required.", 400);
+    const subject = typeof body.subject === "string" && body.subject.trim()
+      ? body.subject.trim()
+      : `Formal Purchase Offer for ${propertyAddress}`;
+    const text = typeof body.message === "string" ? body.message.trim() : "";
+    if (!text) return err("Offer email message body cannot be empty.", 400);
+
+    const org = db.query("SELECT name FROM orgs WHERE id = ?").get(orgId) as { name: string } | null;
+    const crmOrgName = (org?.name || "").trim();
+    const businessName = typeof body.businessName === "string" && body.businessName.trim()
+      ? body.businessName.trim()
+      : (crmOrgName || "Elevate Capital");
+
+    const offerAmount = typeof body.offerAmount === "number" ? body.offerAmount : 0;
+    const purchasePrice = typeof body.purchasePrice === "number" ? body.purchasePrice : 0;
+    const assignmentFee = typeof body.assignmentFee === "number" ? body.assignmentFee : 0;
+
+    // Generate formal Offer Letter PDF
+    const pdfId = newOfferPdfId();
+    let pdfUrl = `/offer-pdf/${pdfId}`;
+    let pdfBase64: string | undefined;
+    try {
+      const pdfBytes = await generateOfferPdf({
+        propertyAddress,
+        sellerName,
+        sellerEmail: to,
+        businessName,
+        fontFamily: typeof body.fontFamily === "string" ? body.fontFamily : "Georgia",
+        offerType: (body.offerType as any) || "all",
+        selectedOffers,
+        cashOfferAmount: offerAmount,
+        subtoPurchasePrice: purchasePrice,
+        subtoDebt: typeof body.subtoDebt === "number" ? body.subtoDebt : 0,
+        subtoCashToSeller: typeof body.subtoCashToSeller === "number" ? body.subtoCashToSeller : 0,
+        subtoMonthlyPayment: typeof body.subtoMonthlyPayment === "number" ? body.subtoMonthlyPayment : 0,
+        creativePurchasePrice: purchasePrice,
+        creativeDownPayment: typeof body.downPayment === "number" ? body.downPayment : 0,
+        creativeMonthlyPayment: typeof body.monthlyPayment === "number" ? body.monthlyPayment : 0,
+        creativeInterestRate: typeof body.interestRate === "number" ? body.interestRate : 2.0,
+        creativeBalloonYears: typeof body.balloonYears === "number" ? body.balloonYears : 5,
+        creativeTotalPaidToSeller: typeof body.totalPaidToSeller === "number" ? body.totalPaidToSeller : 0,
+        closingDays: typeof body.closingDays === "number" ? body.closingDays : 14,
+        includeAssignability: typeof body.includeAssignability === "boolean" ? body.includeAssignability : true,
+        rawOfferText: text,
+      });
+      storeOfferPdf(pdfBytes, pdfId);
+      pdfBase64 = Buffer.from(pdfBytes).toString("base64");
+    } catch (pdfErr) {
+      console.error("[offer-pdf] Failed to generate PDF:", pdfErr);
+    }
+
+    // Send email via Resend (use rich formatted HTML if client supplied it, + attach PDF)
+    const customHtml = typeof body.html === "string" && body.html.trim() ? body.html.trim() : null;
+    const sendResult = await sendEmail({
+      to,
+      subject,
+      text,
+      html:
+        customHtml ||
+        `<div style="font-family: Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #111; max-width: 620px; margin: 0 auto; padding: 16px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        ${text
+          .split('\n\n')
+          .map((p) => `<p style="margin: 0 0 14px 0;">${p.replace(/\n/g, '<br/>')}</p>`)
+          .join('')}
+      </div>`,
+      attachments: pdfBase64
+        ? [
+            {
+              filename: `Purchase_Offer_${propertyAddress.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`,
+              content: pdfBase64,
+              content_type: "application/pdf",
+            },
+          ]
+        : undefined,
+    });
+
+    // Save formal offer record into offers repository table
+    try {
+      db.query(`
+        INSERT INTO offers (
+          org_id, client_id, pdf_id, property_address, seller_name, seller_email,
+          business_name, offer_type, selected_offers,
+          cash_offer_amount, subto_purchase_price, subto_debt, subto_cash_to_seller, subto_monthly_payment,
+          creative_purchase_price, creative_down_payment, creative_monthly_payment, creative_interest_rate,
+          creative_balloon_years, creative_total_paid, closing_days, email_status, status, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Sent', ?, datetime('now'), datetime('now'))
+      `).run(
+        orgId,
+        id,
+        pdfId,
+        propertyAddress,
+        sellerName,
+        to,
+        businessName,
+        body.offerType || "all",
+        JSON.stringify(selectedOffers),
+        offerAmount,
+        purchasePrice,
+        typeof body.subtoDebt === "number" ? body.subtoDebt : 0,
+        typeof body.subtoCashToSeller === "number" ? body.subtoCashToSeller : 0,
+        typeof body.subtoMonthlyPayment === "number" ? body.subtoMonthlyPayment : 0,
+        typeof body.creativePurchasePrice === "number" ? body.creativePurchasePrice : purchasePrice,
+        typeof body.downPayment === "number" ? body.downPayment : 0,
+        typeof body.monthlyPayment === "number" ? body.monthlyPayment : 0,
+        typeof body.interestRate === "number" ? body.interestRate : 0,
+        typeof body.balloonYears === "number" ? body.balloonYears : 0,
+        typeof body.totalPaidToSeller === "number" ? body.totalPaidToSeller : 0,
+        typeof body.closingDays === "number" ? body.closingDays : 14,
+        emailStatusOf(sendResult),
+        text.slice(0, 800)
+      );
+    } catch (offerErr) {
+      console.error("[offers] Failed to save offer record:", offerErr);
+    }
+
+    let customFields: Array<{ name: string; value: string }> = [];
+    try {
+      customFields = JSON.parse(client.custom_fields || "[]");
+    } catch {
+      customFields = [];
+    }
+
+    const setField = (name: string, value: string) => {
+      const idx = customFields.findIndex((f) => f.name.toLowerCase() === name.toLowerCase());
+      if (idx >= 0) customFields[idx].value = value;
+      else customFields.push({ name, value });
+    };
+
+    setField("Offer Sent", new Date().toLocaleDateString());
+    if (offerAmount > 0) setField("Cash Offer", `$${offerAmount.toLocaleString()}`);
+    if (purchasePrice > 0) setField("Creative Price", `$${purchasePrice.toLocaleString()}`);
+    setField("Offer PDF", pdfUrl);
+
+    const primaryAmt = purchasePrice > 0 ? purchasePrice : offerAmount;
+    const noteLine = `[Offer Sent: $${primaryAmt.toLocaleString()} to ${to} on ${new Date().toISOString().split('T')[0]} | PDF Offer Document: ${pdfUrl}]`;
+    const newNotes = client.notes ? `${client.notes}\n${noteLine}` : noteLine;
+    const newDealValue = assignmentFee > 0 ? assignmentFee : primaryAmt > 0 ? primaryAmt : client.deal_value;
+
+    // If still in 'Lead' stage, advance to 'Contacted'
+    const newStage = client.stage.toLowerCase() === "lead" ? "Contacted" : client.stage;
+
+    db.query(
+      `UPDATE clients
+          SET company_name = ?, address = ?, contact_name = COALESCE(NULLIF(?, ''), contact_name),
+              custom_fields = ?, notes = ?, deal_value = ?, stage = ?, updated_at = datetime('now')
+        WHERE id = ? AND org_id = ?`
+    ).run(propertyAddress, propertyAddress, sellerName, JSON.stringify(customFields), newNotes, newDealValue, newStage, id, orgId);
+
+    // Auto-create a follow-up task
+    try {
+      const followUpDate = new Date();
+      followUpDate.setDate(followUpDate.getDate() + 2);
+      const ymd = followUpDate.toISOString().split('T')[0];
+      db.query(
+        `INSERT INTO tasks (org_id, title, client_id, due_date, done, notes, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))`
+      ).run(
+        orgId,
+        `Follow up on Offer for ${propertyAddress}`,
+        id,
+        ymd,
+        `Offered $${primaryAmt.toLocaleString()} to ${to}. Check if seller reviewed offer terms.`
+      );
+    } catch (err) {
+      console.warn("[offer] follow-up task error:", err);
+    }
+
+    const updated = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(id, orgId) as ClientRow;
+
+    return json({
+      ok: true,
+      client: toClient(updated, true),
+      emailStatus: emailStatusOf(sendResult),
+      emailError: sendResult.ok ? undefined : sendResult.error,
+      offerAmount: primaryAmt,
+      stage: newStage,
+      pdfUrl,
+      businessName,
+    });
+  }
+
+  /* Wholesale Offers Repository — list all offers for current org, with linked property details */
+  if (pathname === "/api/offers" && method === "GET") {
+    const url = new URL(req.url);
+    const clientParam = url.searchParams.get("client_id");
+
+    // Auto-backfill past client offers if table is empty
+    const existingCount = (db.query("SELECT COUNT(*) AS c FROM offers WHERE org_id = ?").get(orgId) as { c: number })?.c || 0;
+    if (existingCount === 0) {
+      try {
+        const clientsWithOffers = db.query(`
+          SELECT * FROM clients
+           WHERE org_id = ?
+             AND (custom_fields LIKE '%Offer PDF%' OR notes LIKE '%Offer Sent%')
+        `).all(orgId) as ClientRow[];
+
+        const org = db.query("SELECT name FROM orgs WHERE id = ?").get(orgId) as { name: string } | null;
+        const defaultBiz = (org?.name || "Elevate Capital").trim();
+
+        for (const c of clientsWithOffers) {
+          let pdfId = "";
+          let cashOffer = 0;
+          let creativePrice = 0;
+          try {
+            const cf: Array<{ name: string; value: string }> = JSON.parse(c.custom_fields || "[]");
+            for (const f of cf) {
+              if (f.name.toLowerCase() === "offer pdf" && f.value) {
+                const m = f.value.match(/\/offer-pdf\/([a-f0-9]+)/);
+                if (m) pdfId = m[1];
+              }
+              if (f.name.toLowerCase() === "cash offer") {
+                cashOffer = Number(f.value.replace(/[^0-9.]/g, "")) || 0;
+              }
+              if (f.name.toLowerCase() === "creative price") {
+                creativePrice = Number(f.value.replace(/[^0-9.]/g, "")) || 0;
+              }
+            }
+          } catch {}
+
+          if (!pdfId) {
+            const m = (c.notes || "").match(/\/offer-pdf\/([a-f0-9]+)/);
+            if (m) pdfId = m[1];
+          }
+
+          if (pdfId) {
+            db.query(`
+              INSERT INTO offers (
+                org_id, client_id, pdf_id, property_address, seller_name, seller_email,
+                business_name, offer_type, selected_offers,
+                cash_offer_amount, subto_purchase_price, subto_debt, subto_cash_to_seller, subto_monthly_payment,
+                creative_purchase_price, creative_down_payment, creative_monthly_payment, creative_interest_rate,
+                creative_balloon_years, creative_total_paid, closing_days, email_status, status, notes, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, 'all', '["cash","subto","creative"]', ?, ?, 0, 0, 0, ?, 0, 0, 0, 0, 0, 14, 'sent', 'Sent', ?, ?, ?)
+            `).run(
+              orgId,
+              c.id,
+              pdfId,
+              c.company_name || c.address,
+              c.contact_name || "",
+              c.email || "",
+              defaultBiz,
+              cashOffer,
+              creativePrice,
+              creativePrice,
+              c.notes || "",
+              c.updated_at || c.created_at,
+              c.updated_at || c.created_at
+            );
+          }
+        }
+      } catch (backfillErr) {
+        console.warn("[offers-backfill] err:", backfillErr);
+      }
+    }
+
+    let queryStr = `
+      SELECT o.*,
+             c.company_name AS client_company,
+             c.address AS client_address,
+             c.stage AS client_stage,
+             c.phone AS client_phone,
+             c.email AS client_email,
+             c.deal_value AS client_deal_value
+        FROM offers o
+        LEFT JOIN clients c ON c.id = o.client_id
+       WHERE o.org_id = ?
+    `;
+    const params: any[] = [orgId];
+    if (clientParam) {
+      queryStr += ` AND o.client_id = ?`;
+      params.push(Number(clientParam));
+    }
+    queryStr += ` ORDER BY o.created_at DESC, o.id DESC`;
+
+    const rows = db.query(queryStr).all(...params) as any[];
+    const offers = rows.map((r) => {
+      let selectedOffers: string[] = [];
+      try {
+        selectedOffers = JSON.parse(r.selected_offers || "[]");
+      } catch {
+        selectedOffers = [];
+      }
+      return {
+        id: r.id,
+        orgId: r.org_id,
+        clientId: r.client_id,
+        pdfId: r.pdf_id,
+        pdfUrl: `/offer-pdf/${r.pdf_id}`,
+        propertyAddress: r.property_address || r.client_company || "Subject Property",
+        sellerName: r.seller_name || "",
+        sellerEmail: r.seller_email || "",
+        businessName: r.business_name || "Elevate Capital",
+        offerType: r.offer_type,
+        selectedOffers,
+        cashOfferAmount: r.cash_offer_amount,
+        subtoPurchasePrice: r.subto_purchase_price,
+        subtoDebt: r.subto_debt,
+        subtoCashToSeller: r.subto_cash_to_seller,
+        subtoMonthlyPayment: r.subto_monthly_payment,
+        creativePurchasePrice: r.creative_purchase_price,
+        creativeDownPayment: r.creative_down_payment,
+        creativeMonthlyPayment: r.creative_monthly_payment,
+        creativeInterestRate: r.creative_interest_rate,
+        creativeBalloonYears: r.creative_balloon_years,
+        creativeTotalPaid: r.creative_total_paid,
+        closingDays: r.closing_days,
+        emailStatus: r.email_status,
+        status: r.status || "Sent",
+        notes: r.notes || "",
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        client: {
+          id: r.client_id,
+          companyName: r.client_company || r.property_address,
+          address: r.client_address || r.property_address,
+          stage: r.client_stage || "Contacted",
+          phone: r.client_phone || "",
+          email: r.client_email || r.seller_email || "",
+          dealValue: r.client_deal_value || 0,
+        },
+      };
+    });
+
+    return json({ ok: true, offers });
+  }
+
+  /* Wholesale Offers Repository — update status or notes */
+  const offerPatchMatch = pathname.match(/^\/api\/offers\/(\d+)$/);
+  if (offerPatchMatch && (method === "PATCH" || method === "PUT")) {
+    const offerId = Number(offerPatchMatch[1]);
+    const offer = db.query("SELECT * FROM offers WHERE id = ? AND org_id = ?").get(offerId, orgId) as any;
+    if (!offer) return err("Offer record not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const status = typeof body.status === "string" && body.status.trim() ? body.status.trim() : offer.status;
+    const notes = typeof body.notes === "string" ? body.notes : offer.notes;
+
+    db.query(`UPDATE offers SET status = ?, notes = ?, updated_at = datetime('now') WHERE id = ? AND org_id = ?`)
+      .run(status, notes, offerId, orgId);
+
+    const updated = db.query("SELECT * FROM offers WHERE id = ? AND org_id = ?").get(offerId, orgId) as any;
+    return json({ ok: true, offer: updated });
+  }
+
+  /* Wholesale Offers Repository — delete an offer record */
+  if (offerPatchMatch && method === "DELETE") {
+    const offerId = Number(offerPatchMatch[1]);
+    db.query("DELETE FROM offers WHERE id = ? AND org_id = ?").run(offerId, orgId);
+    return json({ ok: true });
   }
   /* Calendar — the owner's demo-call appointments. OWNER-ONLY (requireAdmin).
      Every org's demo appointments, with the linked client's name (LEFT JOIN,
@@ -4550,6 +5179,10 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       if (has("zip")) set("zip", c.zip);
       if (has("website")) set("website", c.website);
       if (has("leadSource")) set("lead_source", c.leadSource);
+      // User direction 2026-09-04 — listing agent contact info.
+      if (has("agentName"))  set("agent_name",  c.agentName ?? "");
+      if (has("agentEmail")) set("agent_email", c.agentEmail ?? "");
+      if (has("agentPhone")) set("agent_phone", c.agentPhone ?? "");
       // Owner request 2026-08-14 — the record's monthly amount: persisted only
       // when present in the body (validateClient only sets it when the client
       // sent it), so partial updates never clobber an absent value.

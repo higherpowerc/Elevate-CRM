@@ -15,6 +15,17 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/src/styles.css" />
+    <script>
+      (function() {
+        try {
+          var t = localStorage.getItem("revzenta_theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+            document.documentElement.style.colorScheme = t;
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

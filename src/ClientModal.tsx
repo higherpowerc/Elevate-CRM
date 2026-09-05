@@ -34,6 +34,8 @@ interface Props {
    *  + the sold-customer directory). Shows the package-tier selector. The tier
    *  is OWNER-only data — tenants never see the selector nor the field. */
   ownerOrg?: boolean;
+  /** Housing wholesale vertical customization — intake matches property table data only. */
+  isWholesale?: boolean;
   busy: boolean;
   onClose: () => void;
   onSave: (input: Omit<Client, "id" | "createdAt" | "updatedAt">, editing?: Client) => void;
@@ -94,9 +96,13 @@ type FormState = Omit<Client, "id" | "createdAt" | "updatedAt"> & {
   /** Owner 2026-08-27 — IANA timezone ( unset = the owner's Arizona/MST).
    *  Owner-only: the selector renders only in the owner workspace. */
   timezone: string;
+  /** User direction 2026-09-04 — listing agent contact info (wholesale). */
+  agentName: string;
+  agentEmail: string;
+  agentPhone: string;
 };
 
-export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, ownerLeadsTab = false, ownerOrg = false, busy, onClose, onSave }: Props) {
+export default function ClientModal({ client, stages, defaultStage, customFieldDefs, intake, ownerLeadsTab = false, ownerOrg = false, isWholesale = false, busy, onClose, onSave }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const createStage = defaultStage ?? stages[0] ?? "Leads";
@@ -114,7 +120,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     nextAction: "",
     notes: "",
     archived: false,
-    clientType: "residential",
+    clientType: isWholesale ? "single_family" : "residential",
     address: "",
     city: "",
     state: "",
@@ -156,6 +162,9 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     followUpNote: "",
     tier: "",
     timezone: "",
+    agentName: "",
+    agentEmail: "",
+    agentPhone: "",
   });
   const [form, setForm] = useState<FormState>(() =>
     client
@@ -214,6 +223,9 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
           followUpNote: client.followUpNote ?? "",
           tier: (client.tier ?? "") as PackageTier,
           timezone: client.timezone ?? "",
+          agentName: client.agentName ?? "",
+          agentEmail: client.agentEmail ?? "",
+          agentPhone: client.agentPhone ?? "",
         }
       : empty(),
   );
@@ -843,6 +855,328 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
    *  billing, LLC, services, custom, archived) renders as a full-width block. */
   const CELL_KINDS = new Set(["text", "textarea", "yesno", "select", "datalist", "customgroup"]);
 
+  function submitWholesale(e: FormEvent) {
+    e.preventDefault();
+    if (!form.address.trim()) {
+      setError("Property address is required.");
+      return;
+    }
+    const sellerName = form.companyName.trim() || form.contactName.trim() || "Property Owner";
+    let ct = form.clientType;
+    if (!ct || ct === "residential") {
+      ct = "single_family";
+    }
+
+    setError(null);
+    onSave(
+      {
+        ...form,
+        companyName: sellerName,
+        contactName: sellerName,
+        clientType: ct,
+        address: form.address.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+        zip: form.zip.trim(),
+        agentName: form.agentName.trim(),
+        agentEmail: form.agentEmail.trim(),
+        agentPhone: form.agentPhone.trim(),
+        services: [...form.services],
+        stage: form.stage || (stages[0] ?? "Leads"),
+        dealValue: Number(form.dealValue) || 0,
+        monthlyAmount: 0,
+        billingSame: true,
+        customFields: form.customFields,
+        lost: false,
+        lostReason: "",
+        dnc: false,
+        dncReason: "",
+        dncDate: "",
+        demoOutcome: "",
+        followUpNote: "",
+        tier: "",
+        timezone: "",
+      },
+      client,
+    );
+  }
+
+  if (isWholesale) {
+    return (
+      <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit Property" : "New Property"}>
+        <div className="modal modal-lg">
+          <div className="modal-head">
+            <h2>{client ? "Edit Property" : "New Property"}</h2>
+            <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
+              ✕
+            </button>
+          </div>
+          <form onSubmit={submitWholesale} className="form modal-form">
+            {error && (
+              <div className="alert alert-error" role="alert">
+                {error}
+              </div>
+            )}
+
+            {/* 1. Property Address */}
+            <fieldset className="field addr-group intake-block">
+              <legend className="field-label" style={{ fontWeight: 600, fontSize: "14px", color: "var(--text)" }}>
+                📍 Property Address *
+              </legend>
+              <div className="field">
+                <input
+                  value={form.address}
+                  className={pii ? "pii-blur" : undefined}
+                  onChange={(e) => set("address", e.target.value)}
+                  placeholder="Street address (e.g. 123 Maple Street)"
+                  maxLength={200}
+                  required
+                  autoFocus
+                  aria-label="Property street address"
+                />
+              </div>
+              <div className="form-row-3">
+                <label className="field">
+                  <span className="field-label">City</span>
+                  <input
+                    value={form.city}
+                    className={pii ? "pii-blur" : undefined}
+                    onChange={(e) => set("city", e.target.value)}
+                    placeholder="Phoenix"
+                    maxLength={100}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">State</span>
+                  <input
+                    value={form.state}
+                    className={pii ? "pii-blur" : undefined}
+                    onChange={(e) => set("state", e.target.value)}
+                    placeholder="AZ"
+                    maxLength={50}
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">ZIP</span>
+                  <input
+                    value={form.zip}
+                    className={pii ? "pii-blur" : undefined}
+                    onChange={(e) => set("zip", e.target.value)}
+                    placeholder="85001"
+                    maxLength={20}
+                  />
+                </label>
+              </div>
+            </fieldset>
+
+            {/* 2. Property Type */}
+            <div className="field">
+              <span className="field-label" style={{ fontWeight: 600, fontSize: "14px" }}>Property Type</span>
+              <div className="seg seg-type" role="radiogroup" aria-label="Property type">
+                {[
+                  { value: "single_family", label: "Single Family" },
+                  { value: "multi_family", label: "Multi Family" },
+                  { value: "commercial", label: "Commercial" },
+                ].map((t) => {
+                  const isChecked =
+                    form.clientType === t.value ||
+                    (!form.clientType && t.value === "single_family") ||
+                    (form.clientType === "residential" && t.value === "single_family");
+                  return (
+                    <button
+                      key={t.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={isChecked}
+                      className={isChecked ? "seg-btn active" : "seg-btn"}
+                      onClick={() => set("clientType", t.value as ClientType)}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 3. Owner */}
+            <section className="intake-section" aria-label="Owner">
+              <div className="intake-section-title">👤 Owner</div>
+              <div className="form-grid intake-grid">
+                <label className="field">
+                  <span className="field-label">Owner name *</span>
+                  <input
+                    type="text"
+                    value={form.companyName}
+                    onChange={(e) => set("companyName", e.target.value)}
+                    className={pii ? "pii-blur" : undefined}
+                    placeholder="e.g. John Smith"
+                    maxLength={200}
+                    required
+                    aria-label="Owner name"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Owner email</span>
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => set("email", e.target.value)}
+                    className={pii ? "pii-blur" : undefined}
+                    placeholder="john@example.com"
+                    maxLength={200}
+                    aria-label="Owner email"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Owner phone</span>
+                  <input
+                    type="tel"
+                    value={form.phone}
+                    onChange={(e) => set("phone", e.target.value)}
+                    className={pii ? "pii-blur" : undefined}
+                    placeholder="+1 555 000 1234"
+                    maxLength={50}
+                    aria-label="Owner phone"
+                  />
+                </label>
+              </div>
+            </section>
+
+            {/* 4. Listing Agent */}
+            <section className="intake-section" aria-label="Listing Agent">
+              <div className="intake-section-title">💼 Listing Agent (Optional)</div>
+              <div className="form-grid intake-grid">
+                <label className="field">
+                  <span className="field-label">Agent name</span>
+                  <input
+                    type="text"
+                    value={form.agentName}
+                    onChange={(e) => set("agentName", e.target.value)}
+                    className={pii ? "pii-blur" : undefined}
+                    placeholder="e.g. Sarah Johnson"
+                    maxLength={200}
+                    aria-label="Agent name"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Agent email</span>
+                  <input
+                    type="email"
+                    value={form.agentEmail}
+                    onChange={(e) => set("agentEmail", e.target.value)}
+                    className={pii ? "pii-blur" : undefined}
+                    placeholder="sarah@realty.com"
+                    maxLength={200}
+                    aria-label="Agent email"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">Agent phone</span>
+                  <input
+                    type="tel"
+                    value={form.agentPhone}
+                    onChange={(e) => set("agentPhone", e.target.value)}
+                    className={pii ? "pii-blur" : undefined}
+                    placeholder="+1 555 000 9876"
+                    maxLength={50}
+                    aria-label="Agent phone"
+                  />
+                </label>
+              </div>
+            </section>
+
+            {/* 5. Structure (Deal Offer) */}
+            <section className="intake-section" aria-label="Structure (Deal Offer)">
+              <div className="intake-section-title">🏷️ Structure (Deal Offer)</div>
+              <div className="field">
+                <span className="field-label">Deal Structures / Offer Types</span>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+                  {["Cash MAO", "Subject-To", "Seller Financing", "Novation"].map((opt) => {
+                    const active = form.services.includes(opt);
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        className={active ? "seg-btn active" : "seg-btn"}
+                        style={{ padding: "6px 14px", borderRadius: "20px", fontSize: "13px", fontWeight: 500 }}
+                        onClick={() => {
+                          if (active) {
+                            removeService(opt);
+                          } else {
+                            setForm((f) => ({ ...f, services: [...f.services, opt] }));
+                          }
+                        }}
+                      >
+                        {active ? "✓ " : "+ "}{opt}
+                      </button>
+                    );
+                  })}
+                </div>
+                {form.services.length > 0 && (
+                  <div className="chips" style={{ marginTop: "6px" }}>
+                    {form.services.map((s) => (
+                      <span className="chip" key={s}>
+                        {s}
+                        <button
+                          type="button"
+                          className="chip-remove"
+                          onClick={() => removeService(s)}
+                          aria-label={`Remove structure ${s}`}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="chip-add" style={{ marginTop: "8px" }}>
+                  <input
+                    value={serviceDraft}
+                    onChange={(e) => setServiceDraft(e.target.value)}
+                    onKeyDown={onServiceKey}
+                    placeholder="Or type another deal structure & press Enter…"
+                    aria-label="Add custom deal structure"
+                  />
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={addService}>
+                    Add
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* 6. Pipeline Stage */}
+            <section className="intake-section" aria-label="Pipeline Stage">
+              <div className="intake-section-title">📊 Stage</div>
+              <div className="field">
+                <span className="field-label">Current Stage</span>
+                <select
+                  value={form.stage}
+                  onChange={(e) => set("stage", e.target.value)}
+                  aria-label="Pipeline stage"
+                >
+                  {stages.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </section>
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                {busy ? "Saving…" : client ? "Save changes" : "Create Property"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit client" : "New client"}>
       <div className="modal modal-lg">
@@ -912,6 +1246,57 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                   </div>
                 </div>
               </div>
+              {(() => {
+                const offerPdf = client?.customFields?.find((cf) => cf.name.toLowerCase() === "offer pdf")?.value;
+                const offerSent = client?.customFields?.find((cf) => cf.name.toLowerCase() === "offer sent")?.value;
+                const cashOffer = client?.customFields?.find((cf) => cf.name.toLowerCase() === "cash offer")?.value;
+                const creativePrice = client?.customFields?.find((cf) => cf.name.toLowerCase() === "creative price")?.value;
+                if (!offerPdf && !offerSent && !cashOffer && !creativePrice) return null;
+                return (
+                  <div style={{ marginTop: "16px", padding: "14px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span>📁 Client Offers & Files Repository</span>
+                      {offerSent && <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>Sent: {offerSent}</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                      {cashOffer && (
+                        <div style={{ background: "#ffffff", padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                          <span style={{ color: "#64748b" }}>Cash Offer: </span>
+                          <strong style={{ color: "#16a34a" }}>{cashOffer}</strong>
+                        </div>
+                      )}
+                      {creativePrice && (
+                        <div style={{ background: "#ffffff", padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
+                          <span style={{ color: "#64748b" }}>Creative Price: </span>
+                          <strong style={{ color: "#9333ea" }}>{creativePrice}</strong>
+                        </div>
+                      )}
+                      {offerPdf && (
+                        <a
+                          href={offerPdf}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "6px 12px",
+                            background: "#0284c7",
+                            color: "#ffffff",
+                            borderRadius: "6px",
+                            fontWeight: 600,
+                            fontSize: "12px",
+                            textDecoration: "none",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                          }}
+                        >
+                          📥 Download Formal Offer Letter (PDF)
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
           {/* Owner 2026-08-27 — CLIENT PACKAGE TIER selector. OWNER-only:

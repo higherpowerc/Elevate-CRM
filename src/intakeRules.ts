@@ -189,6 +189,38 @@ export function getIntakeLayout(
     ],
   });
 
+  /* ── Listing Agent (always — both client types, every industry) ────────
+     Wholesale pipeline: the agent who listed the property. All three fields
+     are optional (not every deal involves a listed property). Placed
+     immediately after Universal so it sits near the top of the intake form. */
+  sections.push({
+    id: "agent",
+    title: "Listing Agent",
+    fields: [
+      {
+        key: "agentName",
+        label: "Agent name",
+        kind: "text",
+        placeholder: "e.g. Sarah Johnson",
+        maxLength: 200,
+      },
+      {
+        key: "agentEmail",
+        label: "Agent email",
+        kind: "text",
+        placeholder: "sarah@realty.com",
+        maxLength: 200,
+      },
+      {
+        key: "agentPhone",
+        label: "Agent phone",
+        kind: "text",
+        placeholder: "+1 555 000 9876",
+        maxLength: 50,
+      },
+    ],
+  });
+
   /* ── Commercial intake (only when the client type is Commercial) ─────── */
   if (commercial) {
     const commercialFields: IntakeField[] = [

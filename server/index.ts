@@ -5,6 +5,7 @@ import { handleApi } from "./api";
 import { ensureAdmin } from "./auth";
 import { renderSignPage, readAgreementPdf, backfillSignedClients, backfillBrandRename } from "./agreements";
 import { renderConfirmPage, renderReschedulePage } from "./appointmentPages";
+import { readOfferPdf } from "./offerPdf";
 import { db } from "./db";
 
 /**
@@ -130,6 +131,19 @@ const server = serve({
     if (req.method === "GET" && url.pathname.startsWith("/sign/")) {
       const token = decodeURIComponent(url.pathname.slice("/sign/".length));
       return renderSignPage(token, clientIp(req, srv));
+    }
+        if (req.method === "GET" && url.pathname.startsWith("/offer-pdf/")) {
+      const pdfId = url.pathname.slice("/offer-pdf/".length);
+      const bytes = readOfferPdf(pdfId);
+      if (!bytes) return new Response("Not found", { status: 404 });
+      return new Response(bytes as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type": MIME[".pdf"],
+          "Cache-Control": "private, max-age=3600",
+          "Content-Disposition": `inline; filename="purchase-offer-${pdfId}.pdf"`,
+        },
+      });
     }
     if (req.method === "GET" && url.pathname.startsWith("/agreement-pdf/")) {
       const pdfId = url.pathname.slice("/agreement-pdf/".length);

@@ -522,6 +522,40 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_agreement_envelopes_client ON agreement_envelopes(client_id);
   CREATE INDEX IF NOT EXISTS idx_agreement_envelopes_token ON agreement_envelopes(token_hash);
+
+  -- Wholesale Offers Repository: central storage and reference for all formal offers
+  CREATE TABLE IF NOT EXISTS offers (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id                   INTEGER NOT NULL REFERENCES orgs(id),
+    client_id                INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    pdf_id                   TEXT NOT NULL,
+    property_address         TEXT NOT NULL,
+    seller_name              TEXT NOT NULL DEFAULT '',
+    seller_email             TEXT NOT NULL DEFAULT '',
+    business_name            TEXT NOT NULL DEFAULT '',
+    offer_type               TEXT NOT NULL DEFAULT 'all',
+    selected_offers          TEXT NOT NULL DEFAULT '[]',
+    cash_offer_amount        REAL NOT NULL DEFAULT 0,
+    subto_purchase_price     REAL NOT NULL DEFAULT 0,
+    subto_debt               REAL NOT NULL DEFAULT 0,
+    subto_cash_to_seller     REAL NOT NULL DEFAULT 0,
+    subto_monthly_payment    REAL NOT NULL DEFAULT 0,
+    creative_purchase_price  REAL NOT NULL DEFAULT 0,
+    creative_down_payment    REAL NOT NULL DEFAULT 0,
+    creative_monthly_payment REAL NOT NULL DEFAULT 0,
+    creative_interest_rate   REAL NOT NULL DEFAULT 0,
+    creative_balloon_years   REAL NOT NULL DEFAULT 0,
+    creative_total_paid      REAL NOT NULL DEFAULT 0,
+    closing_days             INTEGER NOT NULL DEFAULT 14,
+    email_status             TEXT NOT NULL DEFAULT 'sent',
+    status                   TEXT NOT NULL DEFAULT 'Sent',
+    notes                    TEXT NOT NULL DEFAULT '',
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at               TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_offers_org ON offers(org_id);
+  CREATE INDEX IF NOT EXISTS idx_offers_client ON offers(client_id);
+  CREATE INDEX IF NOT EXISTS idx_offers_created ON offers(created_at);
 `);
 
 /**
@@ -716,6 +750,10 @@ db.exec(`
   addCol("zip", "zip TEXT NOT NULL DEFAULT ''");
   addCol("website", "website TEXT NOT NULL DEFAULT ''");
   addCol("lead_source", "lead_source TEXT NOT NULL DEFAULT ''");
+  // User direction 2026-09-04 — listing agent contact info (wholesale pipeline).
+  addCol("agent_name",  "agent_name  TEXT NOT NULL DEFAULT ''");
+  addCol("agent_email", "agent_email TEXT NOT NULL DEFAULT ''");
+  addCol("agent_phone", "agent_phone TEXT NOT NULL DEFAULT ''");
 }
 
 /**

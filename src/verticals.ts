@@ -75,7 +75,7 @@ export const B2B_VERTICAL: VerticalTemplate = {
   defaultFields: [],
 };
 
-/** B2C — the second (and only other) business type. Same generic pipeline,
+/** B2C — the second business type. Same generic pipeline,
  *  no preset custom fields. */
 export const B2C_VERTICAL: VerticalTemplate = {
   key: "b2c",
@@ -88,14 +88,21 @@ export const B2C_VERTICAL: VerticalTemplate = {
   defaultFields: [],
 };
 
-/** The two business types. Used by the server's sold-lead industry matching
- *  (verticalForIndustry) — industry text no longer maps to the retired
- *  catalog, so unmatched leads provision the plain default pipeline. */
-export const VERTICALS: VerticalTemplate[] = [B2B_VERTICAL, B2C_VERTICAL];
+/** Housing Wholesale — real estate wholesale pipeline with properties and buyers. */
+export const WHOLESALE_VERTICAL: VerticalTemplate = {
+  key: "wholesale",
+  label: "Housing Wholesale",
+  industry: "other",
+  serviceModel: "both",
+  deliveryType: "both",
+  revenueModel: "sales",
+  defaultStages: ["Lead", "Contacted", "Under Contract", "Marketing", "Sold"],
+  defaultFields: [],
+};
 
-/** All selectable business types in display order: B2B first (the default),
- *  then B2C. Used by the Admin create-account form and the Settings apply
- *  affordance. */
+export const VERTICALS: VerticalTemplate[] = [B2B_VERTICAL, B2C_VERTICAL, WHOLESALE_VERTICAL];
+
+/** All selectable business types in display order. */
 export const ALL_VERTICALS: VerticalTemplate[] = VERTICALS;
 
 /** key → template. */

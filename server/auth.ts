@@ -167,6 +167,7 @@ export function toUser(row: UserRow): User {
     stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
     accentColor: org?.accent_color ?? DEFAULT_ACCENT,
     dashboardColor: org?.dashboard_color ?? "",
+    verticalKey: org?.vertical_key ?? "",
     created_at: row.created_at,
   };
 }

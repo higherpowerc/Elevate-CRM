@@ -14,6 +14,9 @@ import { fmtDemoTime, fmtDemoDateTime, DEMO_TZ_NAME, DEMO_TZ_SHORT } from "./dem
 import ClientModal from "./ClientModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import StageEditor from "./StageEditor";
+import DealCalculatorModal from "./DealCalculatorModal";
+import { evaluateMatch, type BuyBoxMatch } from "./buyBoxUtils";
+import CsvImportModal from "./CsvImportModal";
 
 /** Owner request 2026-08-14 — "lost" and "dnc" are STATUS views: they render
  *  the Lost section / DNC list instead of the pipeline table. The pipeline
@@ -62,11 +65,15 @@ interface Props {
    *  affordances are hidden (the server still 403s any write). Owner and org
    *  admins always pass true. */
   canEdit?: boolean;
+  /** Housing wholesale vertical customization — switches wording to Properties / Deals. */
+  isWholesale?: boolean;
   /** Owner direction 2026-08-26 — deep-linked initial seg filter for this
    *  view. The Dashboard's "Lost" card "View \u2192" routes here with "lost" so the
    *  view opens on the Lost listing. Only read on first mount (the state below
    *  initializes from it); null/undefined → "active". */
   initialFilter?: Filter;
+  crmBusinessName?: string;
+  onGoToBuyBox?: () => void;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -98,7 +105,14 @@ function primaryName(ownerOrg: boolean, c: Client): string {
  *  individuals (their name is already captured by "Name *") and a leftover
  *  partial/redundant value must never render — and contactName for commercial
  *  records, followed by email + phone. */
-function contactPrimary(c: Client): string {
+function contactPrimary(c: Client, isWholesale = false): string {
+  if (isWholesale) {
+    if (c.contactName) return c.contactName;
+    if (c.companyName && c.companyName.toLowerCase() !== (c.address || "").toLowerCase()) {
+      return c.companyName;
+    }
+    return "—";
+  }
   return c.clientType !== "commercial" ? c.companyName : c.contactName || "—";
 }
 
@@ -106,10 +120,23 @@ function contactPrimary(c: Client): string {
  *  cell into its own dedicated "Type" column, placed right next to the Name
  *  and Contact-information columns, in every pipeline/leads table that shows
  *  the tag (owner + tenant, incl. the Maybe/Lost/DNC tables). */
-function TypeBadgeCell({ c }: { c: Client }) {
+function TypeBadgeCell({ c, isWholesale }: { c: Client; isWholesale?: boolean }) {
+  if (isWholesale) {
+    const isMulti = c.clientType === "multi_family";
+    const isComm = c.clientType === "commercial";
+    const label = isComm ? "Commercial" : isMulti ? "Multi Family" : "Single Family";
+    const tone = isComm ? "blue" : isMulti ? "violet" : "lime";
+    return (
+      <td data-label="Type" style={{ textAlign: "center" }}>
+        <span className={`badge type-badge tone-${tone}`} style={{ display: "inline-flex", justifyContent: "center", whiteSpace: "nowrap" }}>
+          {label}
+        </span>
+      </td>
+    );
+  }
   return (
-    <td data-label="Type">
-      <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`}>
+    <td data-label="Type" style={{ textAlign: "center" }}>
+      <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`} style={{ display: "inline-flex", justifyContent: "center", whiteSpace: "nowrap" }}>
         {c.clientType === "commercial" ? "Commercial" : "Individual"}
       </span>
     </td>
@@ -374,7 +401,7 @@ function OwnerActionsMenu({ client, busy, onEdit, onDemo, onFlag }: {
     </div>
   );
 }
-export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true }: Props) {
+export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true, isWholesale = false, crmBusinessName, onGoToBuyBox }: Props) {
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -425,7 +452,38 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
      view's scope (e.g. the terminal stage) has no chip here, so the link
      opens the pipeline on "All" (the stale stage name is ignored). */
   const activeStageFilter = stageFilter && scopedStages.includes(stageFilter) ? stageFilter : null;
+
+  // Buy Box matching: index matches per property when in wholesale workspace
+  const buyersList = useMemo(() => {
+    if (!clients || !isWholesale) return [];
+    return clients.filter(
+      (b) => !b.archived && !b.lost && (b.clientType === "buyer" || b.stage === "Buyer"),
+    );
+  }, [clients, isWholesale]);
+
+  const buyBoxMatchesByPropId = useMemo(() => {
+    if (!clients || !isWholesale || buyersList.length === 0) {
+      return new Map<number, BuyBoxMatch[]>();
+    }
+    const map = new Map<number, BuyBoxMatch[]>();
+    for (const c of clients) {
+      if (c.clientType === "buyer" || c.stage === "Buyer") continue;
+      const matches: BuyBoxMatch[] = [];
+      for (const b of buyersList) {
+        const match = evaluateMatch(c, b);
+        if (match) matches.push(match);
+      }
+      matches.sort((a, b) => b.matchScore - a.matchScore);
+      if (matches.length > 0) {
+        map.set(c.id, matches);
+      }
+    }
+    return map;
+  }, [clients, isWholesale, buyersList]);
+
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
+  const [calcProperty, setCalcProperty] = useState<Client | null | "new">(null);
+  const [csvModal, setCsvModal] = useState(false);
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -536,6 +594,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
       return clients.filter((c) => c.orphanedStage === true && matchesQuery(c));
     }
     return clients.filter((c) => {
+      if (isWholesale && (c.clientType === "buyer" || c.stage === "Buyer")) return false;
       /* Positional pipeline buckets (owner request 2026-08-14/15): only
          clients whose stage is inside THIS view's scoped stage slice are
          pipeline records here. Everything else — for the owner that means the
@@ -1015,25 +1074,30 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
      Tenant orgs (role=member) keep the single pipeline — every stage except
      terminal — with "clients" wording for their records. Same page, same
      data — only the visible wording and the scoped stage slice differ. */
-  const heading = scope === "middle" ? "Onboarding" : ownerOrg ? "Leads" : (<>
+  const heading = isWholesale ? "Properties" : scope === "middle" ? "Onboarding" : ownerOrg ? "Leads" : (<>
     Client <em className="serif">book</em>
   </>);
-  const addCta = ownerOrg ? "+ New lead" : "+ New client";
-  const emptyTitle = scope === "middle" ? "No onboarding clients yet"
-    : ownerOrg && scope === "first" ? "No prospects yet"
+  const addCta = isWholesale ? "+ New property" : ownerOrg ? "+ New lead" : "+ New client";
+  const emptyTitle = isWholesale ? "No properties yet"
+    : scope === "middle" ? "No onboarding clients yet"
+    : ownerOrg && scope === "first" ? "No leads yet"
     : ownerOrg ? "No leads yet" : "No clients yet";
-  const emptySub = scope === "middle"
+  const emptySub = isWholesale
+    ? "Add your first property to start tracking your wholesale deals."
+    : scope === "middle"
     ? "Intake leads between your first and final pipeline stages live here — move one into your final stage and it becomes a client."
     : ownerOrg && scope === "first"
-    ? "Add your first prospect to start tracking the pipeline."
+    ? "Add your first lead to start tracking the pipeline."
     : ownerOrg
     ? "Add your first lead to start tracking the pipeline."
     : "Add your first client to start tracking the pipeline.";
-  const emptyCta = scope === "middle"
+  const emptyCta = isWholesale
+    ? "New Property"
+    : scope === "middle"
     ? "Add your first lead"
     : ownerOrg && scope === "first"
-    ? "Add your first prospect"
-    : ownerOrg ? "Add your first lead" : "Add your first client";
+    ? "New Lead"
+    : ownerOrg ? "New Lead" : "Add your first client";
 
   return (
     <div className="page page-stack">
@@ -1046,19 +1110,38 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           </p>
         </div>
         <div className="page-actions">
-          {/* Owner 2026-08-20 — \"Manage stages\" is NOT on the owner Leads tab
-              (scope \"first\") NOR the owner Onboarding tab (scope \"middle\").
+          {/* Owner 2026-08-20 — "Manage stages" is NOT on the owner Leads tab
+              (scope "first") NOR the owner Onboarding tab (scope "middle").
               It stays only in Settings (and any non-owner view) so stage
               management remains reachable. */}
           {canEdit && !(ownerLeadsTab || ownerOnboardingTab) && (
-            <button className="btn btn-ghost" onClick={() => setStageModal(true)} title="Rename, reorder or remove your pipeline stages">
-              Manage stages
+            !isWholesale && (
+              <button className="btn btn-ghost" onClick={() => setStageModal(true)} title="Rename, reorder or remove your pipeline stages">
+                Manage stages
+              </button>
+            )
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setCsvModal(true)}
+              title={isWholesale ? "Upload CSV to import wholesale properties or investors" : "Upload CSV to import records"}
+            >
+              📥 Upload CSV
             </button>
           )}
-          {/* Live-test finding 2026-08-17 — leads can ONLY be added from the
-              Leads tab (entry-point rule, PR #47). The Onboarding tab
-              (scope "middle") no longer renders the "+ New lead" button. */}
-          {canEdit && scope !== "middle" && (
+          {isWholesale && canEdit && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setCalcProperty("new")}
+              title="Open Wholesale Deal Calculator"
+            >
+              🏠 Deal Calculator
+            </button>
+          )}
+          {canEdit && scope !== "middle" && !ownerLeadsTab && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
               {addCta}
             </button>
@@ -1096,6 +1179,11 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search clients"
         />
+        {ownerLeadsTab && scoped.length > 0 && canEdit && (
+          <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
+            + New lead
+          </button>
+        )}
         {/* Owner request 2026-08-14/15 — stage chip row: "All" + one chip per
             stage IN THIS VIEW's scope, each with its live non-archived count
             (same numbers as the dashboard stage breakdown). The tenant Leads
@@ -1164,9 +1252,16 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
               empty state: no add-lead CTA on the Onboarding tab. Out-of-
               pipeline (orphaned) is a repair surface, not a creation one. */}
           {canEdit && scoped.length === 0 && filter !== "lost" && filter !== "dnc" && filter !== "maybe" && filter !== "orphaned" && scope !== "middle" && (
-            <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-              {emptyCta}
-            </button>
+            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "center", flexWrap: "wrap" }}>
+              <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
+                {emptyCta}
+              </button>
+              {isWholesale && (
+                <button className="btn btn-ghost" onClick={() => setCalcProperty("new")}>
+                  🏠 Deal Calculator
+                </button>
+              )}
+            </div>
           )}
         </div>
       ) : filter === "maybe" ? (
@@ -1434,7 +1529,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           .slice(0, 2);
                         if (chips.length === 0) return null;
                         return (
-                          <div className="cf-line" aria-label="Custom fields">
+                          <div className="cf-line" aria-label="Custom fields" style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
                             {chips.map(({ def, cf }) => (
                               <span className="cf-chip" key={cf.name}>
                                 {def.name}: {cfChipLabel(def, cf.value)}
@@ -1657,31 +1752,53 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                   <col style={{ width: "8%" }} />
                   <col style={{ width: "16%" }} />
                 </>
-              ) : (
+              ) : isWholesale ? (
                 <>
-                  <col style={{ width: "19%" }} />
-                  <col style={{ width: "8%" }} />
-                  <col style={{ width: "14%" }} />
+                  {/* Wholesale 9 cols: Address/17% | Type/9% | Owner/12% | Agent/11% | Structure/12% | Stage/10% | Buy Box Match/10% | Offers Sent/8% | Actions/11% */}
+                  <col style={{ width: "17%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "10%" }} />
                   <col style={{ width: "10%" }} />
                   <col style={{ width: "8%" }} />
-                  <col style={{ width: "14%" }} />
                   <col style={{ width: "11%" }} />
-                  <col style={{ width: "16%" }} />
+                </>
+              ) : (
+                <>
+                  {/* 8 cols: Address/18% | Type/11% | Owner/14% | Agent/13% | Structure/13% | Stage/10% | Offers Sent/9% | Actions/12% */}
+                  <col style={{ width: "18%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "13%" }} />
+                  <col style={{ width: "13%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "12%" }} />
                 </>
               )}
             </colgroup>
             <thead>
               <tr>
-                <th>{ownerOrg ? "Business name" : "Client"}</th>
+                <th>{ownerOrg ? "Business name" : "Address"}</th>
                 <th>Type</th>
-                <th>Contact</th>
+                <th>{isWholesale ? "Owner" : "Contact"}</th>
+                {/* Agent column — tenant/wholesale pipeline only (owner views
+                    don't use this field). */}
+                {!ownerOrg && <th>Agent</th>}
                 {/* Owner cockpit B — the owner's Onboarding tab replaces the
-                    Services column with the DocuSign Agreement column; client
-                    accounts and the owner Leads tab keep "Services". */}
-                <th>{ownerOnboardingTab ? "Agreement" : "Services"}</th>
-                <th className="num">Deal</th>
+                    Structure column with the DocuSign Agreement column; client
+                    accounts keep "Structure (Deal Offer)". */}
+                <th>{ownerOnboardingTab ? "Agreement" : ownerOrg ? "Services" : "Structure (Deal Offer)"}</th>
+                {/* Deal $ column — shown for owner views only (tenant table
+                    uses the Structure column to surface offer type instead). */}
+                {ownerOrg && <th className="num">Deal</th>}
                 {!ownerLeadsTab && <th>Stage</th>}
-                <th>Next action</th>
+                {isWholesale && <th>Buy Box Match</th>}
+                {!ownerOrg && <th>Offers Sent</th>}
+                {/* Next action — shown for owner views only. */}
+                {ownerOrg && <th>Next action</th>}
                 {/* Owner direction 2026-08-18 — the Payment column: owner
                     views only (tenants never see the key in the payload), sits
                     between Next action and Actions. */}
@@ -1694,22 +1811,32 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                 const fullAddress = [c.address, c.city, c.state, c.zip].filter(Boolean).join(", ");
                 return (
                   <tr key={c.id} className={c.archived ? "row-archived" : ""}>
-                    <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Client"}>
-                      <div className="cell-company">
-                        <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
-                          {primaryName(ownerOrg, c)}
-                        </span>
+                    <td className="cell-strong" data-label={ownerOrg ? "Business name" : "Address"} style={{ textAlign: "center" }}>
+                      <div className="cell-company" style={{ justifyContent: "center", textAlign: "center" }}>
+                        {/* Tenant / wholesale view: show the property address
+                            as the primary identifier. Owner workspace keeps the business name
+                            as the primary (unchanged). */}
+                        {ownerOrg ? (
+                          <span className={`cell-name${blurPii(pii)}`} title={primaryName(ownerOrg, c)}>
+                            {primaryName(ownerOrg, c)}
+                          </span>
+                        ) : (
+                          <span className={`cell-name${blurPii(pii)}`} title={c.address || primaryName(false, c)}>
+                            {c.address || primaryName(false, c)}
+                          </span>
+                        )}
                         {c.lost && <span className="chip chip-lost">Lost</span>}
                         {c.dnc && <span className="chip chip-dnc">DNC</span>}
                         {c.archived && <span className="chip chip-archived">archived</span>}
                       </div>
-                      {c.industry && <div className="cell-sub">{c.industry}</div>}
-                      {fullAddress && (
-                        <div className={`cell-sub addr-line${blurPii(pii)}`} title={fullAddress}>
-                          {fullAddress}
+                      {/* City, State, ZIP as sub-line for tenant view */}
+                      {!ownerOrg && (c.city || c.state || c.zip) && (
+                        <div className={`cell-sub addr-line${blurPii(pii)}`} style={{ textAlign: "center" }}>
+                          {[c.city, c.state, c.zip].filter(Boolean).join(", ")}
                         </div>
                       )}
-                      {(() => {
+                      {ownerOrg && c.industry && <div className="cell-sub">{c.industry}</div>}
+                      {!isWholesale && (() => {
                         // Compact summary: first 2 custom-field values that have
                         // a matching tenant definition (removed fields drop out).
                         const defByName = new Map(customFieldDefs.map((d) => [d.name.toLowerCase(), d]));
@@ -1721,7 +1848,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                           .slice(0, 2);
                         if (chips.length === 0) return null;
                         return (
-                          <div className="cf-line" aria-label="Custom fields">
+                          <div className="cf-line" aria-label="Custom fields" style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", justifyContent: "center" }}>
                             {chips.map(({ def, cf }) => (
                               <span className="cf-chip" key={cf.name}>
                                 {def.name}: {cfChipLabel(def, cf.value)}
@@ -1731,14 +1858,34 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         );
                       })()}
                     </td>
-                    <TypeBadgeCell c={c} />
-                    <td data-label="Contact">
-                      <div className="cell-contact">
-                        <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c)}</span>
+                    <TypeBadgeCell c={c} isWholesale={isWholesale} />
+                    <td data-label={isWholesale ? "Owner" : "Contact"} style={{ textAlign: "center" }}>
+                      <div className="cell-contact" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+                        <span className={pii ? "pii-blur" : undefined}>{contactPrimary(c, isWholesale)}</span>
                         {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
                         {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
                       </div>
                     </td>
+                    {/* Agent column — tenant/wholesale only */}
+                    {!ownerOrg && (
+                      <td data-label="Agent" style={{ textAlign: "center" }}>
+                        {c.agentName || c.agentEmail || c.agentPhone ? (
+                          <div className="cell-contact" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+                            {c.agentName && (
+                              <span className={pii ? "pii-blur" : undefined}>{c.agentName}</span>
+                            )}
+                            {c.agentEmail && (
+                              <div className={`cell-sub${blurPii(pii)}`}>{c.agentEmail}</div>
+                            )}
+                            {c.agentPhone && (
+                              <div className={`cell-sub${blurPii(pii)}`}>{c.agentPhone}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="cell-muted">—</span>
+                        )}
+                      </td>
+                    )}
                     {ownerOnboardingTab ? (
                       /* Owner cockpit B (owner direction 2026-08-15; PR #53) —
                          the owner's Onboarding tab tracks each client's
@@ -1748,8 +1895,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                          red failure state), the tone badge, and a select
                          that moves the status manually. Real DocuSign
                          sending is wired LATER — manual today. */
-                      <td data-label="Agreement">
-                        <div className="agree-cell">
+                      <td data-label="Agreement" style={{ textAlign: "center" }}>
+                        <div className="agree-cell" style={{ alignItems: "center", justifyContent: "center" }}>
                           <AgreementTracker status={c.agreementStatus ?? "not_sent"} />
                           <span className={`badge ${AGREEMENT_META[c.agreementStatus ?? "not_sent"].tone}`}>
                             {AGREEMENT_META[c.agreementStatus ?? "not_sent"].label}
@@ -1757,15 +1904,19 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         </div>
                       </td>
                     ) : (
-                      <td data-label="Services">
-                        <ServiceChips services={c.services} />
+                      <td data-label="Structure" style={{ textAlign: "center" }}>
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%" }}>
+                          <ServiceChips services={c.services} />
+                        </div>
                       </td>
                     )}
-                    <td className="num cell-strong" data-label="Deal">
-                      {money(c.dealValue)}
-                    </td>
+                    {ownerOrg && (
+                      <td className="num cell-strong" data-label="Deal" style={{ textAlign: "center" }}>
+                        {money(c.dealValue)}
+                      </td>
+                    )}
                     {!ownerLeadsTab && (
-                      <td data-label="Stage">
+                      <td data-label="Stage" style={{ textAlign: "center" }}>
                         {/* Owner direction 2026-08-15 (PR #53) — the OWNER's
                             Onboarding tab shows ONLY the blue StageBadge in
                             the Stage column (no stage select): the owner
@@ -1774,7 +1925,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             (role=member) keep badge + select — their core
                             stage picker — and the owner Leads tab has no
                             Stage column at all. */}
-                        <div className="stage-cell">
+                        <div className="stage-cell" style={{ alignItems: "center", justifyContent: "center", width: "100%" }}>
                           {/* Owner live-test 2026-08-28 — even-spacing pass:
                               the badge and the picker showed the SAME stage
                               name stacked in one cell (data rendered twice).
@@ -1795,6 +1946,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                               aria-label={`Move ${c.companyName} to stage`}
                               onChange={(e) => handleStageMove(c, e.target.value as Stage)}
                               disabled={busy}
+                              style={{ textAlign: "center", textAlignLast: "center" }}
                             >
                               {orgStages.map((s) => (
                                 <option key={s} value={s}>
@@ -1806,70 +1958,147 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         </div>
                       </td>
                     )}
-                    <td data-label="Next action">
-                      {/* Owner cockpit A — the Next-action cell becomes a
-                          small stack: the (possibly wrapped) next-action
-                          text with the "Start Onboarding" quick action
-                          underneath (owner Leads tab only — moves the lead
-                          into the MIDDLE stage via the same update path as
-                          the stage picker). */}
-                      <div className="cell-next-stack">
-                        {/* Owner bug report 2026-08-15 — the owner's Leads tab
-                            shows ONLY the "Start Onboarding" quick action under
-                            Next action: the next-action text span is hidden
-                            there (ownerLeadsTab) so the cell reads clean. Owner
-                            direction 2026-08-15 — the owner's ONBOARDING tab
-                            shows ONLY the "Send Agreements" quick action too
-                            (span hidden when ownerOnboardingTab). Client
-                            accounts keep the text span exactly as before. */}
-                        {!ownerLeadsTab && !ownerOnboardingTab && (
-                          <span className="cell-muted cell-next" title={c.nextAction || undefined}>
-                            {c.nextAction || "—"}
-                          </span>
-                        )}
-                        {onboardingStage && (
-                          <button
-                            type="button"
-                            className="start-onboarding-btn"
-                            title={`Start onboarding — move ${c.companyName} to ${onboardingStage}`}
-                            aria-label={`Start onboarding for ${c.companyName}`}
-                            onClick={() => handleStageMove(c, onboardingStage)}
-                            disabled={busy}
-                          >
-                            Start Onboarding
-                          </button>
-                        )}
-                        {/* Owner cockpit B — the owner's Onboarding tab:
-                            "Send Agreements" marks the client's DocuSign
-                            agreement status as Sent (the Agreement column
-                            updates immediately via the refetch). Manual for
-                            now — real DocuSign envelope sending is wired
-                            LATER once the owner connects a DocuSign account. */}
-                        {ownerOnboardingTab && c.agreementStatus !== "signed" && (
-                          <button
-                            type="button"
-                            className="send-agreements-btn"
-                            title={`Send ${c.companyName} the agreement — the client gets a unique email link to review and sign`}
-                            aria-label={`Send agreement to ${c.companyName}`}
-                            onClick={() => handleSendAgreement(c)}
-                            disabled={busy}
-                          >
-                            {(c.agreementStatus ?? "not_sent") !== "not_sent" ? "Re-send" : "Send Agreements"}
-                          </button>
-                        )}
-                      </div>
-                    </td>
+                    {isWholesale && (
+                      <td data-label="Buy Box Match" style={{ textAlign: "center" }}>
+                        {(() => {
+                          const matches = buyBoxMatchesByPropId.get(c.id) || [];
+                          const count = matches.length;
+                          if (count === 0) {
+                            return <span className="cell-muted" style={{ fontWeight: 500 }}>0</span>;
+                          }
+                          const topInvestorNames = matches
+                            .slice(0, 3)
+                            .map((m) => `${m.buyer.contactName || m.buyer.companyName} (${m.matchScore}%)`)
+                            .join(", ");
+                          const tooltipText = `${count} matching investor${count === 1 ? "" : "s"}: ${topInvestorNames}${matches.length > 3 ? ` +${matches.length - 3} more` : ""}`;
+
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (onGoToBuyBox) onGoToBuyBox();
+                              }}
+                              title={`${tooltipText} — Click to view in Buy Box Matcher`}
+                              style={{
+                                background: "rgba(16, 185, 129, 0.15)",
+                                border: "1px solid #10b981",
+                                color: "#34d399",
+                                fontWeight: 800,
+                                fontSize: "12px",
+                                padding: "2px 9px",
+                                borderRadius: "10px",
+                                cursor: onGoToBuyBox ? "pointer" : "default",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                transition: "all 0.15s ease",
+                              }}
+                            >
+                              <span>🎯</span>
+                              <span>{count}</span>
+                            </button>
+                          );
+                        })()}
+                      </td>
+                    )}
+                    {!ownerOrg && (
+                      <td data-label="Offers Sent" style={{ textAlign: "center" }}>
+                        {(() => {
+                          const count = c.offersCount !== undefined
+                            ? c.offersCount
+                            : (c.customFields?.some((f) => f.name.toLowerCase() === "offer pdf" || f.name.toLowerCase() === "offer sent") || c.notes?.includes("Offer Sent"))
+                              ? 1
+                              : 0;
+                          return count > 0 ? (
+                            <span
+                              className="badge tone-blue"
+                              style={{
+                                fontWeight: 700,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                minWidth: "26px",
+                                padding: "2px 8px",
+                              }}
+                              title={`${count} offer${count === 1 ? "" : "s"} sent for this property`}
+                            >
+                              {count}
+                            </span>
+                          ) : (
+                            <span className="cell-muted" style={{ fontWeight: 500 }}>0</span>
+                          );
+                        })()}
+                      </td>
+                    )}
+                    {/* Owner cockpit A — Next-action column: owner views only.
+                        Tenant pipeline table drops this column (user direction
+                        2026-09-04 — table reads: Address/Type/Contact/Structure/Stage/Actions). */}
+                    {ownerOrg && (
+                      <td data-label="Next action">
+                        {/* Owner cockpit A — the Next-action cell becomes a
+                            small stack: the (possibly wrapped) next-action
+                            text with the "Start Onboarding" quick action
+                            underneath (owner Leads tab only — moves the lead
+                            into the MIDDLE stage via the same update path as
+                            the stage picker). */}
+                        <div className="cell-next-stack">
+                          {/* Owner bug report 2026-08-15 — the owner's Leads tab
+                              shows ONLY the "Start Onboarding" quick action under
+                              Next action: the next-action text span is hidden
+                              there (ownerLeadsTab) so the cell reads clean. Owner
+                              direction 2026-08-15 — the owner's ONBOARDING tab
+                              shows ONLY the "Send Agreements" quick action too
+                              (span hidden when ownerOnboardingTab). Client
+                              accounts keep the text span exactly as before. */}
+                          {!ownerLeadsTab && !ownerOnboardingTab && (
+                            <span className="cell-muted cell-next" title={c.nextAction || undefined}>
+                              {c.nextAction || "—"}
+                            </span>
+                          )}
+                          {onboardingStage && (
+                            <button
+                              type="button"
+                              className="start-onboarding-btn"
+                              title={`Start onboarding — move ${c.companyName} to ${onboardingStage}`}
+                              aria-label={`Start onboarding for ${c.companyName}`}
+                              onClick={() => handleStageMove(c, onboardingStage)}
+                              disabled={busy}
+                            >
+                              Start Onboarding
+                            </button>
+                          )}
+                          {/* Owner cockpit B — the owner's Onboarding tab:
+                              "Send Agreements" marks the client's DocuSign
+                              agreement status as Sent (the Agreement column
+                              updates immediately via the refetch). Manual for
+                              now — real DocuSign envelope sending is wired
+                              LATER once the owner connects a DocuSign account. */}
+                          {ownerOnboardingTab && c.agreementStatus !== "signed" && (
+                            <button
+                              type="button"
+                              className="send-agreements-btn"
+                              title={`Send ${c.companyName} the agreement — the client gets a unique email link to review and sign`}
+                              aria-label={`Send agreement to ${c.companyName}`}
+                              onClick={() => handleSendAgreement(c)}
+                              disabled={busy}
+                            >
+                              {(c.agreementStatus ?? "not_sent") !== "not_sent" ? "Re-send" : "Send Agreements"}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     {ownerOrg && (
                       /* Owner direction 2026-08-18 — the Payment column: live
-                         status of the $200/month subscription payment link,
-                         matching the agreement-status pattern (server-persisted
-                         paymentStatus, refetched by the list lifecycle — no
-                         polling). none → muted dash; sent → amber badge (title
-                         carries the emailed link URL); paid → green badge
-                         (title carries when the payment was received). The
-                         owner's Onboarding tab adds a tiny "Mark paid" action
-                         next to the Sent badge (interim manual flip until the
-                         Phase 5 Stripe webhook). */
+                          status of the $200/month subscription payment link,
+                          matching the agreement-status pattern (server-persisted
+                          paymentStatus, refetched by the list lifecycle — no
+                          polling). none → muted dash; sent → amber badge (title
+                          carries the emailed link URL); paid → green badge
+                          (title carries when the payment was received). The
+                          owner's Onboarding tab adds a tiny "Mark paid" action
+                          next to the Sent badge (interim manual flip until the
+                          Phase 5 Stripe webhook). */
                       <td data-label="Payment">
                         {c.paymentStatus === "none" || !c.paymentStatus ? (
                           <span className="cell-muted">—</span>
@@ -1903,8 +2132,8 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         )}
                       </td>
                     )}
-                    <td data-label="Actions">
-                      <div className="row-actions">
+                    <td data-label="Actions" style={{ textAlign: "center" }}>
+                      <div className="row-actions" style={{ justifyContent: "center", alignItems: "center" }}>
                         {canEdit && (
                           <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
                             Edit
@@ -1954,6 +2183,17 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                             Payment link
                           </button>
                         )}
+                        {isWholesale && canEdit && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="Deal Calculator & Offer Email"
+                            aria-label={`Deal calculator for ${c.companyName}`}
+                            onClick={() => setCalcProperty(c)}
+                          >
+                            🏠 Calculator
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             className="icon-btn danger"
@@ -1982,6 +2222,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           intake={intake}
           ownerLeadsTab={ownerLeadsTab}
           ownerOrg={ownerOrg}
+          isWholesale={isWholesale}
           busy={busy}
           onClose={() => setModal(null)}
           onSave={handleSave}
@@ -2158,6 +2399,28 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}
+        />
+      )}
+      {calcProperty !== null && (
+        <DealCalculatorModal
+          property={calcProperty === "new" ? null : calcProperty}
+          onClose={() => setCalcProperty(null)}
+          crmBusinessName={crmBusinessName}
+          onUpdated={(updated) => {
+            setClients((prev) => prev?.map((c) => (c.id === updated.id ? updated : c)) ?? prev);
+            setCalcProperty(null);
+          }}
+        />
+      )}
+      {csvModal && (
+        <CsvImportModal
+          initialTarget="properties"
+          stages={orgStages}
+          onClose={() => setCsvModal(false)}
+          onSuccess={() => {
+            setCsvModal(false);
+            load();
+          }}
         />
       )}
     </div>

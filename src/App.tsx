@@ -12,10 +12,13 @@ import Admin from "./Admin";
 import Documents from "./Documents";
 import Tickets from "./Tickets";
 import Settings from "./Settings";
+import Offers from "./Offers";
+import BuyBoxMatcher from "./BuyBoxMatcher";
 import { api } from "./api";
 import { DEFAULT_STAGES, TENANT_TABS, type TenantTab, type User } from "./types";
 import { initials } from "./bits";
 import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "./pii";
+import ThemeToggle from "./ThemeToggle";
 
 /* Owner request 2026-08-14 — the single "Clients" tab splits into TWO:
  *   "leads"  → the pipeline view (stage chips, Active/Archived/All, stage
@@ -31,7 +34,7 @@ import { PiiContext, PII_HIDDEN_KEY, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "
  * (prospects), Onboarding = the MIDDLE stages (intake leads), Clients = the
  * terminal stage (sold). Client accounts (role=member) are unchanged: their
  * Leads tab keeps showing every stage except their terminal one. */
-type View = "dashboard" | "leads" | "onboarding" | "clients" | "calendar" | "appointments" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
+type View = "dashboard" | "leads" | "offers" | "buybox" | "onboarding" | "clients" | "calendar" | "appointments" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -188,6 +191,8 @@ export default function App() {
       case "dashboard":
         return true;
       case "leads":
+      case "offers":
+      case "buybox":
       case "clients":
         return canSeeTab("clients");
       case "calendar":
@@ -363,6 +368,12 @@ export default function App() {
   }
 
   const isOwner = user?.isOwner === true;
+  const isWholesale = Boolean(
+    !isOwnerOrg && (
+      user?.verticalKey === "wholesale" ||
+      orgName.toLowerCase().includes("wholesale")
+    )
+  );
   const brandMark = isOwner ? "R" : initials(orgName) || "R";
 
   return (
@@ -399,19 +410,7 @@ export default function App() {
             >
               Dashboard
             </button>
-            {/* Owner request 2026-08-14: "Leads" and "Clients" sit side by
-                side. The Leads tab is the pipeline; the Clients tab is the
-                independent directory of every client in the org. Owner
-                request 2026-08-15: both tabs read the same in every
-                workspace — owner and client accounts alike. Owner request
-                2026-08-15 (OWNER ONLY): the owner's pipeline splits into
-                Leads = first stage + Onboarding = middle stages; client
-                accounts never see Onboarding — their single Leads tab keeps
-                every stage except their terminal one. Team-users (PR #56):
-                a restricted member only sees the tabs their grants allow —
-                Leads + Clients are both gated by the "clients" grant (both
-                render /api/clients data); the owner and org admins always
-                see every tab. */}
+            {/* Pipeline tab: "Properties" for wholesale, "Leads" for general */}
             {canSeeTab("clients") && (
               <button
                 className={effectiveView === "leads" ? "tab active" : "tab"}
@@ -422,15 +421,34 @@ export default function App() {
                   setView("leads");
                 }}
               >
-                Leads
+                {isWholesale ? "Properties" : "Leads"}
               </button>
             )}
+            {/* Wholesale Offers Repository tab */}
+            {canSeeTab("clients") && (
+              <button
+                className={effectiveView === "offers" ? "tab active" : "tab"}
+                onClick={() => setView("offers")}
+              >
+                Offers
+              </button>
+            )}
+            {/* Directory tab: "Investors" for wholesale, "Clients" for general */}
             {canSeeTab("clients") && (
               <button
                 className={effectiveView === "clients" ? "tab active" : "tab"}
                 onClick={() => setView("clients")}
               >
-                Clients
+                {isWholesale ? "Investors" : "Clients"}
+              </button>
+            )}
+            {/* Wholesale Buy Box Matches tab */}
+            {isWholesale && canSeeTab("clients") && (
+              <button
+                className={effectiveView === "buybox" ? "tab active" : "tab"}
+                onClick={() => setView("buybox")}
+              >
+                Buy Box
               </button>
             )}
             {isOwnerOrg && (
@@ -444,17 +462,14 @@ export default function App() {
                 Onboarding
               </button>
             )}
-            {/* Appointments production (backlog 5a104eae): the general
-                appointments tab. The owner sees it alongside (not instead of)
-                their demo-call Calendar; each client account sees its own
-                org's appointments (create-for-self gated by the account's
-                allowSelfSchedule toggle). Shown to every session user. */}
-            <button
-              className={effectiveView === "appointments" ? "tab active" : "tab"}
-              onClick={() => setView("appointments")}
-            >
-              Appointments
-            </button>
+            {!isWholesale && (
+              <button
+                className={effectiveView === "appointments" ? "tab active" : "tab"}
+                onClick={() => setView("appointments")}
+              >
+                Appointments
+              </button>
+            )}
             {canSeeTab("tasks") && (
               <button
                 className={effectiveView === "tasks" ? "tab active" : "tab"}
@@ -463,12 +478,7 @@ export default function App() {
                 Tasks
               </button>
             )}
-            {/* Owner direction 2026-08-15 — support tickets: the OWNER's tab
-                reads "Tickets" (every account's tickets, worked to
-                resolution); client accounts read "Support" (their own org's
-                tickets + submit form). Same view, role-based rendering
-                inside Tickets.tsx. Team-users: restricted members only see
-                the Support tab when they hold the "support" grant. */}
+            {/* Support tickets: "Tickets" for owner, "Support" for clients */}
             {isOwnerOrg ? (
               <button
                 className={effectiveView === "tickets" ? "tab active" : "tab"}
@@ -485,7 +495,7 @@ export default function App() {
               </button>
             ) : null}
 
-            {canSeeTab("finance") && (
+            {!isWholesale && canSeeTab("finance") && (
               <button
                 className={effectiveView === "finance" ? "tab active" : "tab"}
                 onClick={() => setView("finance")}
@@ -536,6 +546,8 @@ export default function App() {
             )}
           </nav>
           <div className="nav-right">
+            {/* Global theme toggle (Light / Dark mode) */}
+            <ThemeToggle />
             {/* Global privacy eye (owner request 2026-08-14) — blurs names,
                 phone, email, address everywhere while ON; "active" styling
                 (accent border/fill) marks the blurring state. */}
@@ -583,8 +595,10 @@ export default function App() {
           <Dashboard
             onGoToStage={goToStage}
             onGoToLost={goToLost}
+            onGoToBuyBox={() => setView("buybox")}
             stages={stages}
             ownerOrg={isOwnerOrg}
+            isWholesale={isWholesale}
           />
         ) : effectiveView === "leads" ? (
           /* Owner request 2026-08-15 — the owner's Leads tab scopes to the
@@ -599,13 +613,28 @@ export default function App() {
             initialStage={leadsStage}
             initialFilter={leadsFilter}
             canEdit={canEditTab("clients")}
+            isWholesale={isWholesale}
+            crmBusinessName={orgName}
+            onGoToBuyBox={() => setView("buybox")}
           />
+        ) : effectiveView === "offers" ? (
+          <Offers
+            crmBusinessName={orgName}
+            onNavigateToProperty={() => {
+              setLeadsStage(null);
+              setOnboardingStage(null);
+              setLeadsFilter("active");
+              setView("leads");
+            }}
+          />
+        ) : effectiveView === "buybox" ? (
+          <BuyBoxMatcher canEdit={canEditTab("clients")} />
         ) : effectiveView === "onboarding" ? (
           /* Owner request 2026-08-15 — OWNER ONLY: the Onboarding tab scopes
              the pipeline to the MIDDLE stages (between first and terminal).
              Client accounts never reach this view — no nav item, and the
              dashboard routes middle stages to their single Leads tab. */
-          <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} canEdit />
+          <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} canEdit isWholesale={isWholesale} />
         ) : effectiveView === "clients" ? (
           /* Owner live-test reorg 2026-08-18 — the owner's Clients tab hosts
              the ACCOUNT management panel (create / view / reset / delete) via
@@ -618,6 +647,7 @@ export default function App() {
             canEdit={canEditTab("clients")}
             ownerOrgId={isOwnerOrg ? user.orgId : undefined}
             onViewAccount={isOwnerOrg ? handleImpersonate : undefined}
+            isWholesale={isWholesale}
           />
         ) : effectiveView === "calendar" ? (
           /* Owner 2026-08-20 sales rework — the owner's Calendar view of

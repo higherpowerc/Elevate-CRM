@@ -18,6 +18,7 @@ import {
 import StageEditor from "./StageEditor";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
+import ThemeToggle from "./ThemeToggle";
 
 const MAX_CUSTOM_FIELDS = 20;
 const MAX_INTAKE_GROUPS = 10;
@@ -979,6 +980,13 @@ export default function Settings({
               />
               <span className="field-hint">Shown in the app header and document title.</span>
             </label>
+            <div className="field">
+              <span className="field-label">Interface theme</span>
+              <div style={{ display: "flex", gap: "10px", marginTop: "2px" }}>
+                <ThemeToggle showLabel />
+              </div>
+              <span className="field-hint">Switch between Light and Dark interface appearance across all CRM menus and dialogs.</span>
+            </div>
             <div className="field">
               <span className="field-label">Accent color</span>
               <div className="accent-row">

@@ -3,11 +3,14 @@
    Dark premium: night / ink / lime, Inter + Instrument Serif.
    ───────────────────────────────────────────────────────────── */
 
-:root {
+:root,
+[data-theme="dark"] {
   --bg: #0a0a0c;
   --bg-soft: #0e0e11;
   --panel: #121216;
   --panel-2: #16161b;
+  --card-bg: #121216;
+  --border: #30363d;
   --line: rgba(242, 241, 236, 0.08);
   --line-strong: rgba(242, 241, 236, 0.16);
   --ink: #f2f1ec;
@@ -34,6 +37,40 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f8fafc;
+  --bg-soft: #ffffff;
+  --panel: #ffffff;
+  --panel-2: #f1f5f9;
+  --card-bg: #ffffff;
+  --border: #e2e8f0;
+  --line: rgba(15, 23, 42, 0.09);
+  --line-strong: rgba(15, 23, 42, 0.16);
+  --ink: #0f172a;
+  --ink-dim: #334155;
+  --muted: #64748b;
+  --muted-2: #94a3b8;
+  --lime: #16a34a;
+  --lime-ink: #ffffff;
+  --lime-dim: rgba(22, 163, 74, 0.12);
+  --danger: #ef4444;
+  --danger-dim: rgba(239, 68, 68, 0.1);
+  --blue: #2563eb;
+  --amber: #d97706;
+  --violet: #7c3aed;
+  --teal: #0d9488;
+  --green: #16a34a;
+  --green-dim: rgba(22, 163, 74, 0.12);
+  --radius: 14px;
+  --radius-sm: 9px;
+  --stack-gap: 1rem;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  color-scheme: light;
 }
 
 * {
@@ -72,12 +109,17 @@ textarea {
   font: inherit;
   color: var(--ink);
 }
-/* Native select dropdown popup (stage picker, etc.): force black background
-   with white lettering — the OS default bright popup with faint text is
-   unreadable on the dark theme. */
 select option {
+  background: var(--bg-soft, #000);
+  color: var(--ink, #fff);
+}
+[data-theme="dark"] select option {
   background: #000;
   color: #fff;
+}
+[data-theme="light"] select option {
+  background: #ffffff;
+  color: #0f172a;
 }
 
 .serif {
@@ -435,6 +477,38 @@ legend.field-label {
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   width: 100%;
+}
+
+/* Deal Calculator inputs — solid black lettering on white boxes */
+.input,
+.calc-input,
+.deal-calc-modal input,
+.deal-calc-modal textarea {
+  background: #ffffff !important;
+  color: #000000 !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  font-weight: 600 !important;
+  outline: none;
+  width: 100%;
+}
+
+.input:focus,
+.calc-input:focus,
+.deal-calc-modal input:focus,
+.deal-calc-modal textarea:focus {
+  border-color: #000000 !important;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
+}
+
+.input::placeholder,
+.calc-input::placeholder,
+.deal-calc-modal input::placeholder,
+.deal-calc-modal textarea::placeholder {
+  color: #64748b !important;
+  font-weight: 400;
 }
 
 .field textarea {
@@ -880,6 +954,9 @@ legend.field-label {
   background: rgba(10, 10, 12, 0.92);
   backdrop-filter: blur(14px);
   border-right: 1px solid var(--line);
+}
+[data-theme="light"] .nav {
+  background: rgba(255, 255, 255, 0.94);
 }
 
 .nav-inner {
@@ -1809,6 +1886,47 @@ legend.field-label {
   background: var(--danger-dim);
 }
 
+[data-theme="light"] .badge.tone-gray {
+  color: #475569;
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+[data-theme="light"] .badge.tone-blue {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+[data-theme="light"] .badge.tone-amber {
+  color: #b45309;
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+[data-theme="light"] .badge.tone-violet {
+  color: #6d28d9;
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+}
+[data-theme="light"] .badge.tone-lime {
+  color: #15803d;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+[data-theme="light"] .badge.tone-teal {
+  color: #0f766e;
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+[data-theme="light"] .badge.tone-green {
+  color: #15803d;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+[data-theme="light"] .badge.tone-red {
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
 .chips {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1897,7 +2015,7 @@ legend.field-label {
      columns evenly, the window gets its own horizontal scrollbar (.table-wrap
      already scrolls) instead of the data bunching up: the table never
      compresses below this readable minimum. */
-  min-width: 640px;
+  min-width: 1020px;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 14px;
@@ -1943,12 +2061,15 @@ legend.field-label {
    follow the centered cells. Scoped to desktop — the ≤760px stacked-card
    mode re-lefts cells (.table td text-align + .row-actions flex-start). */
 @media (min-width: 761px) {
-  .table td .cell-company { justify-content: center; }
+  .table td .cell-company { justify-content: center; text-align: center; }
+  .table td .cell-contact { align-items: center; text-align: center; }
   .table td .row-actions { justify-content: center; }
   .table td .cell-next-stack { align-items: center; }
-  .table td .stage-cell { align-items: center; }
-  .table td .agree-cell { align-items: center; }
+  .table td .stage-cell { align-items: center; justify-content: center; width: 100%; }
+  .table td .agree-cell { align-items: center; justify-content: center; width: 100%; }
   .table td .cf-line { justify-content: center; }
+  .table td .chips { justify-content: center; }
+  .table td .stage-select { text-align: center; text-align-last: center; }
 }
 
 .row-archived {
@@ -2000,6 +2121,16 @@ legend.field-label {
 
 .cell-contact {
   font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cell-contact span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cell-next {
@@ -2201,9 +2332,10 @@ legend.field-label {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   white-space: nowrap;
   min-width: 0;
+  align-items: center;
 }
 /* $ amount field + "Send payment link" button inside the Finance "Pending
    payment" rows: keep the pair centered and the input from sprawling. */
@@ -2299,6 +2431,14 @@ legend.field-label {
 
 .seg-btn.active .seg-count {
   background: rgba(214, 255, 63, 0.18);
+}
+
+[data-theme="light"] .seg-count {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+[data-theme="light"] .seg-btn.active .seg-count {
+  background: rgba(22, 163, 74, 0.2);
 }
 
 .search {
@@ -2611,6 +2751,10 @@ legend.field-label {
   padding: 16px;
   overflow-y: auto;
   animation: fade 0.18s ease both;
+}
+
+[data-theme="light"] .overlay {
+  background: rgba(15, 23, 42, 0.45);
 }
 
 @keyframes fade {
@@ -4268,7 +4412,8 @@ input.accent-hex::placeholder,
 /* Audit modal (native e-signature) — overlay/modal primitives in case the
    app shell's own modal styles are scoped elsewhere. */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 20px; }
-.modal { background: #131316; border: 1px solid #2a2a31; border-radius: 14px; max-width: 520px; width: 100%; max-height: 86vh; overflow: auto; }
+[data-theme="light"] .modal-overlay { background: rgba(15, 23, 42, 0.45); }
+.modal { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px; max-width: 640px; width: 100%; max-height: 86vh; overflow: auto; box-shadow: var(--shadow); }
 .modal-head { padding: 18px 22px 0; }
 .modal-body { padding: 14px 22px; }
 .modal-actions { padding: 0 22px 20px; display: flex; justify-content: flex-end; gap: 10px; }

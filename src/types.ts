@@ -65,7 +65,7 @@ export interface CustomIntakeGroup {
 
 /** Phase 3e: every client is Commercial or Residential (required on create
  *  and edit; existing rows backfilled to residential). */
-export type ClientType = "commercial" | "residential";
+export type ClientType = "commercial" | "residential" | "single_family" | "multi_family" | "buyer";
 
 /** Owner request 2026-08-14 — how an org's own business makes money:
  *  "sales" (one-off jobs/invoices) | "subscription" (recurring book). Seeded
@@ -265,6 +265,15 @@ export interface Client {
    *  DST. OWNER-workspace-only, the same isolation rule as tier /
    *  agreementStatus: tenant orgs never receive the key. */
   timezone?: string;
+  /** User direction 2026-09-04 — the listing agent's contact info for a
+   *  property (wholesale pipeline). Stored alongside the seller (companyName /
+   *  email / phone) so the wholesaler can reach the agent independently of the
+   *  seller. All three are optional — not every deal has an agent. */
+  agentName?: string;
+  agentEmail?: string;
+  agentPhone?: string;
+  /** Wholesale — count of formal offers sent for this property */
+  offersCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -419,6 +428,8 @@ export interface DashboardData {
   salesThisMonth: number;
   subscriptionsTotal: number;
   revenueModel: RevenueModel;
+  /** Wholesale — total assignment fees from properties in Sold stage */
+  soldAssignmentFees?: number;
   clientMrr?: number;
   orgCount?: number;
   /** Owner direction 2026-08-26 — the new "Lost" window: LOST (soft) clients
@@ -474,6 +485,8 @@ export interface User {
   /** Dashboard color picker (owner 2026-08-29): the account's dashboard
    *  numbers/text color (hex); unset/empty -> theme defaults. */
   dashboardColor?: string;
+  /** Vertical template key ('b2b' | 'b2c' | 'wholesale' | ...) */
+  verticalKey?: string;
   created_at?: string;
 }
 
@@ -689,3 +702,45 @@ export const fmtDate = (iso: string): string => {
     return iso;
   }
 };
+
+export type OfferStatus = "Sent" | "Under Review" | "Accepted" | "Countered" | "Declined";
+
+export interface WholesaleOffer {
+  id: number;
+  orgId: number;
+  clientId: number;
+  pdfId: string;
+  pdfUrl: string;
+  propertyAddress: string;
+  sellerName: string;
+  sellerEmail: string;
+  businessName: string;
+  offerType: "cash" | "subto" | "creative" | "all" | string;
+  selectedOffers: string[];
+  cashOfferAmount: number;
+  subtoPurchasePrice: number;
+  subtoDebt: number;
+  subtoCashToSeller: number;
+  subtoMonthlyPayment: number;
+  creativePurchasePrice: number;
+  creativeDownPayment: number;
+  creativeMonthlyPayment: number;
+  creativeInterestRate: number;
+  creativeBalloonYears: number;
+  creativeTotalPaid: number;
+  closingDays: number;
+  emailStatus: "sent" | "failed" | string;
+  status: OfferStatus | string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+  client?: {
+    id: number;
+    companyName: string;
+    address: string;
+    stage: string;
+    phone: string;
+    email: string;
+    dealValue: number;
+  };
+}

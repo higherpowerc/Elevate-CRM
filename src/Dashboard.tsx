@@ -1,9 +1,10 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api } from "./api";
-import { stageTone, money, fmtDate, type DashboardData, type Invoice, type Stage } from "./types";
+import { stageTone, money, fmtDate, type Client, type DashboardData, type Invoice, type Stage } from "./types";
 import { StageBadge, ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
 import ProvisionNotices from "./ProvisionNotices";
+import { getMatchesByProperty, getPropertyPrice, getCustomField } from "./buyBoxUtils";
 
 interface Props {
   /** Owner request 2026-08-14/15 — the Dashboard's stage cards deep-link into
@@ -19,6 +20,8 @@ interface Props {
    *  with its "Lost" filter active (the Lost listing). Owner-only; tenants
    *  never render the Lost card, so they never call this. */
   onGoToLost: () => void;
+  /** Navigate to Buy Box Matcher tab */
+  onGoToBuyBox?: () => void;
   /** The tenant's ordered pipeline stages (drives the breakdown grid + KPI). */
   stages: Stage[];
   /** Owner workspace (role=admin org) — owner direction 2026-08-14: the
@@ -27,6 +30,8 @@ interface Props {
    *  "client(s)". Tenant orgs (role=member) keep "clients" everywhere.
    *  Purely presentational; data and stages are untouched. */
   ownerOrg?: boolean;
+  /** Wholesale CRM workspace — terminology shifts to properties */
+  isWholesale?: boolean;
 }
 
 /** Local YYYY-MM-DD — the same convention the task date inputs store
@@ -80,9 +85,26 @@ function EyeOffIcon() {
   );
 }
 
-export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = false }: Props) {
+export default function Dashboard({ onGoToStage, onGoToLost, onGoToBuyBox, stages, ownerOrg = false, isWholesale = false }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [allClients, setAllClients] = useState<Client[]>([]);
+
+  useEffect(() => {
+    if (!isWholesale) return;
+    api.clients().then((res) => setAllClients(res.clients)).catch(() => {});
+  }, [isWholesale]);
+
+  const buyBoxMatches = useMemo(() => {
+    if (!isWholesale || allClients.length === 0) return [];
+    const props = allClients.filter(
+      (c) => !c.archived && !c.lost && c.clientType !== "buyer" && c.stage !== "Buyer",
+    );
+    const buyrs = allClients.filter(
+      (c) => !c.archived && !c.lost && (c.clientType === "buyer" || c.stage === "Buyer"),
+    );
+    return getMatchesByProperty(props, buyrs);
+  }, [isWholesale, allClients]);
 
   /* Owner revenue summary (owner 2026-08-20) — the OWNER's dashboard
      surfaces real invoice-based revenue (the same figures the Finance tab
@@ -209,8 +231,9 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
   /* Owner workspace labels its pipeline records "leads" (owner direction
      2026-08-14); tenant orgs keep "clients". Same page, same data — only
      the visible wording differs. */
-  const bookWord = ownerOrg ? "lead" : "client";
-  const activeKpi = ownerOrg ? "Active leads" : "Active clients";
+  const isPropView = isWholesale || !ownerOrg;
+  const bookWord = ownerOrg ? "lead" : isPropView ? "propertie" : "client";
+  const activeKpi = ownerOrg ? "Active leads" : "Properties";
   /* Owner direction 2026-08-28 — the owner's pipeline money card is renamed
      "Lead Opportunities" and now equals the ACTIVE-leads deal-value sum: the
      exact Active-bin definition from the owner's Leads view (not lost, not
@@ -219,19 +242,25 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
      accounts keep their "Projected pipeline" card + all-stage wording
      unchanged (owner direction: rename the OWNER card only). */
   const leadOppNote = "Total deal value of active leads · not revenue";
-  const pipelineNote = "Sum of deal values · active clients only — not revenue";
+  const pipelineNote = isWholesale
+    ? "Sum of projected assignment fees · active properties in pipeline"
+    : isPropView
+      ? "Sum of deal values · active properties only — not revenue"
+      : "Sum of deal values · active clients only — not revenue";
   const lastStageNote = lastStage
     ? ownerOrg
       ? `Leads in "${lastStage}" — your last pipeline stage`
-      : `Clients in "${lastStage}" — your last pipeline stage`
+      : isPropView
+        ? `Properties in "${lastStage}" — your last pipeline stage`
+        : `Clients in "${lastStage}" — your last pipeline stage`
     : "No stages configured";
   /* Owner cockpit A — the "Onboarding" KPI note (owner workspace). */
   const onboardingNote = midStage
     ? `Leads in "${midStage}" — your onboarding pipeline`
     : "No middle stage configured";
-  const stageCaption = ownerOrg ? "leads" : "clients";
-  const emptyTitle = ownerOrg ? "No leads yet" : "No clients yet";
-  const emptyCta = ownerOrg ? "Add a lead" : "Add a client";
+  const stageCaption = ownerOrg ? "leads" : isPropView ? "properties" : "clients";
+  const emptyTitle = ownerOrg ? "No leads yet" : isPropView ? "No properties yet" : "No clients yet";
+  const emptyCta = ownerOrg ? "Add a lead" : isPropView ? "Add a property" : "Add a client";
   const moneyTitle = moneyHidden ? "Show amounts" : "Hide amounts";
   const blur = (on: boolean) => (on ? " money-blur" : "");
 
@@ -244,15 +273,25 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
                 this calendar month) or "Subscriptions" (their clients'
                 recurring monthly amounts), per the org's revenue model. */
   const isSubscription = data.revenueModel === "subscription";
-  const moneyKpiLabel = isSubscription ? "Subscriptions" : "Sales this month";
-  const moneyKpiValue = isSubscription ? data.subscriptionsTotal : data.salesThisMonth;
-  const moneyKpiNote = isSubscription
-    ? data.subscriptionsTotal === 0
-      ? "No subscriptions yet — set a monthly amount per client"
-      : "Sum of your clients' monthly recurring amounts"
-    : data.salesThisMonth === 0
-      ? "No invoices this month yet"
-      : "Invoices dated this month";
+  const moneyKpiLabel = isPropView
+    ? "Sold (Assignment Fees)"
+    : isSubscription
+      ? "Subscriptions"
+      : "Sales this month";
+  const moneyKpiValue = isPropView
+    ? (data.soldAssignmentFees ?? 0)
+    : isSubscription
+      ? data.subscriptionsTotal
+      : data.salesThisMonth;
+  const moneyKpiNote = isPropView
+    ? "Total assignment fees from properties marked Sold in stages"
+    : isSubscription
+      ? data.subscriptionsTotal === 0
+        ? "No subscriptions yet — set a monthly amount per client"
+        : "Sum of your clients' monthly recurring amounts"
+      : data.salesThisMonth === 0
+        ? "No invoices this month yet"
+        : "Invoices dated this month";
 
   /* Owner direction 2026-08-15 (refined during live test) — the shared
      per-stage cards (count + View deep-link, positional/rename-safe) are now
@@ -289,7 +328,7 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
             Pipeline <em className="serif">overview</em>
           </h1>
           <p className="page-sub">
-            {data.totalClients} {bookWord}{data.totalClients === 1 ? "" : "s"} in the book
+            {data.totalClients} {isPropView ? (data.totalClients === 1 ? "property" : "properties") : `${bookWord}${data.totalClients === 1 ? "" : "s"}`} in the book
             {data.archivedClients > 0 && ` · ${data.archivedClients} archived`}
           </p>
         </div>
@@ -435,7 +474,7 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
           </div>
           <div className="card kpi">
             <span className="kpi-label kpi-label-row">
-              Projected pipeline
+              {isWholesale ? "Projected Assignment fees" : "Projected pipeline"}
               <button
                 type="button"
                 className="eye-btn"
@@ -453,14 +492,127 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
           <div className="card kpi">
             <span className="kpi-label">{activeKpi}</span>
             <span className="kpi-value">{activeClients}</span>
-            <span className="kpi-note">Non-archived, non-lost entries across all stages</span>
+            <span className="kpi-note">{isPropView ? "Non-archived properties across all stages" : "Non-archived, non-lost entries across all stages"}</span>
           </div>
           <div className="card kpi">
-            <span className="kpi-label">In final stage</span>
+            <span className="kpi-label">{isPropView ? "Sold Properties" : "In final stage"}</span>
             <span className="kpi-value">{lastStage ? data.stageCounts[lastStage] ?? 0 : 0}</span>
             <span className="kpi-note">{lastStageNote}</span>
           </div>
         </div>
+      )}
+
+      {isWholesale && (
+        <section aria-label="Buy Box Matches" style={{ marginTop: "24px", marginBottom: "24px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+            <div>
+              <h2 className="section-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <span>🎯 Buy Box Matches</span>
+                <span className="badge tone-blue" style={{ fontSize: "0.78rem" }}>
+                  {buyBoxMatches.reduce((acc, g) => acc + g.matches.length, 0)} Active Match{buyBoxMatches.reduce((acc, g) => acc + g.matches.length, 0) === 1 ? "" : "es"}
+                </span>
+              </h2>
+              <p style={{ margin: "2px 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
+                Deals in your pipeline matching your Cash & Creative Financing buyers' criteria
+              </p>
+            </div>
+            {onGoToBuyBox && (
+              <button type="button" className="btn btn-ghost" onClick={onGoToBuyBox} style={{ fontSize: "0.82rem" }}>
+                Open Buy Box Matcher →
+              </button>
+            )}
+          </div>
+
+          {buyBoxMatches.length === 0 ? (
+            <div className="card" style={{ padding: "20px", textAlign: "center" }}>
+              <p style={{ margin: "0 0 6px", fontWeight: 600 }}>No deals currently match your buyers' criteria</p>
+              <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--muted)" }}>
+                Add more end buyers with cash/creative financing criteria, or add properties to your pipeline.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "16px" }}>
+              {buyBoxMatches.slice(0, 4).map((group) => {
+                const prop = group.property;
+                const topMatch = group.matches[0];
+                const buyer = topMatch.buyer;
+                const rawStrat = getCustomField(buyer, "Buyer Type") || buyer.services?.join(" · ") || "Cash Buyer";
+                const stratCount = (buyer.services && buyer.services.length > 0)
+                  ? buyer.services.length
+                  : (rawStrat.split(/[,/]+/).filter(Boolean).length || 1);
+                return (
+                  <div
+                    key={prop.id}
+                    className="card"
+                    style={{
+                      padding: "16px",
+                      border: "1px solid rgba(88, 166, 255, 0.3)",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+                        <div>
+                          <span className="badge tone-blue" style={{ fontSize: "0.72rem", marginBottom: "4px" }}>
+                            {group.matches.length} Compatible Buyer{group.matches.length === 1 ? "" : "s"}
+                          </span>
+                          <h3 className={`cell-strong ${blurPii(pii)}`} style={{ margin: "2px 0", fontSize: "1rem", fontWeight: 700 }}>
+                            {prop.address || prop.companyName}
+                          </h3>
+                          <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                            {[prop.city, prop.state].filter(Boolean).join(", ") || "Location unlisted"}
+                          </div>
+                        </div>
+                        <span className="badge tone-lime" style={{ fontWeight: 800, fontSize: "0.8rem" }}>
+                          {topMatch.matchScore}% Match
+                        </span>
+                      </div>
+
+                      <div style={{ padding: "10px", backgroundColor: "rgba(255,255,255,0.03)", borderRadius: "6px", margin: "10px 0" }}>
+                        <div style={{ fontSize: "0.78rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 600, marginBottom: "4px" }}>
+                          Top Matched Buyer:
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span className={`cell-strong ${blurPii(pii)}`} style={{ fontWeight: 600 }}>
+                            {buyer.companyName}
+                          </span>
+                          <span
+                            className="badge tone-blue"
+                            style={{ fontWeight: 700, fontSize: "0.75rem", minWidth: "24px", padding: "1px 6px", textAlign: "center" }}
+                            title={`Buy Strategies (${stratCount}): ${rawStrat}`}
+                          >
+                            {stratCount}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--accent, #58a6ff)", marginTop: "4px" }}>
+                          ✓ {topMatch.reasons[0]?.detail || "Budget & criteria fit"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border, #30363d)", paddingTop: "10px", marginTop: "6px" }}>
+                      <span style={{ fontSize: "0.85rem", color: "var(--lime, #3fb950)", fontWeight: 700 }}>
+                        {money(getPropertyPrice(prop))}
+                      </span>
+                      {onGoToBuyBox && (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={onGoToBuyBox}
+                          style={{ fontSize: "0.82rem", color: "var(--accent, #58a6ff)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                        >
+                          View Dispo Matches →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       )}
 
       {/* Owner direction 2026-08-15 (refined during live test) — the OWNER
@@ -507,57 +659,6 @@ export default function Dashboard({ onGoToStage, onGoToLost, stages, ownerOrg = 
         </section>
       )}
 
-      {/* Task overview (2026-08-14 owner request) — org-scoped task stats
-          plus the next few open tasks with a due date. Compact so the page
-          still fits the no-scroll layout; wording is task-centric (the same
-          for owner and tenant orgs). */}
-      <h2 className="section-title">Task overview</h2>
-      <div className="card task-overview">
-        <div className="task-stats">
-          <div className="task-stat">
-            <span className="task-stat-num">{data.tasks.open}</span>
-            <span className="task-stat-label">Open</span>
-          </div>
-          <div className="task-stat">
-            <span className={`task-stat-num${data.tasks.overdue > 0 ? " danger" : ""}`}>{data.tasks.overdue}</span>
-            <span className="task-stat-label">Overdue</span>
-          </div>
-          <div className="task-stat">
-            <span className="task-stat-num">{data.tasks.dueSoon}</span>
-            <span className="task-stat-label">Due soon</span>
-          </div>
-          <div className="task-stat">
-            <span className="task-stat-num muted">{data.tasks.done}</span>
-            <span className="task-stat-label">Done</span>
-          </div>
-        </div>
-        <div className="task-overview-rule" />
-        <div className="task-upcoming">
-          <span className="task-upcoming-label">Upcoming</span>
-          {data.tasks.upcoming.length > 0 ? (
-            <ul className="task-upcoming-list">
-              {data.tasks.upcoming.map((t) => {
-                const due = dueInfo(t.dueDate);
-                return (
-                  <li className="task-upcoming-item" key={t.id}>
-                    <span className={`task-upcoming-title${blurPii(pii)}`} title={t.title}>
-                      {t.title}
-                    </span>
-                    {t.clientName && <span className={`chip${blurPii(pii)}`}>{t.clientName}</span>}
-                    <span className={`task-upcoming-due${due.tone ? ` ${due.tone}` : ""}`}>{due.label}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <span className="task-upcoming-empty">
-              {data.tasks.open === 0 && data.tasks.done === 0
-                ? "No tasks yet — add one from the Tasks tab."
-                : "Nothing due — you're all set."}
-            </span>
-          )}
-        </div>
-      </div>
 
       <h2 className="section-title">Recently updated</h2>
       {hasClients ? (

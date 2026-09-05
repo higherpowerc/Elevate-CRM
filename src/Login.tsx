@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api, ApiError } from "./api";
 import type { User } from "./types";
+import ThemeToggle from "./ThemeToggle";
 
 /**
  * Sign-in card with a "Forgot password?" link (3k) that swaps to a small
@@ -65,6 +66,9 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
 
   return (
     <div className="login">
+      <div style={{ position: "absolute", top: "20px", right: "20px", zIndex: 10 }}>
+        <ThemeToggle />
+      </div>
       <div className="login-glow" aria-hidden="true" />
       <div className="login-card">
         <div className="login-brand">

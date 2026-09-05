@@ -9,8 +9,10 @@ import type { IntakeOrgSettings } from "./intakeRules";
 import { ServiceChips } from "./bits";
 import { usePii, blurPii } from "./pii";
 import ClientModal from "./ClientModal";
+import BuyerModal from "./BuyerModal";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import Accounts from "./Accounts";
+import CsvImportModal from "./CsvImportModal";
 
 interface Props {
   /** The tenant's ordered pipeline stages — needed by the shared client
@@ -36,6 +38,8 @@ interface Props {
    *  ownerOrg is true. */
   ownerOrgId?: number;
   onViewAccount?: (orgId: number) => Promise<void>;
+  /** Housing wholesale vertical customization — displays as Buyers / Cash Buyers list. */
+  isWholesale?: boolean;
 }
 
 /** The sold-customer directory (owner request 2026-08-14): every client in
@@ -49,7 +53,7 @@ interface Props {
  *  filtering happens client-side. For the OWNER this tab ALSO hosts the
  *  Accounts panel (create / view / reset password / delete client accounts —
  *  the account management moved here from Administration on 2026-08-18). */
-export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = true, ownerOrgId, onViewAccount }: Props) {
+export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = true, ownerOrgId, onViewAccount, isWholesale = false }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur client
      names/addresses/contact details in the directory rows. */
   const pii = usePii();
@@ -78,6 +82,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   const [dash, setDash] = useState<DashboardData | null>(null);
   const [query, setQuery] = useState("");
   const [modal, setModal] = useState<{ mode: "create" } | { mode: "edit"; client: Client } | null>(null);
+  const [csvModal, setCsvModal] = useState(false);
   const [deleting, setDeleting] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -166,9 +171,11 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
   const visible = useMemo(() => {
     if (!clients) return [];
     const q = query.trim().toLowerCase();
-    const sold = clients.filter((c) => c.stage === terminalStage);
+    const baseList = isWholesale
+      ? clients.filter((c) => c.clientType === "buyer" || c.stage === "Buyer")
+      : clients.filter((c) => c.stage === terminalStage);
     const rows = q
-      ? sold.filter((c) =>
+      ? baseList.filter((c) =>
           [
             c.companyName,
             c.contactName,
@@ -181,14 +188,16 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
             c.zip,
             c.website,
             c.leadSource,
+            c.notes,
+            ...(c.customFields?.map((f) => f.value) ?? []),
           ]
             .join(" ")
             .toLowerCase()
             .includes(q),
         )
-      : sold;
+      : baseList;
     return [...rows].sort((a, b) => a.companyName.localeCompare(b.companyName, undefined, { sensitivity: "base" }));
-  }, [clients, query, terminalStage]);
+  }, [clients, query, terminalStage, isWholesale]);
 
   /* Sold-but-unbuilt (owner direction 2026-08-25): every CLIENT who reached
      the terminal ("sold") stage yet has no provisioned workspace
@@ -357,21 +366,21 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
     );
   }
 
-  /* The sold set (terminal-stage clients) — drives the header counts, the
-     empty state and the (tenant-only, owner direction 2026-08-15) "+ New
-     client" default stage. */
-  const sold = clients.filter((c) => c.stage === terminalStage);
-  const archived = sold.filter((c) => c.archived).length;
-  const bookValue = sold.reduce((sum, c) => sum + (c.dealValue || 0), 0);
+  /* The buyers/clients set — drives header counts and empty state */
+  const targetList = isWholesale
+    ? clients.filter((c) => c.clientType === "buyer" || c.stage === "Buyer")
+    : clients.filter((c) => c.stage === terminalStage);
+  const archived = targetList.filter((c) => c.archived).length;
+  const bookValue = targetList.reduce((sum, c) => sum + (c.dealValue || 0), 0);
 
   return (
     <div className="page page-stack">
       <div className="page-head">
         <div>
-          <h1>Clients</h1>
+          <h1>{isWholesale ? "Investors" : "Clients"}</h1>
           <p className="page-sub">
-            {sold.length} {sold.length === 1 ? "client" : "clients"} · {archived} archived · book value{" "}
-            <strong>{money(bookValue)}</strong>
+            {targetList.length} {isWholesale ? (targetList.length === 1 ? "investor" : "investors") : (targetList.length === 1 ? "client" : "clients")}
+            {isWholesale ? " on your investor list" : ` · ${archived} archived · book value ${money(bookValue)}`}
           </p>
         </div>
         {/* Owner direction 2026-08-15 — client/lead creation entry points
@@ -381,13 +390,18 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
             "+ New client" entry point. Client accounts keep this button —
             their directory is their own sold customers and the CTA is part
             of their workspace (untouched). */}
-        {!ownerOrg && canEdit && (
-          <div className="page-actions">
-            {/* A new record added from the sold-customer directory is created
-                pre-set to the terminal stage — the natural meaning of adding to
-                a sold/customers list. */}
+        {(!ownerOrg || isWholesale) && canEdit && (
+          <div className="page-actions" style={{ display: "flex", gap: "8px" }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => setCsvModal(true)}
+              title={isWholesale ? "Upload CSV to import investors" : "Upload CSV to import clients"}
+            >
+              📥 Upload CSV
+            </button>
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-              + New client
+              {isWholesale ? "+ New investor" : "+ New client"}
             </button>
           </div>
         )}
@@ -429,26 +443,135 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
         <input
           className="search"
           type="search"
-          placeholder="Search company, contact, phone, address…"
+          placeholder={isWholesale ? "Search investors by name, phone, email, criteria…" : "Search company, contact, phone, address…"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search clients"
+          aria-label={isWholesale ? "Search investors" : "Search clients"}
         />
       </div>
 
       {visible.length === 0 ? (
         <div className="card empty">
-          <p className="empty-title">{sold.length === 0 ? "No sold clients yet" : "Nothing matches"}</p>
+          <p className="empty-title">{targetList.length === 0 ? (isWholesale ? "No investors yet" : "No sold clients yet") : "Nothing matches"}</p>
           <p className="empty-sub">
-            {sold.length === 0
-              ? "Move a client into your final pipeline stage and it shows up here — this directory holds your sold customers."
-              : "Try a different search — sold clients are listed here."}
+            {targetList.length === 0
+              ? (isWholesale ? "Cash buyers and investors on your dispo list show up here." : "Move a client into your final pipeline stage and it shows up here — this directory holds your sold customers.")
+              : (isWholesale ? "Try a different search — investors are listed here." : "Try a different search — sold clients are listed here.")}
           </p>
-          {sold.length === 0 && !ownerOrg && canEdit && (
+          {targetList.length === 0 && !ownerOrg && canEdit && (
             <button className="btn btn-primary" onClick={() => setModal({ mode: "create" })}>
-              + New client
+              {isWholesale ? "+ New investor" : "+ New client"}
             </button>
           )}
+        </div>
+      ) : isWholesale ? (
+        <div className="card table-wrap">
+          <table className="table clients-table">
+            <colgroup>
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "13%" }} />
+              <col style={{ width: "14%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Investor / Entity</th>
+                <th>Contact Info</th>
+                <th style={{ textAlign: "center" }}>Strategy & POF</th>
+                <th>Target Markets & Buy Box</th>
+                <th className="num">Max Budget</th>
+                <th className="actions-th">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c) => {
+                const getField = (name: string) =>
+                  c.customFields?.find((f) => f.name.toLowerCase() === name.toLowerCase())?.value || "";
+                const rawBuyerType = getField("Buyer Type");
+                const strategyList: string[] = (() => {
+                  const list: string[] = [];
+                  if (rawBuyerType) list.push(...rawBuyerType.split(/[,/]+/).map((s) => s.trim()).filter(Boolean));
+                  if (c.services && Array.isArray(c.services)) list.push(...c.services.filter(Boolean));
+                  return Array.from(new Set(list));
+                })();
+                const pof = getField("Proof of Funds") || "Verified Cash";
+                const targetMarkets = getField("Target Markets") || c.address || "";
+                const buyBox = getField("Buy Box") || c.notes || "";
+                return (
+                  <tr key={c.id} className={c.archived ? "row-archived" : ""}>
+                    <td className="cell-strong" data-label="Investor / Entity">
+                      <div className="cell-company">
+                        <span className={`cell-name${blurPii(pii)}`} title={c.companyName}>
+                          {c.companyName}
+                        </span>
+                      </div>
+                      {c.contactName && (
+                        <div className="cell-sub">
+                          <span className={blurPii(pii)}>{c.contactName}</span>
+                        </div>
+                      )}
+                    </td>
+                    <td data-label="Contact Info">
+                      <div className="cell-contact">
+                        {c.phone && <div className={`cell-sub${blurPii(pii)}`} title={c.phone}>{c.phone}</div>}
+                        {c.email && <div className={`cell-sub${blurPii(pii)}`} title={c.email}>{c.email}</div>}
+                        {!c.email && !c.phone && <span className="cell-muted">—</span>}
+                      </div>
+                    </td>
+                    <td data-label="Strategy & POF" style={{ textAlign: "center" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", alignItems: "center", justifyContent: "center" }}>
+                        <span
+                          className="badge tone-blue"
+                          style={{
+                            fontWeight: 700,
+                            fontSize: "0.85rem",
+                            minWidth: "26px",
+                            padding: "2px 8px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                          title={`Buy Strategies (${strategyList.length}):\n• ${strategyList.join("\n• ")}`}
+                        >
+                          {strategyList.length}
+                        </span>
+                        <span className="badge tone-green" style={{ fontSize: "0.7rem", padding: "1px 6px" }}>✓ {pof}</span>
+                      </div>
+                    </td>
+                    <td data-label="Target Markets & Buy Box">
+                      {targetMarkets && <div className="cell-strong" style={{ fontSize: "0.82rem" }}>📍 {targetMarkets}</div>}
+                      {buyBox && <div className="cell-sub" style={{ maxWidth: "240px", whiteSpace: "normal" }}>{buyBox}</div>}
+                      {!targetMarkets && !buyBox && <span className="cell-muted">—</span>}
+                    </td>
+                    <td className="num cell-strong" data-label="Max Budget">
+                      {money(c.dealValue)}
+                    </td>
+                    <td data-label="Actions">
+                      <div className="row-actions">
+                        {canEdit && (
+                          <button className="icon-btn" title="Edit" aria-label={`Edit ${c.companyName}`} onClick={() => setModal({ mode: "edit", client: c })}>
+                            Edit
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button
+                            className="icon-btn danger"
+                            title="Delete"
+                            aria-label={`Delete ${c.companyName}`}
+                            onClick={() => setDeleting(c)}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       ) : (
         <div className="card table-wrap">
@@ -557,7 +680,14 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
         <Accounts ownerOrgId={ownerOrgId} onViewAccount={onViewAccount} />
       )}
 
-      {modal && (
+      {modal && isWholesale ? (
+        <BuyerModal
+          buyer={modal.mode === "edit" ? modal.client : undefined}
+          busy={busy}
+          onClose={() => setModal(null)}
+          onSave={handleSave}
+        />
+      ) : modal ? (
         <ClientModal
           client={modal.mode === "edit" ? modal.client : undefined}
           stages={orgStages}
@@ -569,7 +699,7 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
           onClose={() => setModal(null)}
           onSave={handleSave}
         />
-      )}
+      ) : null}
       {deleting && (
         <ConfirmDeleteModal
           title="Delete client?"
@@ -582,6 +712,17 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={handleDelete}
+        />
+      )}
+      {csvModal && (
+        <CsvImportModal
+          initialTarget={isWholesale ? "investors" : "properties"}
+          stages={orgStages}
+          onClose={() => setCsvModal(false)}
+          onSuccess={() => {
+            setCsvModal(false);
+            load();
+          }}
         />
       )}
     </div>
