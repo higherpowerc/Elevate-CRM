@@ -153,7 +153,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                           4b/2.5ba • 2,150 sqft • AVM: $385,000
                         </div>
                       </div>
-                      <span className="badge" style={{ background: "rgba(214,255,63,0.15)", color: "var(--primary)" }}>
+                      <span className="rw-pill-badge rw-pill-primary">
                         $265k Asking
                       </span>
                     </div>
@@ -164,7 +164,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                           3b/2ba • 1,650 sqft • AVM: $345,000
                         </div>
                       </div>
-                      <span className="badge" style={{ background: "rgba(214,255,63,0.15)", color: "var(--primary)" }}>
+                      <span className="rw-pill-badge rw-pill-primary">
                         $230k Asking
                       </span>
                     </div>
@@ -175,7 +175,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                           3b/2ba • 1,820 sqft • AVM: $410,000
                         </div>
                       </div>
-                      <span className="badge" style={{ background: "rgba(214,255,63,0.15)", color: "var(--primary)" }}>
+                      <span className="rw-pill-badge rw-pill-primary">
                         $290k Asking
                       </span>
                     </div>
@@ -186,7 +186,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                       <span>Under Contract (Title & Escrow)</span>
                       <span style={{ color: "#10b981" }}>$32,000 Projected</span>
                     </div>
-                    <div className="rw-mockup-deal" style={{ borderLeft: "3px solid #10b981" }}>
+                    <div className="rw-mockup-deal rw-border-success">
                       <div>
                         <strong>4910 E Desert View Dr</strong>
                         <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
@@ -198,7 +198,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                         <div style={{ fontSize: "10px", color: "#f59e0b" }}>Closes in 6 days</div>
                       </div>
                     </div>
-                    <div className="rw-mockup-deal" style={{ borderLeft: "3px solid #10b981" }}>
+                    <div className="rw-mockup-deal rw-border-success">
                       <div>
                         <strong>1804 W Campbell Ave</strong>
                         <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
@@ -224,25 +224,25 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                     <div style={{ fontSize: "12px", color: "var(--text-dim)", marginBottom: "12px" }}>
                       Revzenta scanned 48 registered cash buyers and scored them against market ZIP, price ceiling & buy box criteria.
                     </div>
-                    <div className="rw-mockup-deal" style={{ borderLeft: "3px solid var(--primary)" }}>
+                    <div className="rw-mockup-deal rw-border-primary">
                       <div>
                         <strong>Apex Real Estate Capital</strong>
                         <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
                           Criteria: Fix & Flip, Phoenix Metro up to $350k
                         </div>
                       </div>
-                      <span className="badge" style={{ background: "rgba(214,255,63,0.2)", color: "var(--primary)", fontWeight: 700 }}>
+                      <span className="rw-pill-badge rw-pill-primary">
                         98% Match
                       </span>
                     </div>
-                    <div className="rw-mockup-deal" style={{ borderLeft: "3px solid #38bdf8" }}>
+                    <div className="rw-mockup-deal rw-border-info">
                       <div>
                         <strong>Desert Horizon Buy & Hold Fund</strong>
                         <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
                           Criteria: Cash Flow Multi-Family / Single Family &gt; 8% Cap
                         </div>
                       </div>
-                      <span className="badge" style={{ background: "rgba(56,189,248,0.2)", color: "#38bdf8", fontWeight: 700 }}>
+                      <span className="rw-pill-badge rw-pill-info">
                         91% Match
                       </span>
                     </div>
@@ -257,10 +257,10 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                       Send an individualized deal packet with comps, photos, and assignment terms directly to the matched buyers via email or SMS.
                     </p>
                     <div style={{ display: "flex", gap: "8px" }}>
-                      <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }}>
+                      <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={onLaunchApp}>
                         📤 Send Deal Packet
                       </button>
-                      <button type="button" className="btn btn-ghost btn-sm">
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={onLaunchApp}>
                         Preview Terms
                       </button>
                     </div>
@@ -275,7 +275,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                       <span>Inspection & EMD Countdown Clocks</span>
                       <span style={{ color: "#ef4444" }}>⏱️ Active Clocks</span>
                     </div>
-                    <div className="rw-mockup-deal" style={{ borderLeft: "3px solid #f59e0b" }}>
+                    <div className="rw-mockup-deal rw-border-warning">
                       <div>
                         <strong>742 Evergreen Terrace (PSA)</strong>
                         <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
@@ -286,7 +286,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                         1d 04h Left
                       </span>
                     </div>
-                    <div className="rw-mockup-deal" style={{ borderLeft: "3px solid #10b981" }}>
+                    <div className="rw-mockup-deal rw-border-success">
                       <div>
                         <strong>1044 N 24th St (Assignment)</strong>
                         <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>
@@ -307,7 +307,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                     <p style={{ fontSize: "13px", color: "var(--text-dim)", margin: "0 0 14px" }}>
                       Escrow officers access contracts, earnest money receipts, and payoff demands in one secure shared link without endless email threads.
                     </p>
-                    <div style={{ padding: "8px 12px", background: "var(--surface)", borderRadius: "6px", fontSize: "12px" }}>
+                    <div style={{ padding: "8px 12px", background: "var(--surface)", borderRadius: "6px", fontSize: "12px", border: "1px solid var(--border)" }}>
                       <span style={{ color: "var(--text-dim)" }}>Title Milestone: </span>
                       <strong style={{ color: "#10b981" }}>Clear to Close (CTC) ✓</strong>
                     </div>
@@ -383,7 +383,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
       </section>
 
       {/* ── Interactive ROI & Revenue Calculator ── */}
-      <section id="calculator" className="rw-section" style={{ background: "var(--surface-sunken, rgba(255,255,255,0.01))" }}>
+      <section id="calculator" className="rw-section rw-section-alt">
         <div className="rw-container">
           <div className="rw-section-head">
             <span className="rw-section-tag">Interactive Calculator</span>
@@ -483,11 +483,10 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
               No long-term contracts. Cancel anytime. Start free and upgrade when your deal pipeline expands.
             </p>
 
-            <div style={{ display: "inline-flex", background: "var(--surface-sunken)", padding: "4px", borderRadius: "8px", border: "1px solid var(--border)", marginTop: "20px" }}>
+            <div className="rw-billing-toggle">
               <button
                 type="button"
                 className={billingCycle === "monthly" ? "seg-btn active" : "seg-btn"}
-                style={{ fontSize: "13px", padding: "6px 16px" }}
                 onClick={() => setBillingCycle("monthly")}
               >
                 Monthly
@@ -495,7 +494,6 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
               <button
                 type="button"
                 className={billingCycle === "annual" ? "seg-btn active" : "seg-btn"}
-                style={{ fontSize: "13px", padding: "6px 16px" }}
                 onClick={() => setBillingCycle("annual")}
               >
                 Annual (Save 20%)
@@ -518,7 +516,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
                 <li><span>✓</span> PropStream & BatchLeads webhook URL</li>
                 <li><span>✓</span> Cash buyers directory & criteria tagging</li>
                 <li><span>✓</span> Daily task management & reminders</li>
-                <li><span>✓</span> Dark / Light mode UI</li>
+                <li><span>✓</span> Dark / Light mode adaptive UI</li>
               </ul>
               <button type="button" className="btn btn-outline" style={{ width: "100%" }} onClick={onLaunchApp}>
                 Get Started
@@ -574,7 +572,7 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
       </section>
 
       {/* ── Frequently Asked Questions ── */}
-      <section id="faq" className="rw-section" style={{ background: "var(--surface-sunken, rgba(255,255,255,0.01))" }}>
+      <section id="faq" className="rw-section rw-section-alt">
         <div className="rw-container">
           <div className="rw-section-head">
             <span className="rw-section-tag">Got Questions?</span>
@@ -628,16 +626,9 @@ export default function Website({ onSignIn, onLaunchApp }: WebsiteProps) {
       {/* ── Final Call to Action ── */}
       <section className="rw-section" style={{ textAlign: "center", position: "relative" }}>
         <div className="rw-container">
-          <div style={{
-            background: "linear-gradient(135deg, rgba(214,255,63,0.12) 0%, rgba(163,230,53,0.05) 100%)",
-            border: "1px solid var(--border)",
-            borderRadius: "20px",
-            padding: "60px 30px",
-          }}>
-            <h2 style={{ fontSize: "clamp(28px, 4vw, 44px)", fontWeight: 800, margin: "0 0 16px" }}>
-              Ready to Accelerate Your Wholesale Acquisitions?
-            </h2>
-            <p style={{ fontSize: "17px", color: "var(--text-dim)", maxWidth: "600px", margin: "0 auto 32px" }}>
+          <div className="rw-cta-card">
+            <h2>Ready to Accelerate Your Wholesale Acquisitions?</h2>
+            <p>
               Join forward-thinking real estate wholesalers closing deals with speed, precision, and modern software.
             </p>
             <div style={{ display: "flex", gap: "16px", justifyContent: "center", flexWrap: "wrap" }}>
