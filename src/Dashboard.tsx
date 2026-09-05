@@ -273,7 +273,7 @@ export default function Dashboard({
      unchanged (owner direction: rename the OWNER card only). */
   const leadOppNote = "Total deal value of active leads · not revenue";
   const pipelineNote = isWholesale
-    ? "Sum of projected assignment fees · active properties in pipeline"
+    ? "All assignment fees that have not been sold · active pipeline"
     : isPropView
       ? "Sum of deal values · active properties only — not revenue"
       : "Sum of deal values · active clients only — not revenue";
@@ -516,7 +516,9 @@ export default function Dashboard({
                 {moneyHidden ? <EyeOffIcon /> : <EyeIcon />}
               </button>
             </span>
-            <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(data.projectedPipeline)}</span>
+            <span className={`kpi-value lime${blur(moneyHidden)}`}>
+              {money(isWholesale && data.projectedAssignmentFees !== undefined ? data.projectedAssignmentFees : data.projectedPipeline)}
+            </span>
             <span className="kpi-note">{pipelineNote}</span>
           </div>
           <div className="card kpi">

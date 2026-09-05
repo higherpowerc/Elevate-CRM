@@ -604,6 +604,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ apiKey }),
     }),
+  testRentcastKey: (apiKey?: string) =>
+    request<{ ok: boolean; message?: string; error?: string }>("/api/settings/rentcast-test", {
+      method: "POST",
+      body: JSON.stringify({ apiKey }),
+    }),
   lookupProperty: (address: string) =>
     request<{ ok: true; property: PropertyEnrichmentResult }>(`/api/properties/lookup?address=${encodeURIComponent(address)}`),
 };

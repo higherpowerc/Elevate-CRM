@@ -136,6 +136,8 @@ export default function Settings({
   const [rentcastKeyDraft, setRentcastKeyDraft] = useState("");
   const [savingRentcast, setSavingRentcast] = useState(false);
   const [rentcastMsg, setRentcastMsg] = useState<string | null>(null);
+  const [testingRentcast, setTestingRentcast] = useState(false);
+  const [rentcastTestResult, setRentcastTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [testWebhookMsg, setTestWebhookMsg] = useState<string | null>(null);
 
@@ -1827,14 +1829,30 @@ export default function Settings({
 
             {/* 2. RentCast API Key */}
             <div className="field" style={{ borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-              <span className="field-label" style={{ fontWeight: 600 }}>RentCast API Key (Optional)</span>
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                <span className="field-label" style={{ fontWeight: 600, margin: 0 }}>
+                  RentCast API Key (MLS Specs & Tax Comps)
+                </span>
+                {rentcastKeyDraft ? (
+                  <span className="chip" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981", border: "1px solid rgba(16, 185, 129, 0.3)", fontSize: "11px", padding: "2px 8px" }}>
+                    ● Key Stored
+                  </span>
+                ) : (
+                  <span className="chip" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", border: "1px solid rgba(245, 158, 11, 0.3)", fontSize: "11px", padding: "2px 8px" }}>
+                    ○ Unconfigured
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
                 <input
                   type="password"
                   value={rentcastKeyDraft}
-                  onChange={(e) => setRentcastKeyDraft(e.target.value)}
+                  onChange={(e) => {
+                    setRentcastKeyDraft(e.target.value);
+                    setRentcastTestResult(null);
+                  }}
                   placeholder="Paste RentCast API key (e.g. 5a1b2c3d...)"
-                  style={{ fontFamily: "monospace" }}
+                  style={{ fontFamily: "monospace", flex: "1 1 240px" }}
                 />
                 <button
                   type="button"
@@ -1858,9 +1876,47 @@ export default function Settings({
                 >
                   {savingRentcast ? "Saving..." : rentcastMsg || "Save Key"}
                 </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    setTestingRentcast(true);
+                    setRentcastTestResult(null);
+                    try {
+                      const res = await api.testRentcastKey(rentcastKeyDraft);
+                      if (res.ok) {
+                        setRentcastTestResult({ ok: true, msg: res.message || "✓ RentCast API connected successfully! Live MLS & tax records verified." });
+                      } else {
+                        setRentcastTestResult({ ok: false, msg: res.error || "Connection failed. Please check your key." });
+                      }
+                    } catch (e) {
+                      setRentcastTestResult({ ok: false, msg: e instanceof Error ? e.message : "Test failed" });
+                    } finally {
+                      setTestingRentcast(false);
+                    }
+                  }}
+                  disabled={testingRentcast || !rentcastKeyDraft.trim()}
+                >
+                  {testingRentcast ? "Testing..." : "⚡ Test Key"}
+                </button>
               </div>
-              <span className="field-hint" style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "4px" }}>
-                Get a free API key at <a href="https://rentcast.io/api" target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>rentcast.io</a> for live MLS records, tax appraisal data & comps. Revzenta uses built-in smart valuation heuristics when unset.
+              {rentcastTestResult && (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    padding: "8px 12px",
+                    borderRadius: "6px",
+                    fontSize: "12px",
+                    background: rentcastTestResult.ok ? "rgba(16, 185, 129, 0.12)" : "rgba(239, 68, 68, 0.12)",
+                    color: rentcastTestResult.ok ? "#10b981" : "#ef4444",
+                    border: `1px solid ${rentcastTestResult.ok ? "rgba(16, 185, 129, 0.3)" : "rgba(239, 68, 68, 0.3)"}`,
+                  }}
+                >
+                  {rentcastTestResult.msg}
+                </div>
+              )}
+              <span className="field-hint" style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "6px", display: "block" }}>
+                Get a free API key at <a href="https://rentcast.io/api" target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>rentcast.io</a> (includes 50 free property & comp lookups per month). Connects your CRM directly to live MLS records, county tax appraisals, and real estate comparables.
               </span>
             </div>
 

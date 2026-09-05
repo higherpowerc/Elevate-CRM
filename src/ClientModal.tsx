@@ -239,6 +239,46 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [enrichSuccess, setEnrichSuccess] = useState<string | null>(null);
   const [enrichedData, setEnrichedData] = useState<PropertyEnrichmentResult | null>(null);
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  const [savingApiKey, setSavingApiKey] = useState(false);
+  const [apiKeyMsg, setApiKeyMsg] = useState<string | null>(null);
+  const [assignmentFee, setAssignmentFee] = useState<number>(() => {
+    if (client?.customFields) {
+      const f = client.customFields.find((c) => c.name.toLowerCase().includes("assignment fee"));
+      if (f) {
+        const num = Number(String(f.value).replace(/[^0-9.]/g, ""));
+        if (!isNaN(num) && num > 0) return num;
+      }
+    }
+    if (client?.dealValue && client.dealValue > 0 && client.dealValue <= 75000) return client.dealValue;
+    return 10000;
+  });
+
+  const handleSaveApiKey = async () => {
+    if (!apiKeyDraft.trim()) return;
+    setSavingApiKey(true);
+    setApiKeyMsg(null);
+    try {
+      const res = await api.saveRentcastKey(apiKeyDraft.trim());
+      if (res.ok) {
+        setApiKeyMsg("Key saved! Testing connection...");
+        const testRes = await api.testRentcastKey(apiKeyDraft.trim());
+        if (testRes.ok) {
+          setApiKeyMsg("✓ RentCast connected successfully!");
+          setShowApiKeyInput(false);
+          // Automatically re-run enrich now that key is active
+          setTimeout(() => handleAutoEnrich(), 600);
+        } else {
+          setApiKeyMsg("Key saved, but test failed: " + (testRes.error || "Check key"));
+        }
+      }
+    } catch (e) {
+      setApiKeyMsg(e instanceof Error ? e.message : "Failed to save key");
+    } finally {
+      setSavingApiKey(false);
+    }
+  };
 
   const handleAutoEnrich = async () => {
     const fullQuery = `${form.address}, ${form.city} ${form.state} ${form.zip}`.replace(/^[\s,]+|[\s,]+$/g, "");
@@ -254,6 +294,31 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
       if (res.property) {
         const p = res.property;
         setEnrichedData(p);
+
+        if (p.source === "unconfigured") {
+          setEnrichError(
+            p.message || "RentCast API key is not configured. Add your free API key to pull verified MLS specs & comps."
+          );
+          setShowApiKeyInput(true);
+          // Only format address if city/state/zip were blank
+          setForm((prev) => ({
+            ...prev,
+            address: prev.address || p.addressLine1,
+            city: prev.city || p.city,
+            state: prev.state || p.state,
+            zip: prev.zip || p.zipCode,
+          }));
+          return;
+        }
+
+        if (p.source === "not_found") {
+          setEnrichError(
+            p.message || "No property records found in RentCast for this address. Verify address formatting or enter specs manually."
+          );
+          return;
+        }
+
+        // Live RentCast data verified! Populate ONLY non-null specs
         setForm((prev) => {
           const nextCustom = [...prev.customFields];
           const setCustom = (name: string, val: string | number) => {
@@ -261,12 +326,12 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
             if (idx >= 0) nextCustom[idx] = { name, value: String(val) };
             else nextCustom.push({ name, value: String(val) });
           };
-          if (p.bedrooms) setCustom("bedrooms", p.bedrooms);
-          if (p.bathrooms) setCustom("bathrooms", p.bathrooms);
-          if (p.squareFootage) setCustom("squareFootage", p.squareFootage);
-          if (p.yearBuilt) setCustom("yearBuilt", p.yearBuilt);
-          if (p.estimatedValue) setCustom("estimatedValue", p.estimatedValue);
-          if (p.estimatedRent) setCustom("rentEstimate", p.estimatedRent);
+          if (p.bedrooms != null) setCustom("bedrooms", p.bedrooms);
+          if (p.bathrooms != null) setCustom("bathrooms", p.bathrooms);
+          if (p.squareFootage != null) setCustom("squareFootage", p.squareFootage);
+          if (p.yearBuilt != null) setCustom("yearBuilt", p.yearBuilt);
+          if (p.estimatedValue != null) setCustom("estimatedValue", p.estimatedValue);
+          if (p.estimatedRent != null) setCustom("rentEstimate", p.estimatedRent);
 
           return {
             ...prev,
@@ -279,7 +344,16 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
             customFields: nextCustom,
           };
         });
-        setEnrichSuccess(`Auto-enriched specs & AVM ($${p.estimatedValue.toLocaleString()}) via ${p.source === "rentcast" ? "RentCast API" : "Property Valuation Engine"}!`);
+
+        const specsSummary = [
+          p.bedrooms != null ? `${p.bedrooms} beds` : null,
+          p.bathrooms != null ? `${p.bathrooms} baths` : null,
+          p.squareFootage != null ? `${p.squareFootage.toLocaleString()} sqft` : null,
+          p.yearBuilt != null ? `Built ${p.yearBuilt}` : null,
+          p.estimatedValue != null ? `AVM: $${p.estimatedValue.toLocaleString()}` : null,
+        ].filter(Boolean).join(" • ");
+
+        setEnrichSuccess(`✓ Live data verified via RentCast API (${specsSummary || "Specs Updated"})`);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to auto-enrich property.";
@@ -853,7 +927,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
       setError("Property address is required.");
       return;
     }
-    const sellerName = form.companyName.trim() || form.contactName.trim() || "Property Owner";
+    const sellerName = form.companyName.trim() || form.contactName.trim() || "Unknown Owner";
     let ct = form.clientType;
     if (!ct || ct === "residential") {
       ct = "single_family";
@@ -875,10 +949,19 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
         agentPhone: form.agentPhone.trim(),
         services: [...form.services],
         stage: form.stage || (stages[0] ?? "Leads"),
-        dealValue: Number(form.dealValue) || 0,
+        dealValue: Number(assignmentFee) || Number(form.dealValue) || 0,
         monthlyAmount: 0,
         billingSame: true,
-        customFields: form.customFields,
+        customFields: (() => {
+          const nextCustom = [...form.customFields];
+          const feeIdx = nextCustom.findIndex((c) => c.name.toLowerCase().includes("assignment fee"));
+          if (feeIdx >= 0) {
+            nextCustom[feeIdx] = { name: "Assignment Fee", value: String(assignmentFee) };
+          } else {
+            nextCustom.push({ name: "Assignment Fee", value: String(assignmentFee) });
+          }
+          return nextCustom;
+        })(),
         lost: false,
         lostReason: "",
         dnc: false,
@@ -969,7 +1052,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 >
                   <div>
                     <span style={{ color: "var(--text-dim)", display: "block" }}>AVM Value</span>
-                    <strong style={{ color: "var(--primary)" }}>${enrichedData.estimatedValue.toLocaleString()}</strong>
+                    <strong style={{ color: "var(--primary)" }}>{enrichedData.estimatedValue != null ? `$${enrichedData.estimatedValue.toLocaleString()}` : "N/A"}</strong>
                   </div>
                   {enrichedData.estimatedRent ? (
                     <div>
@@ -979,7 +1062,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                   ) : null}
                   <div>
                     <span style={{ color: "var(--text-dim)", display: "block" }}>Specs</span>
-                    <strong>{enrichedData.bedrooms}b / {enrichedData.bathrooms}ba • {enrichedData.squareFootage} sqft</strong>
+                    <strong>{enrichedData.bedrooms ?? "—"}b / {enrichedData.bathrooms ?? "—"}ba • {enrichedData.squareFootage ? `${enrichedData.squareFootage.toLocaleString()} sqft` : "—"}</strong>
                   </div>
                   <div>
                     <span style={{ color: "var(--text-dim)", display: "block" }}>Year / Type</span>
@@ -1074,15 +1157,14 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               <div className="intake-section-title">👤 Owner</div>
               <div className="form-grid intake-grid">
                 <label className="field">
-                  <span className="field-label">Owner name *</span>
+                  <span className="field-label">Owner name (optional)</span>
                   <input
                     type="text"
                     value={form.companyName}
                     onChange={(e) => set("companyName", e.target.value)}
                     className={pii ? "pii-blur" : undefined}
-                    placeholder="e.g. John Smith"
+                    placeholder="e.g. John Smith (leave blank if unknown)"
                     maxLength={200}
-                    required
                     aria-label="Owner name"
                   />
                 </label>
@@ -1156,7 +1238,33 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               </div>
             </section>
 
-            {/* 5. Structure (Deal Offer) */}
+            {/* 5. Deal Financials & Assignment Fee */}
+            <section className="intake-section" aria-label="Deal Economics">
+              <div className="intake-section-title">💰 Assignment Fee & Deal Economics</div>
+              <div className="form-grid intake-grid">
+                <label className="field">
+                  <span className="field-label">Target Assignment Fee ($)</span>
+                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <span style={{ position: "absolute", left: "12px", color: "var(--muted)", fontWeight: 600 }}>$</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={500}
+                      value={assignmentFee === 0 ? "" : assignmentFee}
+                      onChange={(e) => setAssignmentFee(Number(e.target.value) || 0)}
+                      style={{ paddingLeft: "26px", fontSize: "15px", fontWeight: 600 }}
+                      placeholder="10000"
+                      aria-label="Target assignment fee"
+                    />
+                  </div>
+                  <span className="field-hint" style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "4px" }}>
+                    Projected assignment spread / wholesaler net fee for this property.
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            {/* 6. Structure (Deal Offer) */}
             <section className="intake-section" aria-label="Structure (Deal Offer)">
               <div className="intake-section-title">🏷️ Structure (Deal Offer)</div>
               <div className="field">
@@ -1215,7 +1323,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               </div>
             </section>
 
-            {/* 6. Pipeline Stage */}
+            {/* 7. Pipeline Stage */}
             <section className="intake-section" aria-label="Pipeline Stage">
               <div className="intake-section-title">📊 Stage</div>
               <div className="field">

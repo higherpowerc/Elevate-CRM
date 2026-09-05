@@ -430,6 +430,8 @@ export interface DashboardData {
   revenueModel: RevenueModel;
   /** Wholesale — total assignment fees from properties in Sold stage */
   soldAssignmentFees?: number;
+  /** Wholesale — all assignment fees that have not been sold (active pipeline) */
+  projectedAssignmentFees?: number;
   clientMrr?: number;
   orgCount?: number;
   /** Owner direction 2026-08-26 — the new "Lost" window: LOST (soft) clients
@@ -845,16 +847,16 @@ export interface PropertyEnrichmentResult {
   state: string;
   zipCode: string;
   county?: string;
-  propertyType: string;
-  bedrooms: number;
-  bathrooms: number;
-  squareFootage: number;
+  propertyType?: string;
+  bedrooms?: number;
+  bathrooms?: number;
+  squareFootage?: number;
   lotSize?: number;
-  yearBuilt: number;
-  estimatedValue: number;
+  yearBuilt?: number;
+  estimatedValue?: number;
   valueRangeLow?: number;
   valueRangeHigh?: number;
-  estimatedRent: number;
+  estimatedRent?: number;
   lastSalePrice?: number;
   lastSaleDate?: string;
   taxAssessedValue?: number;
@@ -867,6 +869,7 @@ export interface PropertyEnrichmentResult {
     squareFootage: number;
     distanceMiles: number;
   }>;
-  source: "rentcast" | "attom" | "public_records_estimate";
+  source: "rentcast" | "attom" | "unconfigured" | "not_found" | "public_records_estimate";
+  message?: string;
 }
 

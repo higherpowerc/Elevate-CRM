@@ -1031,8 +1031,7 @@ function validateClient(
 ): { ok: true; value: ClientInput } | { ok: false; error: string } {
   const str = (v: unknown, max = 500): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
-  const companyName = str(body.companyName, 200);
-  if (!companyName) return { ok: false, error: "Company name is required." };
+  const companyName = str(body.companyName, 200) || str(body.address, 200) || "Unknown Owner";
 
   // Phase 3e: client type is REQUIRED on create AND edit — exactly one of
   // "commercial" / "residential" (the migration backfilled old rows).
@@ -3775,22 +3774,65 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
        own Maybe bin, so a Maybe-level deal value must never surface here
        while the Active bin looks empty). demo_outcome is NOT NULL DEFAULT ''
        (server/db.ts), so the plain != comparison is NULL-safe. */
+    // Helper to extract assignment fee from client record
+    function parseClientAssignmentFee(dealVal: number, customFieldsStr: string): number {
+      let fee = 0;
+      try {
+        const cf = JSON.parse(customFieldsStr || "[]");
+        for (const f of cf) {
+          if (f.name && f.name.toLowerCase().includes("assignment fee")) {
+            const parsed = Number(String(f.value).replace(/[^0-9.]/g, ""));
+            if (!isNaN(parsed) && parsed > 0) {
+              fee = parsed;
+              break;
+            }
+          }
+        }
+      } catch {}
+      if (fee === 0 && dealVal > 0 && dealVal <= 100000) {
+        fee = dealVal;
+      }
+      return fee;
+    }
+
+    // Wholesale assignment fees:
+    // 1. Projected Assignment Fees: all assignment fees that have not been sold
+    // 2. Sold Assignment Fees: all assignment fees from properties in 'sold' stage
+    let projectedAssignmentFees = 0;
+    let soldAssignmentFees = 0;
+    try {
+      const allProps = db.query(`
+        SELECT deal_value, stage, custom_fields FROM clients
+        WHERE org_id = ? AND archived = 0 AND lost = 0
+          AND (client_type IS NULL OR client_type != 'buyer')
+          AND LOWER(TRIM(stage)) != 'buyer'
+      `).all(orgId) as { deal_value: number; stage: string; custom_fields: string }[];
+
+      for (const p of allProps) {
+        const fee = parseClientAssignmentFee(p.deal_value, p.custom_fields);
+        const isSold = p.stage.trim().toLowerCase() === "sold";
+        if (isSold) {
+          soldAssignmentFees += fee;
+        } else {
+          projectedAssignmentFees += fee;
+        }
+      }
+    } catch {
+      projectedAssignmentFees = 0;
+      soldAssignmentFees = 0;
+    }
+
     let projected = value.v;
     const isWholesaleOrg = Boolean(
       org && (
         org.vertical_key === "wholesale" ||
-        org.name.toLowerCase().includes("wholesale")
+        org.vertical_key === "wholesalebiz" ||
+        org.name.toLowerCase().includes("wholesale") ||
+        org.id === 1
       )
     );
     if (isWholesaleOrg) {
-      const projRow = db.query(`
-        SELECT COALESCE(SUM(deal_value), 0) AS v FROM clients 
-        WHERE org_id = ? AND archived = 0 AND lost = 0 
-          AND (client_type IS NULL OR client_type != 'buyer')
-          AND LOWER(TRIM(stage)) != 'buyer'
-          AND LOWER(TRIM(stage)) != 'sold'
-      `).get(orgId) as { v: number };
-      projected = projRow.v;
+      projected = projectedAssignmentFees;
     } else if (isOwnerSession(auth)) {
       const firstStage = orgStages.length > 0 ? orgStages[0] : "";
       projected = firstStage
@@ -3882,41 +3924,10 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       }
     ).v;
 
-    // Wholesale — total assignment fees for properties marked "Sold" in stages
-    let soldAssignmentFees = 0;
-    try {
-      const soldClients = db.query(`
-        SELECT deal_value, custom_fields FROM clients
-        WHERE org_id = ? AND archived = 0 AND lost = 0
-          AND LOWER(TRIM(stage)) = 'sold'
-      `).all(orgId) as { deal_value: number; custom_fields: string }[];
-
-      for (const sc of soldClients) {
-        let fee = 0;
-        try {
-          const cf = JSON.parse(sc.custom_fields || "[]");
-          for (const f of cf) {
-            if (f.name && f.name.toLowerCase() === "assignment fee") {
-              const parsed = Number(String(f.value).replace(/[^0-9.]/g, ""));
-              if (!isNaN(parsed) && parsed > 0) {
-                fee = parsed;
-                break;
-              }
-            }
-          }
-        } catch {}
-        if (fee === 0 && sc.deal_value > 0) {
-          fee = sc.deal_value;
-        }
-        soldAssignmentFees += fee;
-      }
-    } catch {
-      soldAssignmentFees = 0;
-    }
-
     const resp: Record<string, unknown> = {
       stageCounts,
       projectedPipeline: projected,
+      projectedAssignmentFees,
       soldAssignmentFees,
       totalClients: total.c,
       archivedClients: archived.c,
@@ -7173,6 +7184,45 @@ Thank you!
     db.query("UPDATE orgs SET rentcast_api_key = ? WHERE id = ?").run(apiKey, orgId);
 
     return json({ ok: true, rentcastApiKey: apiKey });
+  }
+
+  if (pathname === "/api/settings/rentcast-test" && method === "POST") {
+    const deniedAdmin = requireOrgAdmin(auth);
+    if (deniedAdmin) return deniedAdmin;
+
+    const body = await readBody(req);
+    const orgRow = db.query("SELECT rentcast_api_key FROM orgs WHERE id = ?").get(orgId) as { rentcast_api_key?: string } | null;
+    const testKey = (typeof body?.apiKey === "string" && body.apiKey.trim()) ? body.apiKey.trim() : (orgRow?.rentcast_api_key || "");
+
+    if (!testKey) {
+      return json({ ok: false, error: "No API key provided to test. Please enter a key first." });
+    }
+
+    try {
+      const testRes = await fetch("https://api.rentcast.io/v1/properties?address=5500%20Grand%20Lake%20Dr%2C%20San%20Antonio%2C%20TX%2078244", {
+        headers: {
+          Accept: "application/json",
+          "X-Api-Key": testKey,
+        },
+      });
+
+      if (testRes.status === 401 || testRes.status === 403) {
+        return json({ ok: false, error: "Invalid RentCast API key. RentCast rejected this key." });
+      }
+
+      if (testRes.status === 429) {
+        return json({ ok: false, error: "RentCast API monthly quota exceeded." });
+      }
+
+      if (testRes.ok) {
+        return json({ ok: true, message: "RentCast API key verified successfully! Connected to live MLS & tax records." });
+      }
+
+      return json({ ok: false, error: `RentCast API returned HTTP ${testRes.status}` });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return json({ ok: false, error: `Connection failed: ${msg}` });
+    }
   }
 
   if (pathname === "/api/properties/lookup" && method === "GET") {

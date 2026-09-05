@@ -16,16 +16,16 @@ export interface PropertyEnrichmentResult {
   state: string;
   zipCode: string;
   county?: string;
-  propertyType: string;
-  bedrooms: number;
-  bathrooms: number;
-  squareFootage: number;
+  propertyType?: string;
+  bedrooms?: number;
+  bathrooms?: number;
+  squareFootage?: number;
   lotSize?: number;
-  yearBuilt: number;
-  estimatedValue: number;
+  yearBuilt?: number;
+  estimatedValue?: number;
   valueRangeLow?: number;
   valueRangeHigh?: number;
-  estimatedRent: number;
+  estimatedRent?: number;
   lastSalePrice?: number;
   lastSaleDate?: string;
   taxAssessedValue?: number;
@@ -38,11 +38,47 @@ export interface PropertyEnrichmentResult {
     squareFootage: number;
     distanceMiles: number;
   }>;
-  source: "rentcast" | "attom" | "public_records_estimate";
+  source: "rentcast" | "attom" | "unconfigured" | "not_found" | "public_records_estimate";
+  message?: string;
 }
 
 /**
- * Fetch live property specs and valuation from RentCast API if an API key is present.
+ * Parses an address string into structured parts (street, city, state, zip).
+ */
+export function parseAddressString(address: string): {
+  addressLine1: string;
+  city: string;
+  state: string;
+  zipCode: string;
+} {
+  const parts = address.split(",").map((s) => s.trim()).filter(Boolean);
+  let addressLine1 = parts[0] || address.trim();
+  let city = "";
+  let state = "";
+  let zipCode = "";
+
+  if (parts.length >= 3) {
+    city = parts[1];
+    const stateZip = parts[2].trim().split(/\s+/);
+    if (stateZip[0]) state = stateZip[0].toUpperCase();
+    if (stateZip[1]) zipCode = stateZip[1];
+  } else if (parts.length === 2) {
+    const secondPart = parts[1].trim().split(/\s+/);
+    if (secondPart.length >= 2 && secondPart[secondPart.length - 2].length === 2) {
+      state = secondPart[secondPart.length - 2].toUpperCase();
+      zipCode = secondPart[secondPart.length - 1];
+      city = secondPart.slice(0, -2).join(" ");
+    } else {
+      city = parts[1];
+    }
+  }
+
+  return { addressLine1, city, state, zipCode };
+}
+
+/**
+ * Fetch live property specs and valuation from RentCast API if configured.
+ * Does NOT generate fake specs when API key is unconfigured.
  */
 export async function lookupPropertyData(
   address: string,
@@ -53,180 +89,142 @@ export async function lookupPropertyData(
     throw new Error("Address is required for property lookup.");
   }
 
+  const parsed = parseAddressString(cleanAddr);
   const key = (apiKey || process.env.RENTCAST_API_KEY || "").trim();
 
-  // If a valid key is provided, attempt live RentCast API query
-  if (key && key !== "mock" && key !== "demo") {
-    try {
-      // 1. Property records
-      const propUrl = `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(cleanAddr)}`;
-      const propRes = await fetch(propUrl, {
-        headers: {
-          Accept: "application/json",
-          "X-Api-Key": key,
-        },
-      });
+  // If no live key is configured, return clear status without fabricating fake specs
+  if (!key || key === "mock" || key === "demo") {
+    return {
+      formattedAddress: cleanAddr,
+      addressLine1: parsed.addressLine1,
+      city: parsed.city,
+      state: parsed.state,
+      zipCode: parsed.zipCode,
+      source: "unconfigured",
+      message:
+        "RentCast API key is not configured. Add your free RentCast API key in Settings > Integrations (50 free lookups/mo at rentcast.io) to pull verified MLS specs, tax appraisals, and comps.",
+    };
+  }
 
-      // 2. AVM Valuation
-      const avmUrl = `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(cleanAddr)}`;
-      const avmRes = await fetch(avmUrl, {
-        headers: {
-          Accept: "application/json",
-          "X-Api-Key": key,
-        },
-      });
+  // 1. Query RentCast Property Specs API
+  const propUrl = `https://api.rentcast.io/v1/properties?address=${encodeURIComponent(cleanAddr)}`;
+  const propRes = await fetch(propUrl, {
+    headers: {
+      Accept: "application/json",
+      "X-Api-Key": key,
+    },
+  });
 
-      if (propRes.ok) {
-        const propData = (await propRes.json()) as any;
-        const p = Array.isArray(propData) ? propData[0] : propData;
+  if (propRes.status === 401 || propRes.status === 403) {
+    throw new Error("Invalid RentCast API key. Please check your API key in Settings > Integrations.");
+  }
 
-        let avmData: any = {};
-        if (avmRes.ok) {
-          avmData = (await avmRes.json()) as any;
-        }
+  if (propRes.status === 429) {
+    throw new Error("RentCast API monthly quota exceeded (free tier limit reached). Upgrade plan at rentcast.io.");
+  }
 
-        if (p) {
-          return {
-            formattedAddress: p.formattedAddress || cleanAddr,
-            addressLine1: p.addressLine1 || cleanAddr.split(",")[0],
-            city: p.city || "",
-            state: p.state || "",
-            zipCode: p.zipCode || "",
-            county: p.county || "",
-            propertyType: p.propertyType || "Single Family",
-            bedrooms: Number(p.bedrooms) || 3,
-            bathrooms: Number(p.bathrooms) || 2,
-            squareFootage: Number(p.squareFootage) || 1600,
-            lotSize: Number(p.lotSize) || 6500,
-            yearBuilt: Number(p.yearBuilt) || 1995,
-            estimatedValue: Number(avmData.price) || Number(p.lastSalePrice) || 240000,
-            valueRangeLow: Number(avmData.priceRangeLow) || undefined,
-            valueRangeHigh: Number(avmData.priceRangeHigh) || undefined,
-            estimatedRent: Number(avmData.rent) || 1850,
-            lastSalePrice: p.lastSalePrice || undefined,
-            lastSaleDate: p.lastSaleDate ? p.lastSaleDate.split("T")[0] : undefined,
-            taxAssessedValue: p.taxAssessedValue || undefined,
-            ownerName: p.owner?.name || undefined,
-            comps: Array.isArray(avmData.comparables)
-              ? avmData.comparables.slice(0, 3).map((c: any) => ({
-                  address: c.formattedAddress || c.addressLine1,
-                  price: c.price || 0,
-                  bedrooms: c.bedrooms || 3,
-                  bathrooms: c.bathrooms || 2,
-                  squareFootage: c.squareFootage || 1500,
-                  distanceMiles: Number(c.distance?.toFixed(2)) || 0.4,
-                }))
-              : [],
-            source: "rentcast",
-          };
-        }
-      }
-    } catch (apiErr) {
-      console.warn("[property-enrichment] RentCast API call error:", apiErr);
+  if (propRes.status === 404) {
+    return {
+      formattedAddress: cleanAddr,
+      addressLine1: parsed.addressLine1,
+      city: parsed.city,
+      state: parsed.state,
+      zipCode: parsed.zipCode,
+      source: "not_found",
+      message: "No property records found in RentCast for this address. Verify address formatting or enter specs manually.",
+    };
+  }
+
+  if (!propRes.ok) {
+    const errText = await propRes.text();
+    throw new Error(`RentCast API returned HTTP ${propRes.status}: ${errText}`);
+  }
+
+  const propData = (await propRes.json()) as any;
+  const p = Array.isArray(propData) ? propData[0] : propData;
+
+  if (!p) {
+    return {
+      formattedAddress: cleanAddr,
+      addressLine1: parsed.addressLine1,
+      city: parsed.city,
+      state: parsed.state,
+      zipCode: parsed.zipCode,
+      source: "not_found",
+      message: "No property records found in RentCast for this address. Verify address formatting or enter specs manually.",
+    };
+  }
+
+  // 2. Query RentCast AVM Valuation & Comps API
+  let avmData: any = {};
+  try {
+    const avmUrl = `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(cleanAddr)}`;
+    const avmRes = await fetch(avmUrl, {
+      headers: {
+        Accept: "application/json",
+        "X-Api-Key": key,
+      },
+    });
+    if (avmRes.ok) {
+      avmData = (await avmRes.json()) as any;
+    }
+  } catch (avmErr) {
+    console.warn("[property-enrichment] AVM fetch warning:", avmErr);
+  }
+
+  // Extract owner name if available from RentCast
+  let ownerName: string | undefined = undefined;
+  if (p.owner) {
+    if (Array.isArray(p.owner.names) && p.owner.names[0]) {
+      ownerName = p.owner.names[0];
+    } else if (typeof p.owner.name === "string" && p.owner.name.trim()) {
+      ownerName = p.owner.name.trim();
     }
   }
 
-  // Smart heuristic estimation based on address parsing & nationwide appraisal benchmarks
-  return generatePublicRecordsEstimate(cleanAddr);
-}
+  // Extract comps if available
+  const comps = Array.isArray(avmData.comparables)
+    ? avmData.comparables.slice(0, 5).map((c: any) => ({
+        address: c.formattedAddress || c.addressLine1 || "Nearby Comp",
+        price: Number(c.price) || 0,
+        bedrooms: Number(c.bedrooms) || 0,
+        bathrooms: Number(c.bathrooms) || 0,
+        squareFootage: Number(c.squareFootage) || 0,
+        distanceMiles: typeof c.distance === "number" ? Number(c.distance.toFixed(2)) : 0,
+      }))
+    : [];
 
-/**
- * Intelligent public records estimation model when live API key is pending
- */
-function generatePublicRecordsEstimate(address: string): PropertyEnrichmentResult {
-  const parts = address.split(",").map((s) => s.trim());
-  const addressLine1 = parts[0] || address;
-  const city = parts[1] || "Phoenix";
-  let state = "AZ";
-  let zipCode = "85001";
-
-  if (parts.length >= 3) {
-    const stateZip = parts[2].trim().split(/\s+/);
-    if (stateZip[0]) state = stateZip[0].toUpperCase();
-    if (stateZip[1]) zipCode = stateZip[1];
-  }
-
-  // Deterministic seed based on street address characters so repeated lookups for the same address stay consistent
-  let hash = 0;
-  for (let i = 0; i < address.length; i++) {
-    hash = (hash << 5) - hash + address.charCodeAt(i);
-    hash |= 0;
-  }
-  const posHash = Math.abs(hash);
-
-  const basePriceByState: Record<string, number> = {
-    CA: 550000,
-    NY: 480000,
-    WA: 460000,
-    CO: 420000,
-    FL: 340000,
-    TX: 290000,
-    AZ: 350000,
-    NC: 280000,
-    GA: 270000,
-    IL: 240000,
-    OH: 180000,
-    PA: 210000,
-  };
-
-  const stateBase = basePriceByState[state] || 275000;
-  const priceVariation = ((posHash % 160) - 80) * 1000;
-  const estimatedValue = Math.max(95000, stateBase + priceVariation);
-
-  const bedrooms = 3 + (posHash % 3); // 3 to 5 beds
-  const bathrooms = 2 + ((posHash % 2) * 0.5); // 2 or 2.5 baths
-  const squareFootage = 1400 + (posHash % 120) * 15; // 1400 - 3200 sqft
-  const yearBuilt = 1970 + (posHash % 50); // 1970 - 2020
-  const estimatedRent = Math.round(estimatedValue * 0.0078); // ~0.78% rent ratio
-  const lastSalePrice = Math.round(estimatedValue * 0.72);
-  const saleYear = 2018 + (posHash % 6);
+  const estimatedValue =
+    avmData.price != null && !isNaN(Number(avmData.price))
+      ? Number(avmData.price)
+      : p.lastSalePrice != null && !isNaN(Number(p.lastSalePrice))
+      ? Number(p.lastSalePrice)
+      : undefined;
 
   return {
-    formattedAddress: `${addressLine1}, ${city}, ${state} ${zipCode}`,
-    addressLine1,
-    city,
-    state,
-    zipCode,
-    propertyType: "Single Family",
-    bedrooms,
-    bathrooms,
-    squareFootage,
-    lotSize: 6200 + (posHash % 40) * 100,
-    yearBuilt,
+    formattedAddress: p.formattedAddress || cleanAddr,
+    addressLine1: p.addressLine1 || parsed.addressLine1,
+    city: p.city || parsed.city,
+    state: p.state || parsed.state,
+    zipCode: p.zipCode || parsed.zipCode,
+    county: p.county || undefined,
+    propertyType: p.propertyType || "Single Family",
+    bedrooms: p.bedrooms != null ? Number(p.bedrooms) : undefined,
+    bathrooms: p.bathrooms != null ? Number(p.bathrooms) : undefined,
+    squareFootage: p.squareFootage != null ? Number(p.squareFootage) : undefined,
+    lotSize: p.lotSize != null ? Number(p.lotSize) : undefined,
+    yearBuilt: p.yearBuilt != null ? Number(p.yearBuilt) : undefined,
     estimatedValue,
-    valueRangeLow: Math.round(estimatedValue * 0.93),
-    valueRangeHigh: Math.round(estimatedValue * 1.08),
-    estimatedRent,
-    lastSalePrice,
-    lastSaleDate: `${saleYear}-0${(posHash % 9) + 1}-15`,
-    taxAssessedValue: Math.round(estimatedValue * 0.82),
-    source: "public_records_estimate",
-    comps: [
-      {
-        address: `${(posHash % 800) + 100} ${addressLine1.split(" ").slice(1).join(" ") || "Oak St"}`,
-        price: Math.round(estimatedValue * 0.98),
-        bedrooms,
-        bathrooms,
-        squareFootage: squareFootage - 60,
-        distanceMiles: 0.25,
-      },
-      {
-        address: `${(posHash % 800) + 220} Pine Ridge Way`,
-        price: Math.round(estimatedValue * 1.04),
-        bedrooms: bedrooms === 3 ? 4 : bedrooms,
-        bathrooms,
-        squareFootage: squareFootage + 140,
-        distanceMiles: 0.42,
-      },
-      {
-        address: `${(posHash % 800) + 310} Maple Avenue`,
-        price: Math.round(estimatedValue * 0.95),
-        bedrooms,
-        bathrooms: Math.max(2, bathrooms - 0.5),
-        squareFootage: squareFootage - 110,
-        distanceMiles: 0.58,
-      },
-    ],
+    valueRangeLow: avmData.priceRangeLow != null ? Number(avmData.priceRangeLow) : undefined,
+    valueRangeHigh: avmData.priceRangeHigh != null ? Number(avmData.priceRangeHigh) : undefined,
+    estimatedRent: avmData.rent != null ? Number(avmData.rent) : undefined,
+    lastSalePrice: p.lastSalePrice != null ? Number(p.lastSalePrice) : undefined,
+    lastSaleDate: p.lastSaleDate ? String(p.lastSaleDate).split("T")[0] : undefined,
+    taxAssessedValue: p.taxAssessedValue || p.assessedValue || undefined,
+    ownerName,
+    comps,
+    source: "rentcast",
+    message: "Verified MLS and county tax appraisal data retrieved via RentCast.",
   };
 }
 
