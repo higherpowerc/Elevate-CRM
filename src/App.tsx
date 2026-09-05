@@ -665,15 +665,6 @@ export default function App() {
                     {isWholesale ? "Properties" : "Leads"}
                   </button>
                 )}
-                {/* Wholesale Offers Repository tab */}
-                {isWholesale && canSeeTab("clients") && (
-                  <button
-                    className={effectiveViewFinal === "offers" ? "tab active" : "tab"}
-                    onClick={() => setView("offers")}
-                  >
-                    Offers
-                  </button>
-                )}
                 {/* Directory tab: "Investors" for wholesale, "Clients" for general */}
                 {canSeeTab("clients") && (
                   <button
