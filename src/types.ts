@@ -760,3 +760,60 @@ export interface WholesaleOffer {
     dealValue: number;
   };
 }
+
+export type ContractType = "psa" | "assignment";
+export type InspectionUrgency = "safe" | "warning" | "urgent" | "passed" | "expired" | "waived";
+export type EmdStatus = "pending" | "deposited" | "hard" | "refunded";
+export type InspectionStatus = "active" | "passed" | "renegotiating" | "waived" | "terminated";
+export type TitleMilestoneStatus = "pending" | "opened" | "prelim_review" | "payoff_ordered" | "clear_to_close" | "closed";
+export type TransactionStatus = "draft" | "sent" | "signed" | "under_contract" | "closed" | "cancelled";
+
+export interface Transaction {
+  id: number;
+  orgId: number;
+  clientId: number | null;
+  buyerId: number | null;
+  contractType: ContractType;
+  propertyAddress: string;
+  sellerName: string;
+  sellerEmail: string;
+  sellerPhone: string;
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone: string;
+  purchasePrice: number;
+  assignmentFee: number;
+  earnestMoney: number;
+  emdDueDate: string;
+  emdStatus: EmdStatus;
+  inspectionDays: number;
+  inspectionDeadline: string;
+  inspectionStatus: InspectionStatus;
+  closingDate: string;
+  titleCompanyName: string;
+  escrowOfficerName: string;
+  escrowOfficerEmail: string;
+  escrowOfficerPhone: string;
+  escrowFileNumber: string;
+  titleStatus: TitleMilestoneStatus;
+  payoffLender: string;
+  payoffDemandAmount: number;
+  payoffLoanNumber: string;
+  stateJurisdiction: string;
+  contractPdfId: string;
+  tokenHash: string;
+  status: TransactionStatus;
+  signedAt: string | null;
+  signerName: string;
+  customTerms: string;
+  createdAt: string;
+  updatedAt: string;
+  daysLeftInspection: number | null;
+  hoursLeftInspection: number | null;
+  inspectionUrgency: InspectionUrgency;
+  daysLeftEmd: number | null;
+  daysLeftClosing: number | null;
+  signUrl: string;
+  contractPdfUrl: string | null;
+  titlePortalUrl: string;
+}

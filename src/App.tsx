@@ -15,6 +15,7 @@ import Tickets from "./Tickets";
 import Settings from "./Settings";
 import Offers from "./Offers";
 import BuyBoxMatcher from "./BuyBoxMatcher";
+import TransactionHub from "./TransactionHub";
 import { api } from "./api";
 import { DEFAULT_STAGES, TENANT_TABS, type TenantTab, type User } from "./types";
 import { initials } from "./bits";
@@ -485,7 +486,7 @@ export default function App() {
                 className={effectiveViewFinal === "documents" ? "tab active" : "tab"}
                 onClick={() => setView("documents")}
               >
-                Agreements
+                Transaction Hub
               </button>
             )}
             {isOwnerOrg && (
@@ -714,9 +715,11 @@ export default function App() {
              Client-account management moved to the Clients tab (2026-08-18). */
           <Admin />
         ) : effectiveViewFinal === "documents" ? (
-          /* Wholesale Biz custom menu (owner 2026-09-04) — the wholesale org
-             reaches this view as "Agreements" (relabel only). */
-          <Documents verticalLabel={isWholesale ? "agreements" : undefined} />
+          isWholesale ? (
+            <TransactionHub crmBusinessName={orgName} />
+          ) : (
+            <Documents verticalLabel={undefined} />
+          )
         ) : effectiveViewFinal === "tickets" ? (
           <Tickets ownerOrg={isOwnerOrg} canEdit={canEditTab("support")} />
         ) : (

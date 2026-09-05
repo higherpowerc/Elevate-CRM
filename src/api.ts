@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Appointment, Buyer, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User, WholesaleOffer } from "./types";
+import type { AgreementEnvelope, Appointment, Buyer, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, Transaction, User, WholesaleOffer } from "./types";
 
 
 export class ApiError extends Error {
@@ -560,5 +560,34 @@ export const api = {
       body: JSON.stringify(data),
     }),
   deleteBuyer: (id: number) => request<{ ok: true }>(`/api/buyers/${id}`, { method: "DELETE" }),
+  /* Wholesale Real Estate — Document & Transaction Hub */
+  transactions: () => request<{ ok: true; transactions: Transaction[] }>("/api/transactions"),
+  createTransaction: (data: Partial<Transaction> & { propertyAddress: string }) =>
+    request<{ ok: true; transaction: Transaction }>("/api/transactions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateTransaction: (id: number, data: Partial<Transaction> & { extendDays?: number }) =>
+    request<{ ok: true; transaction: Transaction }>(`/api/transactions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteTransaction: (id: number) =>
+    request<{ ok: true }>(`/api/transactions/${id}`, { method: "DELETE" }),
+  generateContract: (id: number, data?: { stateJurisdiction?: string; customTerms?: string }) =>
+    request<{ ok: true; transaction: Transaction }>(`/api/transactions/${id}/generate-contract`, {
+      method: "POST",
+      body: JSON.stringify(data || {}),
+    }),
+  sendTitlePacket: (id: number, data?: { email?: string }) =>
+    request<{ ok: true; emailStatus: string; titlePortalUrl: string }>(`/api/transactions/${id}/send-title-packet`, {
+      method: "POST",
+      body: JSON.stringify(data || {}),
+    }),
+  sendSignatureRequest: (id: number, data?: { email?: string }) =>
+    request<{ ok: true; emailStatus: string; signUrl: string }>(`/api/transactions/${id}/send-signature-request`, {
+      method: "POST",
+      body: JSON.stringify(data || {}),
+    }),
 };
 

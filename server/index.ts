@@ -6,6 +6,8 @@ import { ensureAdmin } from "./auth";
 import { renderSignPage, readAgreementPdf, backfillSignedClients, backfillBrandRename } from "./agreements";
 import { renderConfirmPage, renderReschedulePage } from "./appointmentPages";
 import { readOfferPdf } from "./offerPdf";
+import { readContractPdf } from "./contractPdf";
+import { renderContractSignPage, renderTitlePortalPage } from "./transactionPages";
 import { db } from "./db";
 
 /**
@@ -157,6 +159,30 @@ const server = serve({
           "Content-Disposition": `inline; filename="agreement-${pdfId}.pdf"`,
         },
       });
+    }
+    /* Wholesale Document & Transaction Hub: Public e-signature page */
+    if (req.method === "GET" && url.pathname.startsWith("/sign-contract/")) {
+      const token = decodeURIComponent(url.pathname.slice("/sign-contract/".length));
+      return renderContractSignPage(token, clientIp(req, srv));
+    }
+    /* Wholesale Document & Transaction Hub: Public contract PDF download */
+    if (req.method === "GET" && url.pathname.startsWith("/contract-pdf/")) {
+      const pdfId = url.pathname.slice("/contract-pdf/".length);
+      const bytes = readContractPdf(pdfId);
+      if (!bytes) return new Response("Not found", { status: 404 });
+      return new Response(bytes as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type": MIME[".pdf"],
+          "Cache-Control": "private, max-age=3600",
+          "Content-Disposition": `inline; filename="contract-${pdfId}.pdf"`,
+        },
+      });
+    }
+    /* Wholesale Document & Transaction Hub: Public Title & Escrow portal */
+    if (req.method === "GET" && url.pathname.startsWith("/title-portal/")) {
+      const token = decodeURIComponent(url.pathname.slice("/title-portal/".length));
+      return renderTitlePortalPage(token);
     }
     /* Appointments production (backlog 5a104eae) — PUBLIC Confirm / Reschedule
        landing pages. The day-before reminder email links here

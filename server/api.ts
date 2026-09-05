@@ -73,6 +73,8 @@ import { sendEmail, sendIntakeEmail, sendWelcomeEmail, sendPasswordResetEmail, s
 import Stripe from "stripe";
 import { generateInvoicePdf } from "./invoices";
 import { generateOfferPdf, storeOfferPdf, newOfferPdfId } from "./offerPdf";
+import { generateContractPdf, storeContractPdf, newContractPdfId, readContractPdf } from "./contractPdf";
+import { getTransactionByToken } from "./transactionPages";
 import { stripeClient } from "./stripe";
 import {
   AGREEMENT_TOKEN_TTL_MS,
@@ -2530,6 +2532,81 @@ function validateCustomIntakeGroups(
 async function handleApi(req: Request, url: URL, server?: { requestIP(req: Request): { address: string } | null } | null): Promise<Response> {
   const { pathname } = url;
   const method = req.method;
+  /* Wholesale Document & Transaction Hub: Public e-signature submission */
+  const signContractMatch = pathname.match(/^\/api\/public\/sign-contract\/([a-zA-Z0-9_-]+)$/);
+  if (signContractMatch && method === "POST") {
+    const token = signContractMatch[1];
+    const tx = getTransactionByToken(token);
+    if (!tx) return err("Contract not found or expired.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const signerName = typeof body.signerName === "string" ? body.signerName.trim() : "";
+    const signatureImage = typeof body.signatureImage === "string" ? body.signatureImage : "";
+    if (!signerName) return err("Legal signer name is required.", 400);
+
+    const ip = clientIp(req, server);
+    const signedAt = new Date().toISOString();
+
+    // Regenerate and stamp the PDF with countersignature and verification block
+    let newPdfId = tx.contract_pdf_id;
+    try {
+      const org = db.query("SELECT name FROM orgs WHERE id = ?").get(tx.org_id) as { name: string } | null;
+      const stampedPdf = await generateContractPdf({
+        contractType: tx.contract_type,
+        propertyAddress: tx.property_address,
+        sellerName: tx.seller_name,
+        buyerName: tx.buyer_name,
+        companyName: org?.name || "Elevate Capital",
+        purchasePrice: tx.purchase_price,
+        assignmentFee: tx.assignment_fee,
+        earnestMoney: tx.earnest_money,
+        emdDueDate: tx.emd_due_date,
+        inspectionDays: tx.inspection_days,
+        closingDate: tx.closing_date,
+        titleCompany: tx.title_company_name,
+        stateJurisdiction: tx.state_jurisdiction,
+        signatureImage,
+        signerName,
+        signedAt,
+        signerIp: ip,
+      });
+      newPdfId = newContractPdfId();
+      storeContractPdf(stampedPdf, newPdfId);
+    } catch (e) {
+      console.error("[contract-sign] Error stamping PDF:", e);
+    }
+
+    db.query(`
+      UPDATE transactions
+         SET status = 'signed',
+             signer_name = ?,
+             signer_signature = ?,
+             signer_ip = ?,
+             signed_at = ?,
+             contract_pdf_id = ?,
+             updated_at = datetime('now')
+       WHERE id = ?
+    `).run(signerName, signatureImage ? "data:image/png" : "typed", ip, signedAt, newPdfId, tx.id);
+
+    return json({ ok: true, signedAt, pdfId: newPdfId });
+  }
+
+  /* Wholesale Document & Transaction Hub: Public Title Portal status update */
+  const titleUpdateMatch = pathname.match(/^\/api\/public\/title-update\/([a-zA-Z0-9_-]+)$/);
+  if (titleUpdateMatch && method === "POST") {
+    const token = titleUpdateMatch[1];
+    const tx = getTransactionByToken(token);
+    if (!tx) return err("Title file not found.", 404);
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const titleStatus = typeof body.titleStatus === "string" ? body.titleStatus.trim() : "";
+    if (!titleStatus) return err("Title status required.", 400);
+
+    db.query(`UPDATE transactions SET title_status = ?, updated_at = datetime('now') WHERE id = ?`).run(titleStatus, tx.id);
+    return json({ ok: true, titleStatus });
+  }
 
   /* Auth */
   if (pathname === "/api/auth/login" && method === "POST") {
@@ -5019,6 +5096,640 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     db.query("DELETE FROM offers WHERE id = ? AND org_id = ?").run(offerId, orgId);
     return json({ ok: true });
   }
+
+  /* ── Wholesale Document & Transaction Hub ──────────────────────────────
+   * 1. E-Signature & Contract Generation: PSA and Assignment Contracts with state clauses
+   * 2. Inspection & Contingency Clocks: Real-time countdowns for inspection period & EMD hard deadlines
+   * 3. Title Company Portal: Portal link, earnest money receipts, payoffs, and closing milestones
+   */
+
+  function formatTransactionRow(r: any, baseUrl: string) {
+    const now = new Date();
+    
+    // Inspection contingency countdown
+    let daysLeftInspection: number | null = null;
+    let hoursLeftInspection: number | null = null;
+    let inspectionUrgency: "safe" | "warning" | "urgent" | "passed" | "expired" | "waived" = "safe";
+
+    if (r.inspection_deadline) {
+      const deadline = new Date(r.inspection_deadline);
+      const diffMs = deadline.getTime() - now.getTime();
+      daysLeftInspection = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      hoursLeftInspection = Math.ceil(diffMs / (1000 * 60 * 60));
+
+      if (r.inspection_status === "passed") {
+        inspectionUrgency = "passed";
+      } else if (r.inspection_status === "waived") {
+        inspectionUrgency = "waived";
+      } else if (diffMs < 0) {
+        inspectionUrgency = "expired";
+      } else if (daysLeftInspection <= 2) {
+        inspectionUrgency = "urgent";
+      } else if (daysLeftInspection <= 5) {
+        inspectionUrgency = "warning";
+      } else {
+        inspectionUrgency = "safe";
+      }
+    }
+
+    // Earnest money countdown
+    let daysLeftEmd: number | null = null;
+    if (r.emd_due_date) {
+      const emdDue = new Date(r.emd_due_date);
+      const diffMs = emdDue.getTime() - now.getTime();
+      daysLeftEmd = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    }
+
+    // Closing date countdown
+    let daysLeftClosing: number | null = null;
+    if (r.closing_date) {
+      const closing = new Date(r.closing_date);
+      const diffMs = closing.getTime() - now.getTime();
+      daysLeftClosing = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    }
+
+    return {
+      id: r.id,
+      orgId: r.org_id,
+      clientId: r.client_id,
+      buyerId: r.buyer_id,
+      contractType: r.contract_type,
+      propertyAddress: r.property_address,
+      sellerName: r.seller_name,
+      sellerEmail: r.seller_email,
+      sellerPhone: r.seller_phone,
+      buyerName: r.buyer_name,
+      buyerEmail: r.buyer_email,
+      buyerPhone: r.buyer_phone,
+      purchasePrice: r.purchase_price,
+      assignmentFee: r.assignment_fee,
+      earnestMoney: r.earnest_money,
+      emdDueDate: r.emd_due_date,
+      emdStatus: r.emd_status,
+      inspectionDays: r.inspection_days,
+      inspectionDeadline: r.inspection_deadline,
+      inspectionStatus: r.inspection_status,
+      closingDate: r.closing_date,
+      titleCompanyName: r.title_company_name,
+      escrowOfficerName: r.escrow_officer_name,
+      escrowOfficerEmail: r.escrow_officer_email,
+      escrowOfficerPhone: r.escrow_officer_phone,
+      escrowFileNumber: r.escrow_file_number,
+      titleStatus: r.title_status,
+      payoffLender: r.payoff_lender,
+      payoffDemandAmount: r.payoff_demand_amount,
+      payoffLoanNumber: r.payoff_loan_number,
+      stateJurisdiction: r.state_jurisdiction,
+      contractPdfId: r.contract_pdf_id,
+      tokenHash: r.token_hash,
+      status: r.status,
+      signedAt: r.signed_at,
+      signerName: r.signer_name,
+      customTerms: r.custom_terms,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      daysLeftInspection,
+      hoursLeftInspection,
+      inspectionUrgency,
+      daysLeftEmd,
+      daysLeftClosing,
+      signUrl: `${baseUrl}/sign-contract/${r.token_hash}`,
+      contractPdfUrl: r.contract_pdf_id ? `${baseUrl}/contract-pdf/${r.contract_pdf_id}` : null,
+      titlePortalUrl: `${baseUrl}/title-portal/${r.token_hash}`,
+    };
+  }
+
+  // Auto-seed transactions if empty for this org so Wholesale Biz has immediate rich demo data
+  async function ensureSampleTransactions(curOrgId: number) {
+    const existing = db.query("SELECT COUNT(*) AS c FROM transactions WHERE org_id = ?").get(curOrgId) as { c: number } | null;
+    if (existing && existing.c > 0) return;
+
+    const now = new Date();
+    const d1 = new Date(now.getTime() + 3 * 86400000);
+    const emd1 = new Date(now.getTime() + 1 * 86400000);
+    const close1 = new Date(now.getTime() + 21 * 86400000);
+    const token1 = randomBytes(16).toString("hex");
+
+    let pdfId1 = "";
+    try {
+      const pdfBytes = await generateContractPdf({
+        contractType: "psa",
+        propertyAddress: "742 Evergreen Terrace, Springfield, IL 62704",
+        sellerName: "Homer Simpson",
+        sellerEmail: "homer@springfield.net",
+        sellerPhone: "(555) 733-4663",
+        buyerName: "Revzenta Capital LLC & / or assigns",
+        companyName: "Revzenta Wholesale Biz",
+        purchasePrice: 185000,
+        earnestMoney: 2500,
+        emdDueDate: emd1.toISOString().split("T")[0],
+        inspectionDays: 10,
+        closingDate: close1.toISOString().split("T")[0],
+        titleCompany: "First American Title & Escrow",
+        stateJurisdiction: "IL",
+        customTerms: "Seller to credit $3,000 towards roof repair at closing. Property sold as-is with 10-day inspection contingency.",
+      });
+      pdfId1 = newContractPdfId();
+      storeContractPdf(pdfBytes, pdfId1);
+    } catch (e) {
+      console.error("[transactions-seed] err 1:", e);
+    }
+
+    db.query(`
+      INSERT INTO transactions (
+        org_id, contract_type, property_address, seller_name, seller_email, seller_phone,
+        buyer_name, buyer_email, purchase_price, assignment_fee, earnest_money,
+        emd_due_date, emd_status, inspection_days, inspection_deadline, inspection_status,
+        closing_date, title_company_name, escrow_officer_name, escrow_officer_email,
+        escrow_officer_phone, escrow_file_number, title_status, payoff_lender,
+        payoff_demand_amount, payoff_loan_number, state_jurisdiction, contract_pdf_id,
+        token_hash, status, custom_terms
+      ) VALUES (
+        ?, 'psa', '742 Evergreen Terrace, Springfield, IL 62704', 'Homer Simpson', 'homer@springfield.net', '(555) 733-4663',
+        'Revzenta Capital LLC', 'acquisitions@revzenta.com', 185000, 0, 2500,
+        ?, 'deposited', 10, ?, 'active',
+        ?, 'First American Title & Escrow', 'Sarah Jenkins', 'sjenkins@firstamtitle.com',
+        '(312) 555-0199', 'FAT-2026-8892', 'prelim_review', 'Chase Home Lending',
+        112450, 'CH-8829104', 'IL', ?,
+        ?, 'sent', 'Seller to credit $3,000 towards roof repair at closing. Property sold as-is with 10-day inspection contingency.'
+      )
+    `).run(
+      curOrgId,
+      emd1.toISOString().split("T")[0],
+      d1.toISOString().split("T")[0],
+      close1.toISOString().split("T")[0],
+      pdfId1,
+      token1
+    );
+
+    const d2 = new Date(now.getTime() - 2 * 86400000);
+    const emd2 = new Date(now.getTime() - 4 * 86400000);
+    const close2 = new Date(now.getTime() + 8 * 86400000);
+    const token2 = randomBytes(16).toString("hex");
+
+    let pdfId2 = "";
+    try {
+      const pdfBytes = await generateContractPdf({
+        contractType: "assignment",
+        propertyAddress: "123 Sunset Strip, Phoenix, AZ 85004",
+        sellerName: "Robert Vance",
+        sellerEmail: "robert.vance@vancerefrigeration.com",
+        sellerPhone: "(602) 555-4819",
+        buyerName: "Apex Real Estate Holdings LLC",
+        buyerEmail: "acquisitions@apexholdings.io",
+        buyerPhone: "(480) 555-9201",
+        companyName: "Revzenta Wholesale Biz",
+        purchasePrice: 245000,
+        assignmentFee: 15000,
+        earnestMoney: 5000,
+        emdDueDate: emd2.toISOString().split("T")[0],
+        inspectionDays: 7,
+        closingDate: close2.toISOString().split("T")[0],
+        titleCompany: "Clear Title Agency of Arizona",
+        stateJurisdiction: "AZ",
+        signerName: "Marcus Vance",
+        signedAt: new Date(now.getTime() - 3 * 86400000).toISOString(),
+        customTerms: "Assignee accepts property in as-is condition and replaces Assignor under original PSA.",
+      });
+      pdfId2 = newContractPdfId();
+      storeContractPdf(pdfBytes, pdfId2);
+    } catch (e) {
+      console.error("[transactions-seed] err 2:", e);
+    }
+
+    db.query(`
+      INSERT INTO transactions (
+        org_id, contract_type, property_address, seller_name, seller_email, seller_phone,
+        buyer_name, buyer_email, buyer_phone, purchase_price, assignment_fee, earnest_money,
+        emd_due_date, emd_status, inspection_days, inspection_deadline, inspection_status,
+        closing_date, title_company_name, escrow_officer_name, escrow_officer_email,
+        escrow_officer_phone, escrow_file_number, title_status, payoff_lender,
+        payoff_demand_amount, payoff_loan_number, state_jurisdiction, contract_pdf_id,
+        token_hash, status, signed_at, signer_name, custom_terms
+      ) VALUES (
+        ?, 'assignment', '123 Sunset Strip, Phoenix, AZ 85004', 'Robert Vance', 'robert.vance@vancerefrigeration.com', '(602) 555-4819',
+        'Apex Real Estate Holdings LLC', 'acquisitions@apexholdings.io', '(480) 555-9201', 245000, 15000, 5000,
+        ?, 'hard', 7, ?, 'passed',
+        ?, 'Clear Title Agency of Arizona', 'Elena Rodriguez', 'erodriguez@cleartitleaz.com',
+        '(602) 555-7744', 'CTA-AZ-99412', 'clear_to_close', 'Wells Fargo Home Mortgage',
+        142800, 'WF-771920-A', 'AZ', ?,
+        ?, 'signed', ?, 'Marcus Vance', 'Assignee accepts property in as-is condition and replaces Assignor under original PSA.'
+      )
+    `).run(
+      curOrgId,
+      emd2.toISOString().split("T")[0],
+      d2.toISOString().split("T")[0],
+      close2.toISOString().split("T")[0],
+      pdfId2,
+      token2,
+      new Date(now.getTime() - 3 * 86400000).toISOString()
+    );
+  }
+
+  // GET /api/transactions — list all transactions for org
+  if (pathname === "/api/transactions" && method === "GET") {
+    await ensureSampleTransactions(orgId);
+    const baseUrl = appUrlFrom(req);
+    const rows = db.query("SELECT * FROM transactions WHERE org_id = ? ORDER BY id DESC").all(orgId) as any[];
+    const transactions = rows.map((r) => formatTransactionRow(r, baseUrl));
+    return json({ ok: true, transactions });
+  }
+
+  // POST /api/transactions — create transaction & generate contract PDF
+  if (pathname === "/api/transactions" && method === "POST") {
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const contractType = body.contractType === "assignment" ? "assignment" : "psa";
+    const propertyAddress = typeof body.propertyAddress === "string" ? body.propertyAddress.trim() : "";
+    if (!propertyAddress) return err("Property address is required.", 400);
+
+    const sellerName = typeof body.sellerName === "string" ? body.sellerName.trim() : "";
+    const sellerEmail = typeof body.sellerEmail === "string" ? body.sellerEmail.trim() : "";
+    const sellerPhone = typeof body.sellerPhone === "string" ? body.sellerPhone.trim() : "";
+    const buyerName = typeof body.buyerName === "string" ? body.buyerName.trim() : "";
+    const buyerEmail = typeof body.buyerEmail === "string" ? body.buyerEmail.trim() : "";
+    const buyerPhone = typeof body.buyerPhone === "string" ? body.buyerPhone.trim() : "";
+    const purchasePrice = Number(body.purchasePrice) || 0;
+    const assignmentFee = Number(body.assignmentFee) || 0;
+    const earnestMoney = Number(body.earnestMoney) || 0;
+    const emdDueDate = typeof body.emdDueDate === "string" ? body.emdDueDate.trim() : "";
+    const emdStatusRaw = typeof body.emdStatus === "string" ? body.emdStatus : "";
+    const emdStatus = ["pending", "deposited", "hard", "refunded"].includes(emdStatusRaw) ? emdStatusRaw : "pending";
+    const inspectionDays = Number(body.inspectionDays) > 0 ? Number(body.inspectionDays) : 10;
+    
+    // Calculate inspection deadline if not supplied
+    let inspectionDeadline = typeof body.inspectionDeadline === "string" ? body.inspectionDeadline.trim() : "";
+    if (!inspectionDeadline && inspectionDays > 0) {
+      const d = new Date(Date.now() + inspectionDays * 86400000);
+      inspectionDeadline = d.toISOString().split("T")[0];
+    }
+    const inspectionStatusRaw = typeof body.inspectionStatus === "string" ? body.inspectionStatus : "";
+    const inspectionStatus = ["active", "passed", "renegotiating", "waived", "terminated"].includes(inspectionStatusRaw) ? inspectionStatusRaw : "active";
+    const closingDate = typeof body.closingDate === "string" ? body.closingDate.trim() : "";
+    const titleCompanyName = typeof body.titleCompanyName === "string" ? body.titleCompanyName.trim() : "";
+    const escrowOfficerName = typeof body.escrowOfficerName === "string" ? body.escrowOfficerName.trim() : "";
+    const escrowOfficerEmail = typeof body.escrowOfficerEmail === "string" ? body.escrowOfficerEmail.trim() : "";
+    const escrowOfficerPhone = typeof body.escrowOfficerPhone === "string" ? body.escrowOfficerPhone.trim() : "";
+    const escrowFileNumber = typeof body.escrowFileNumber === "string" ? body.escrowFileNumber.trim() : "";
+    const titleStatusRaw = typeof body.titleStatus === "string" ? body.titleStatus : "";
+    const titleStatus = ["pending", "opened", "prelim_review", "payoff_ordered", "clear_to_close", "closed"].includes(titleStatusRaw) ? titleStatusRaw : "pending";
+    const payoffLender = typeof body.payoffLender === "string" ? body.payoffLender.trim() : "";
+    const payoffDemandAmount = Number(body.payoffDemandAmount) || 0;
+    const payoffLoanNumber = typeof body.payoffLoanNumber === "string" ? body.payoffLoanNumber.trim() : "";
+    const stateJurisdiction = typeof body.stateJurisdiction === "string" && body.stateJurisdiction.trim() ? body.stateJurisdiction.trim() : "US General";
+    const customTerms = typeof body.customTerms === "string" ? body.customTerms.trim() : "";
+    const clientId = Number(body.clientId) > 0 ? Number(body.clientId) : null;
+    const buyerId = Number(body.buyerId) > 0 ? Number(body.buyerId) : null;
+
+    const tokenHash = randomBytes(16).toString("hex");
+
+    // Generate initial contract PDF
+    let contractPdfId = "";
+    try {
+      const org = db.query("SELECT name FROM orgs WHERE id = ?").get(orgId) as { name: string } | null;
+      const pdfBytes = await generateContractPdf({
+        contractType,
+        propertyAddress,
+        sellerName,
+        sellerEmail,
+        sellerPhone,
+        buyerName: buyerName || (contractType === "psa" ? (org?.name || "Buyer") + " & / or assigns" : ""),
+        buyerEmail,
+        buyerPhone,
+        companyName: org?.name || "Revzenta Wholesale Biz",
+        purchasePrice,
+        assignmentFee,
+        earnestMoney,
+        emdDueDate,
+        inspectionDays,
+        closingDate,
+        titleCompany: titleCompanyName,
+        stateJurisdiction,
+        customTerms,
+      });
+      contractPdfId = newContractPdfId();
+      storeContractPdf(pdfBytes, contractPdfId);
+    } catch (pdfErr) {
+      console.error("[transactions-create] error generating PDF:", pdfErr);
+    }
+
+    const res = db.query(`
+      INSERT INTO transactions (
+        org_id, client_id, buyer_id, contract_type, property_address,
+        seller_name, seller_email, seller_phone, buyer_name, buyer_email, buyer_phone,
+        purchase_price, assignment_fee, earnest_money, emd_due_date, emd_status,
+        inspection_days, inspection_deadline, inspection_status, closing_date,
+        title_company_name, escrow_officer_name, escrow_officer_email, escrow_officer_phone, escrow_file_number,
+        title_status, payoff_lender, payoff_demand_amount, payoff_loan_number,
+        state_jurisdiction, contract_pdf_id, token_hash, status, custom_terms
+      ) VALUES (
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, 'draft', ?
+      )
+    `).run(
+      orgId, clientId, buyerId, contractType, propertyAddress,
+      sellerName, sellerEmail, sellerPhone, buyerName, buyerEmail, buyerPhone,
+      purchasePrice, assignmentFee, earnestMoney, emdDueDate, emdStatus,
+      inspectionDays, inspectionDeadline, inspectionStatus, closingDate,
+      titleCompanyName, escrowOfficerName, escrowOfficerEmail, escrowOfficerPhone, escrowFileNumber,
+      titleStatus, payoffLender, payoffDemandAmount, payoffLoanNumber,
+      stateJurisdiction, contractPdfId, tokenHash, customTerms
+    );
+
+    const created = db.query("SELECT * FROM transactions WHERE id = ?").get(Number(res.lastInsertRowid)) as any;
+    return json({ ok: true, transaction: formatTransactionRow(created, appUrlFrom(req)) });
+  }
+
+  // PATCH /api/transactions/:id — update transaction fields
+  const txPatchMatch = pathname.match(/^\/api\/transactions\/(\d+)$/);
+  if (txPatchMatch && (method === "PATCH" || method === "PUT")) {
+    const txId = Number(txPatchMatch[1]);
+    const existing = db.query("SELECT * FROM transactions WHERE id = ? AND org_id = ?").get(txId, orgId) as any;
+    if (!existing) return err("Transaction not found.", 404);
+
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const inspectionStatus = typeof body.inspectionStatus === "string" ? body.inspectionStatus : existing.inspection_status;
+    const inspectionDays = Number(body.inspectionDays) > 0 ? Number(body.inspectionDays) : existing.inspection_days;
+    let inspectionDeadline = typeof body.inspectionDeadline === "string" ? body.inspectionDeadline : existing.inspection_deadline;
+    
+    // If extending days, recalculate deadline
+    if (body.extendDays && Number(body.extendDays) > 0) {
+      const base = existing.inspection_deadline ? new Date(existing.inspection_deadline) : new Date();
+      const extended = new Date(base.getTime() + Number(body.extendDays) * 86400000);
+      inspectionDeadline = extended.toISOString().split("T")[0];
+    }
+
+    const emdStatus = typeof body.emdStatus === "string" ? body.emdStatus : existing.emd_status;
+    const emdDueDate = typeof body.emdDueDate === "string" ? body.emdDueDate : existing.emd_due_date;
+    const titleStatus = typeof body.titleStatus === "string" ? body.titleStatus : existing.title_status;
+    const titleCompanyName = typeof body.titleCompanyName === "string" ? body.titleCompanyName : existing.title_company_name;
+    const escrowOfficerName = typeof body.escrowOfficerName === "string" ? body.escrowOfficerName : existing.escrow_officer_name;
+    const escrowOfficerEmail = typeof body.escrowOfficerEmail === "string" ? body.escrowOfficerEmail : existing.escrow_officer_email;
+    const escrowOfficerPhone = typeof body.escrowOfficerPhone === "string" ? body.escrowOfficerPhone : existing.escrow_officer_phone;
+    const escrowFileNumber = typeof body.escrowFileNumber === "string" ? body.escrowFileNumber : existing.escrow_file_number;
+    const payoffLender = typeof body.payoffLender === "string" ? body.payoffLender : existing.payoff_lender;
+    const payoffDemandAmount = typeof body.payoffDemandAmount === "number" ? body.payoffDemandAmount : existing.payoff_demand_amount;
+    const payoffLoanNumber = typeof body.payoffLoanNumber === "string" ? body.payoffLoanNumber : existing.payoff_loan_number;
+    const purchasePrice = typeof body.purchasePrice === "number" ? body.purchasePrice : existing.purchase_price;
+    const assignmentFee = typeof body.assignmentFee === "number" ? body.assignmentFee : existing.assignment_fee;
+    const earnestMoney = typeof body.earnestMoney === "number" ? body.earnestMoney : existing.earnest_money;
+    const closingDate = typeof body.closingDate === "string" ? body.closingDate : existing.closing_date;
+    const status = typeof body.status === "string" ? body.status : existing.status;
+    const customTerms = typeof body.customTerms === "string" ? body.customTerms : existing.custom_terms;
+
+    db.query(`
+      UPDATE transactions
+         SET inspection_status = ?,
+             inspection_days = ?,
+             inspection_deadline = ?,
+             emd_status = ?,
+             emd_due_date = ?,
+             title_status = ?,
+             title_company_name = ?,
+             escrow_officer_name = ?,
+             escrow_officer_email = ?,
+             escrow_officer_phone = ?,
+             escrow_file_number = ?,
+             payoff_lender = ?,
+             payoff_demand_amount = ?,
+             payoff_loan_number = ?,
+             purchase_price = ?,
+             assignment_fee = ?,
+             earnest_money = ?,
+             closing_date = ?,
+             status = ?,
+             custom_terms = ?,
+             updated_at = datetime('now')
+       WHERE id = ? AND org_id = ?
+    `).run(
+      inspectionStatus, inspectionDays, inspectionDeadline,
+      emdStatus, emdDueDate,
+      titleStatus, titleCompanyName, escrowOfficerName, escrowOfficerEmail, escrowOfficerPhone, escrowFileNumber,
+      payoffLender, payoffDemandAmount, payoffLoanNumber,
+      purchasePrice, assignmentFee, earnestMoney, closingDate,
+      status, customTerms,
+      txId, orgId
+    );
+
+    const updated = db.query("SELECT * FROM transactions WHERE id = ? AND org_id = ?").get(txId, orgId) as any;
+    return json({ ok: true, transaction: formatTransactionRow(updated, appUrlFrom(req)) });
+  }
+
+  // DELETE /api/transactions/:id — delete transaction
+  if (txPatchMatch && method === "DELETE") {
+    const txId = Number(txPatchMatch[1]);
+    db.query("DELETE FROM transactions WHERE id = ? AND org_id = ?").run(txId, orgId);
+    return json({ ok: true });
+  }
+
+  // POST /api/transactions/:id/generate-contract — regenerate PDF
+  const txGenMatch = pathname.match(/^\/api\/transactions\/(\d+)\/generate-contract$/);
+  if (txGenMatch && method === "POST") {
+    const txId = Number(txGenMatch[1]);
+    const tx = db.query("SELECT * FROM transactions WHERE id = ? AND org_id = ?").get(txId, orgId) as any;
+    if (!tx) return err("Transaction not found.", 404);
+
+    const org = db.query("SELECT name FROM orgs WHERE id = ?").get(orgId) as { name: string } | null;
+    const body = (await readBody(req)) || {};
+    const stateJurisdiction = typeof body.stateJurisdiction === "string" && body.stateJurisdiction.trim() ? body.stateJurisdiction.trim() : tx.state_jurisdiction;
+    const customTerms = typeof body.customTerms === "string" ? body.customTerms.trim() : tx.custom_terms;
+
+    const pdfBytes = await generateContractPdf({
+      contractType: tx.contract_type,
+      propertyAddress: tx.property_address,
+      sellerName: tx.seller_name,
+      sellerEmail: tx.seller_email,
+      sellerPhone: tx.seller_phone,
+      buyerName: tx.buyer_name,
+      buyerEmail: tx.buyer_email,
+      buyerPhone: tx.buyer_phone,
+      companyName: org?.name || "Revzenta Wholesale Biz",
+      purchasePrice: tx.purchase_price,
+      assignmentFee: tx.assignment_fee,
+      earnestMoney: tx.earnest_money,
+      emdDueDate: tx.emd_due_date,
+      inspectionDays: tx.inspection_days,
+      closingDate: tx.closing_date,
+      titleCompany: tx.title_company_name,
+      stateJurisdiction,
+      customTerms,
+    });
+
+    const newPdfId = newContractPdfId();
+    storeContractPdf(pdfBytes, newPdfId);
+
+    db.query(`
+      UPDATE transactions
+         SET contract_pdf_id = ?,
+             state_jurisdiction = ?,
+             custom_terms = ?,
+             updated_at = datetime('now')
+       WHERE id = ? AND org_id = ?
+    `).run(newPdfId, stateJurisdiction, customTerms, txId, orgId);
+
+    const updated = db.query("SELECT * FROM transactions WHERE id = ? AND org_id = ?").get(txId, orgId) as any;
+    return json({ ok: true, transaction: formatTransactionRow(updated, appUrlFrom(req)) });
+  }
+
+  // POST /api/transactions/:id/send-title-packet — assemble and email title packet
+  const txTitleMatch = pathname.match(/^\/api\/transactions\/(\d+)\/send-title-packet$/);
+  if (txTitleMatch && method === "POST") {
+    const txId = Number(txTitleMatch[1]);
+    const tx = db.query("SELECT * FROM transactions WHERE id = ? AND org_id = ?").get(txId, orgId) as any;
+    if (!tx) return err("Transaction not found.", 404);
+
+    const body = (await readBody(req)) || {};
+    const recipientEmail = (typeof body.email === "string" && body.email.trim()) || tx.escrow_officer_email;
+    if (!recipientEmail) return err("Escrow officer email is required to send title packet.", 400);
+
+    const org = db.query("SELECT name FROM orgs WHERE id = ?").get(orgId) as { name: string } | null;
+    const senderCompany = org?.name || "Revzenta Wholesale";
+    const baseUrl = appUrlFrom(req);
+    const titlePortalUrl = `${baseUrl}/title-portal/${tx.token_hash}`;
+    const contractPdfUrl = tx.contract_pdf_id ? `${baseUrl}/contract-pdf/${tx.contract_pdf_id}` : null;
+
+    const subject = `Title & Escrow Packet: ${tx.property_address} (File #${tx.escrow_file_number || tx.id})`;
+    const text = `
+Hello ${tx.escrow_officer_name || "Escrow Officer"},
+
+Please find the opening packet and transaction files for ${tx.property_address}:
+
+TRANSACTION SUMMARY:
+- Property Address: ${tx.property_address}
+- Contract Type: ${tx.contract_type === "assignment" ? "Wholesale Assignment Agreement" : "Purchase and Sale Agreement (PSA)"}
+- Seller: ${tx.seller_name} (${tx.seller_phone || tx.seller_email || "N/A"})
+- Buyer: ${tx.buyer_name}
+- Purchase Price: $${Number(tx.purchase_price).toLocaleString()}
+${tx.assignment_fee > 0 ? `- Assignment Fee: $${Number(tx.assignment_fee).toLocaleString()}\n` : ""}- Earnest Money Deposit: $${Number(tx.earnest_money).toLocaleString()} (${tx.emd_status})
+- Inspection Period: ${tx.inspection_days} Days (Deadline: ${tx.inspection_deadline || "N/A"})
+- Target Closing Date: ${tx.closing_date || "TBD"}
+
+PAYOFF INFORMATION:
+- Lender: ${tx.payoff_lender || "None on file"}
+- Est. Payoff: $${Number(tx.payoff_demand_amount).toLocaleString()}
+- Loan Number: ${tx.payoff_loan_number || "N/A"}
+
+LINKS:
+${contractPdfUrl ? `Direct Contract PDF: ${contractPdfUrl}\n` : ""}Online Title Portal: ${titlePortalUrl}
+
+Please confirm receipt and opening of this escrow file.
+
+Best regards,
+${senderCompany} Acquisitions & Closings Team
+    `.trim();
+
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 620px; margin: 0 auto; color: #1e293b; line-height: 1.6;">
+        <div style="background: #1e293b; color: #ffffff; padding: 24px; border-radius: 8px 8px 0 0;">
+          <h2 style="margin: 0; font-size: 20px;">Title & Escrow Closing Packet</h2>
+          <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.8;">${tx.property_address} &bull; File #${tx.escrow_file_number || tx.id}</p>
+        </div>
+        <div style="padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 8px 8px; background: #ffffff;">
+          <p>Hello <strong>${tx.escrow_officer_name || "Escrow Officer"}</strong>,</p>
+          <p>We are pleased to submit the opening transaction files for escrow on <strong>${tx.property_address}</strong>.</p>
+          
+          <div style="background: #f8fafc; border-left: 4px solid #3b82f6; padding: 16px; margin: 20px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0; font-size: 16px; color: #0f172a;">Settlement Details</h3>
+            <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+              <tr><td style="padding: 4px 0; color: #64748b;">Contract Type:</td><td style="font-weight: 600;">${tx.contract_type === "assignment" ? "Wholesale Assignment Agreement" : "Purchase & Sale Agreement"}</td></tr>
+              <tr><td style="padding: 4px 0; color: #64748b;">Seller:</td><td style="font-weight: 600;">${tx.seller_name}</td></tr>
+              <tr><td style="padding: 4px 0; color: #64748b;">Buyer / Assignee:</td><td style="font-weight: 600;">${tx.buyer_name}</td></tr>
+              <tr><td style="padding: 4px 0; color: #64748b;">Purchase Price:</td><td style="font-weight: 600; color: #059669;">$${Number(tx.purchase_price).toLocaleString()}</td></tr>
+              ${tx.assignment_fee > 0 ? `<tr><td style="padding: 4px 0; color: #64748b;">Assignment Fee:</td><td style="font-weight: 600; color: #6366f1;">$${Number(tx.assignment_fee).toLocaleString()}</td></tr>` : ""}
+              <tr><td style="padding: 4px 0; color: #64748b;">Earnest Money:</td><td style="font-weight: 600;">$${Number(tx.earnest_money).toLocaleString()} (${tx.emd_status})</td></tr>
+              <tr><td style="padding: 4px 0; color: #64748b;">Inspection Contingency:</td><td style="font-weight: 600;">${tx.inspection_days} Days (Ends: ${tx.inspection_deadline || "TBD"})</td></tr>
+              <tr><td style="padding: 4px 0; color: #64748b;">Target Closing Date:</td><td style="font-weight: 600;">${tx.closing_date || "TBD"}</td></tr>
+            </table>
+          </div>
+
+          ${tx.payoff_lender ? `
+            <div style="background: #f1f5f9; padding: 14px; margin: 16px 0; border-radius: 6px; font-size: 13px;">
+              <strong>Payoff Demand Information:</strong><br/>
+              Lender: ${tx.payoff_lender} &bull; Est. Balance: $${Number(tx.payoff_demand_amount).toLocaleString()} &bull; Loan #: ${tx.payoff_loan_number || "Pending"}
+            </div>
+          ` : ""}
+
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${titlePortalUrl}" style="background: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Open Title Company Portal</a>
+          </div>
+
+          <p style="font-size: 13px; color: #64748b;">Through the portal, your team can update closing milestones directly, download the countersigned contracts, and record earnest money receipts in real-time.</p>
+        </div>
+      </div>
+    `;
+
+    const sendRes = await sendEmail({
+      to: recipientEmail,
+      subject,
+      text,
+      html,
+    });
+
+    if (tx.title_status === "pending") {
+      db.query("UPDATE transactions SET title_status = 'opened', updated_at = datetime('now') WHERE id = ?").run(txId);
+    }
+
+    return json({ ok: true, emailStatus: emailStatusOf(sendRes), titlePortalUrl });
+  }
+
+  // POST /api/transactions/:id/send-signature-request — email e-sign contract link
+  const txSignMatch = pathname.match(/^\/api\/transactions\/(\d+)\/send-signature-request$/);
+  if (txSignMatch && method === "POST") {
+    const txId = Number(txSignMatch[1]);
+    const tx = db.query("SELECT * FROM transactions WHERE id = ? AND org_id = ?").get(txId, orgId) as any;
+    if (!tx) return err("Transaction not found.", 404);
+
+    const body = (await readBody(req)) || {};
+    const recipientEmail = (typeof body.email === "string" && body.email.trim()) || tx.seller_email || tx.buyer_email;
+    if (!recipientEmail) return err("Signer email is required.", 400);
+
+    const baseUrl = appUrlFrom(req);
+    const signUrl = `${baseUrl}/sign-contract/${tx.token_hash}`;
+    const subject = `Action Required: Signature Requested for ${tx.property_address}`;
+    const text = `
+Hello,
+
+You have been requested to review and electronically sign the wholesale contract for:
+${tx.property_address}
+
+Purchase Price: $${Number(tx.purchase_price).toLocaleString()}
+Contract Type: ${tx.contract_type === "assignment" ? "Assignment Agreement" : "Purchase & Sale Agreement"}
+
+Review and sign here:
+${signUrl}
+
+Thank you!
+    `.trim();
+
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <h2 style="color: #0f172a; margin-top: 0;">Electronic Signature Requested</h2>
+        <p style="color: #475569;">Please review and execute the contract for <strong>${tx.property_address}</strong>.</p>
+        <div style="background: #f8fafc; padding: 16px; border-radius: 6px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0;"><strong>Agreement:</strong> ${tx.contract_type === "assignment" ? "Assignment of PSA" : "Purchase & Sale Agreement (PSA)"}</p>
+          <p style="margin: 0;"><strong>Purchase Price:</strong> $${Number(tx.purchase_price).toLocaleString()}</p>
+        </div>
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${signUrl}" style="background: #0284c7; color: white; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Review & Sign Contract</a>
+        </div>
+        <p style="font-size: 12px; color: #94a3b8;">This document is governed by the Electronic Signatures in Global and National Commerce Act (E-SIGN Act).</p>
+      </div>
+    `;
+
+    const sendRes = await sendEmail({ to: recipientEmail, subject, text, html });
+    db.query("UPDATE transactions SET status = 'sent', updated_at = datetime('now') WHERE id = ?").run(txId);
+
+    return json({ ok: true, emailStatus: emailStatusOf(sendRes), signUrl });
+  }
+
   /* Calendar — the owner's demo-call appointments. OWNER-ONLY (requireAdmin).
      Every org's demo appointments, with the linked client's name (LEFT JOIN,
      so an appointment whose lead was deleted still shows, unlinked). */

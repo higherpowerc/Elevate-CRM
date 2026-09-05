@@ -556,6 +556,55 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_offers_org ON offers(org_id);
   CREATE INDEX IF NOT EXISTS idx_offers_client ON offers(client_id);
   CREATE INDEX IF NOT EXISTS idx_offers_created ON offers(created_at);
+
+  -- Wholesale Document & Transaction Hub: Contracts, E-Sign, Inspection & Contingency Clocks, Title Portal
+  CREATE TABLE IF NOT EXISTS transactions (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id                  INTEGER NOT NULL REFERENCES orgs(id),
+    client_id               INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+    buyer_id                INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+    contract_type           TEXT NOT NULL DEFAULT 'psa',
+    property_address        TEXT NOT NULL,
+    seller_name             TEXT NOT NULL DEFAULT '',
+    seller_email            TEXT NOT NULL DEFAULT '',
+    seller_phone            TEXT NOT NULL DEFAULT '',
+    buyer_name              TEXT NOT NULL DEFAULT '',
+    buyer_email             TEXT NOT NULL DEFAULT '',
+    buyer_phone             TEXT NOT NULL DEFAULT '',
+    purchase_price          REAL NOT NULL DEFAULT 0,
+    assignment_fee          REAL NOT NULL DEFAULT 0,
+    earnest_money           REAL NOT NULL DEFAULT 0,
+    emd_due_date            TEXT NOT NULL DEFAULT '',
+    emd_status              TEXT NOT NULL DEFAULT 'pending',
+    inspection_days         INTEGER NOT NULL DEFAULT 10,
+    inspection_deadline     TEXT NOT NULL DEFAULT '',
+    inspection_status       TEXT NOT NULL DEFAULT 'active',
+    closing_date            TEXT NOT NULL DEFAULT '',
+    title_company_name      TEXT NOT NULL DEFAULT '',
+    escrow_officer_name     TEXT NOT NULL DEFAULT '',
+    escrow_officer_email    TEXT NOT NULL DEFAULT '',
+    escrow_officer_phone    TEXT NOT NULL DEFAULT '',
+    escrow_file_number      TEXT NOT NULL DEFAULT '',
+    title_status            TEXT NOT NULL DEFAULT 'pending',
+    payoff_lender           TEXT NOT NULL DEFAULT '',
+    payoff_demand_amount    REAL NOT NULL DEFAULT 0,
+    payoff_loan_number      TEXT NOT NULL DEFAULT '',
+    state_jurisdiction      TEXT NOT NULL DEFAULT 'US General',
+    contract_pdf_id         TEXT NOT NULL DEFAULT '',
+    token_hash              TEXT NOT NULL DEFAULT '',
+    status                  TEXT NOT NULL DEFAULT 'draft',
+    signed_at               TEXT,
+    signer_name             TEXT NOT NULL DEFAULT '',
+    signer_signature        TEXT NOT NULL DEFAULT '',
+    signer_ip               TEXT NOT NULL DEFAULT '',
+    notes                   TEXT NOT NULL DEFAULT '',
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at              TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_transactions_org ON transactions(org_id);
+  CREATE INDEX IF NOT EXISTS idx_transactions_client ON transactions(client_id);
+  CREATE INDEX IF NOT EXISTS idx_transactions_token ON transactions(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_transactions_created ON transactions(created_at);
 `);
 
 /**
@@ -1754,4 +1803,70 @@ export interface TicketReplyRow {
   status: TicketReplyStatus;
   sent_at: string | null;
   created_at: string;
+}
+
+/**
+ * Wholesale Transactions Hub migration
+ * Stores contracts, e-signatures, inspection/EMD contingency clocks,
+ * and Title Company portal data.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id INTEGER NOT NULL,
+  client_id INTEGER,
+  buyer_id INTEGER,
+  contract_type TEXT NOT NULL DEFAULT 'psa',
+  property_address TEXT NOT NULL,
+  seller_name TEXT NOT NULL DEFAULT '',
+  seller_email TEXT NOT NULL DEFAULT '',
+  seller_phone TEXT NOT NULL DEFAULT '',
+  buyer_name TEXT NOT NULL DEFAULT '',
+  buyer_email TEXT NOT NULL DEFAULT '',
+  buyer_phone TEXT NOT NULL DEFAULT '',
+  purchase_price REAL NOT NULL DEFAULT 0,
+  assignment_fee REAL NOT NULL DEFAULT 0,
+  earnest_money REAL NOT NULL DEFAULT 0,
+  emd_due_date TEXT NOT NULL DEFAULT '',
+  emd_status TEXT NOT NULL DEFAULT 'pending',
+  inspection_days INTEGER NOT NULL DEFAULT 10,
+  inspection_deadline TEXT NOT NULL DEFAULT '',
+  inspection_status TEXT NOT NULL DEFAULT 'active',
+  closing_date TEXT NOT NULL DEFAULT '',
+  title_company_name TEXT NOT NULL DEFAULT '',
+  escrow_officer_name TEXT NOT NULL DEFAULT '',
+  escrow_officer_email TEXT NOT NULL DEFAULT '',
+  escrow_officer_phone TEXT NOT NULL DEFAULT '',
+  escrow_file_number TEXT NOT NULL DEFAULT '',
+  title_status TEXT NOT NULL DEFAULT 'pending',
+  payoff_lender TEXT NOT NULL DEFAULT '',
+  payoff_demand_amount REAL NOT NULL DEFAULT 0,
+  payoff_loan_number TEXT NOT NULL DEFAULT '',
+  state_jurisdiction TEXT NOT NULL DEFAULT 'US General',
+  contract_pdf_id TEXT NOT NULL DEFAULT '',
+  token_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  signed_at TEXT,
+  signer_name TEXT NOT NULL DEFAULT '',
+  signer_signature TEXT NOT NULL DEFAULT '',
+  signer_ip TEXT NOT NULL DEFAULT '',
+  custom_terms TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_transactions_org_id ON transactions(org_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_client_id ON transactions(client_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_token_hash ON transactions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_at);
+`);
+
+{
+  const txCols = db.query("PRAGMA table_info(transactions)").all() as { name: string }[];
+  if (!txCols.some((c) => c.name === "signer_signature")) {
+    db.exec("ALTER TABLE transactions ADD COLUMN signer_signature TEXT NOT NULL DEFAULT ''");
+  }
+  if (!txCols.some((c) => c.name === "custom_terms")) {
+    db.exec("ALTER TABLE transactions ADD COLUMN custom_terms TEXT NOT NULL DEFAULT ''");
+  }
 }

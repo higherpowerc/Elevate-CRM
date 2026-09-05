@@ -2012,7 +2012,8 @@ legend.field-label {
   border-color: rgba(255, 196, 107, 0.35);
   background: rgba(255, 196, 107, 0.09);
 }
-.badge.tone-violet {
+.badge.tone-violet,
+.badge.tone-purple {
   color: var(--violet);
   border-color: rgba(185, 166, 255, 0.35);
   background: rgba(185, 166, 255, 0.09);
@@ -2055,7 +2056,8 @@ legend.field-label {
   border-color: #fde68a;
   background: #fffbeb;
 }
-[data-theme="light"] .badge.tone-violet {
+[data-theme="light"] .badge.tone-violet,
+[data-theme="light"] .badge.tone-purple {
   color: #6d28d9;
   border-color: #ddd6fe;
   background: #f5f3ff;
@@ -4649,7 +4651,7 @@ input.accent-hex::placeholder,
 /* Owner Actions dropdown menu trigger (owner Leads col 4). */
 .owner-actions-menu { position: relative; display: inline-block; min-width: 0; }
 .owner-actions-trigger {
-  background: rgba(242, 241, 236, 0.06);
+  background: var(--bg-soft);
   border: 1px solid var(--line-strong);
   border-radius: 7px;
   color: var(--ink);
@@ -4660,7 +4662,10 @@ input.accent-hex::placeholder,
   white-space: nowrap;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-.owner-actions-trigger:hover { background: rgba(242, 241, 236, 0.12); border-color: var(--muted); }
+.owner-actions-trigger:hover {
+  background: var(--panel-2);
+  border-color: var(--muted);
+}
 .owner-actions-trigger .caret { color: var(--lime); margin-left: 4px; }
 .owner-actions-trigger:disabled { opacity: 0.55; cursor: default; }
 .owner-actions-dropdown {
@@ -4675,14 +4680,23 @@ input.accent-hex::placeholder,
   min-width: 150px;
   max-height: 220px;
   overflow-y: auto;
-  background: #141519;
-  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 9px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow);
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+[data-theme="light"] .owner-actions-dropdown {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+[data-theme="dark"] .owner-actions-dropdown {
+  background: #141519;
+  border: 1px solid var(--line-strong);
 }
 .owner-actions-dropdown [role="menuitem"] {
   background: none;
@@ -4691,16 +4705,23 @@ input.accent-hex::placeholder,
   color: var(--ink);
   cursor: pointer;
   font-size: 13px;
+  font-weight: 500;
   padding: 8px 10px;
   text-align: left;
   white-space: nowrap;
   width: 100%;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .owner-actions-dropdown [role="menuitem"]:hover,
 .owner-actions-dropdown [role="menuitem"]:focus-visible {
-  background: rgba(214, 255, 63, 0.12);
+  background: var(--lime-dim);
   color: var(--lime);
   outline: none;
+}
+[data-theme="light"] .owner-actions-dropdown [role="menuitem"]:hover,
+[data-theme="light"] .owner-actions-dropdown [role="menuitem"]:focus-visible {
+  background: #f0fdf4;
+  color: #15803d;
 }
 
 /* Owner Onboarding payment-link column: the prominent "Send payment link"
