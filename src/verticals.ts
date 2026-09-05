@@ -7,10 +7,12 @@
  * When the owner provisions a client account they pick a Business type; the
  * new org is seeded from the matching template: its pipeline stage names and
  * its account-level vertical settings (industry / service model / delivery
- * type / revenue model). BOTH types share the SAME generic pipeline
+ * type / revenue model). B2B and B2C share the SAME generic pipeline
  * (Leads → Contacted → Quoted → Won) and seed NO preset custom fields —
  * accounts customize their own stages and fields afterward, exactly like any
- * other tenant.
+ * other tenant. Wholesale Real Estate (owner 2026-09-03) is the first type
+ * with its own pipeline menu + preset deal fields; the same post-seed
+ * customization applies (stages/fields stay editable in Settings).
  *
  * The multi-vertical catalog (Cleaning, Landscaping, Med Spa, …) was
  * collapsed to exactly two business types on 2026-08-16 ("we will no longer
@@ -88,21 +90,42 @@ export const B2C_VERTICAL: VerticalTemplate = {
   defaultFields: [],
 };
 
-/** Housing Wholesale — real estate wholesale pipeline with properties and buyers. */
+/** Wholesale Real Estate (owner direction 2026-09-03) — house wholesaling.
+ *  Pipeline = the wholesaling funnel: source a deal → property under contract
+ *  → market the assignment to end buyers → buyer under contract → closing.
+ *  Fields = the key per-deal numbers a wholesaler tracks. */
 export const WHOLESALE_VERTICAL: VerticalTemplate = {
-  key: "wholesale",
-  label: "Housing Wholesale",
-  industry: "other",
-  serviceModel: "both",
+  key: "wholesalebiz",
+  label: "Wholesale Real Estate",
+  industry: "professional",
+  serviceModel: "commercial_only",
   deliveryType: "both",
   revenueModel: "sales",
-  defaultStages: ["Lead", "Contacted", "Under Contract", "Marketing", "Sold"],
-  defaultFields: [],
+  defaultStages: [
+    "Lead Sources",
+    "Property Under Contract",
+    "Marketing to Buyers",
+    "Buyer Under Contract",
+    "Closing",
+  ],
+  defaultFields: [
+    { label: "Property address", type: "text" },
+    { label: "ARV", type: "text" },
+    { label: "Repair estimate", type: "text" },
+    { label: "Purchase price", type: "text" },
+    { label: "Max allowable offer (MAO)", type: "text" },
+    { label: "Assignment fee", type: "text" },
+    { label: "End buyer", type: "text" },
+    { label: "Closing date", type: "text" },
+    { label: "Motivated seller", type: "yesno" },
+    { label: "Clear title", type: "yesno" },
+  ],
 };
 
 export const VERTICALS: VerticalTemplate[] = [B2B_VERTICAL, B2C_VERTICAL, WHOLESALE_VERTICAL];
 
-/** All selectable business types in display order. */
+/** All selectable business types in display order: B2B first (the default),
+ *  then B2C, then Wholesale Real Estate. */
 export const ALL_VERTICALS: VerticalTemplate[] = VERTICALS;
 
 /** key → template. */

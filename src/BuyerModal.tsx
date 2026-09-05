@@ -2,22 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Client } from "./types";
 
 interface Props {
-  buyer?: Client;
+  buyer?: any;
   busy: boolean;
   onClose: () => void;
-  onSave: (input: {
-    companyName: string;
-    contactName: string;
-    email: string;
-    phone: string;
-    clientType: "buyer";
-    stage: string;
-    dealValue: number;
-    address: string;
-    services: string[];
-    customFields: Array<{ name: string; value: string }>;
-    notes: string;
-  }, editing?: Client) => void;
+  onSave: (input: any, editing?: any) => void;
 }
 
 const STRATEGIES = [
@@ -49,32 +37,54 @@ function normalizeStrategy(s: string): string {
 
 export default function BuyerModal({ buyer, busy, onClose, onSave }: Props) {
   const getField = (name: string) =>
-    buyer?.customFields?.find((f) => f.name.toLowerCase() === name.toLowerCase())?.value || "";
+    buyer?.customFields?.find((f: any) => f.name.toLowerCase() === name.toLowerCase())?.value || "";
 
-  const [companyName, setCompanyName] = useState(buyer?.companyName || "");
+  const [companyName, setCompanyName] = useState(buyer?.companyName || buyer?.name || "");
   const [contactName, setContactName] = useState(buyer?.contactName || "");
   const [email, setEmail] = useState(buyer?.email || "");
   const [phone, setPhone] = useState(buyer?.phone || "");
 
   const initialStrategies: string[] = (() => {
-    if (!buyer) return [];
-    const raw = getField("Buyer Type") || "";
-    const list: string[] = [];
-    if (raw) {
-      list.push(...raw.split(/[,/]+/).map((s) => normalizeStrategy(s.trim())).filter(Boolean));
+    const rawServices: string[] = Array.isArray(buyer?.services) ? buyer.services : [];
+    if (rawServices.length > 0) {
+      return rawServices.map(normalizeStrategy).filter(Boolean);
     }
-    if (buyer.services && Array.isArray(buyer.services)) {
-      list.push(...buyer.services.map((s) => normalizeStrategy(s.trim())).filter(Boolean));
+    const stored = getField("Target Strategies") || getField("Investment Strategies");
+    if (stored) {
+      return stored.split(",").map(normalizeStrategy).filter(Boolean);
     }
-    return Array.from(new Set(list)).filter((s) => STRATEGIES.includes(s));
+    return [];
   })();
 
   const [strategies, setStrategies] = useState<string[]>(initialStrategies);
-  const [targetMarkets, setTargetMarkets] = useState(getField("Target Markets") || buyer?.address || "");
-  const [maxBudget, setMaxBudget] = useState<number>(buyer?.dealValue || 450000);
-  const [pofStatus, setPofStatus] = useState(getField("Proof of Funds") || "Verified Cash");
-  const [buyBox, setBuyBox] = useState(getField("Buy Box") || buyer?.notes || "");
+
+  const [buyerType, setBuyerType] = useState(
+    getField("Buyer Type") || "Cash Buyer"
+  );
+  const [proofOfFunds, setProofOfFunds] = useState(
+    getField("Proof of Funds") || "Pending Verification"
+  );
+  const [maxBudget, setMaxBudget] = useState<number>(() => {
+    const raw = getField("Max Budget");
+    if (raw) return Number(raw) || 0;
+    return buyer?.dealValue || 0;
+  });
+  const [targetMarkets, setTargetMarkets] = useState(
+    getField("Target Markets") || buyer?.address || ""
+  );
+  const [buyBox, setBuyBox] = useState(
+    getField("Buy Box") || buyer?.criteria || buyer?.notes || ""
+  );
+
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
 
   const toggleStrategy = (s: string) => {
     setStrategies((prev) =>
@@ -82,80 +92,65 @@ export default function BuyerModal({ buyer, busy, onClose, onSave }: Props) {
     );
   };
 
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [busy, onClose]);
-
-  function handleSubmit(e: FormEvent) {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!companyName.trim()) {
-      setError("Buyer or entity name is required.");
-      return;
-    }
-    if (!email.trim() && !phone.trim()) {
-      setError("Please provide an email or phone number for the buyer.");
-      return;
-    }
-    if (strategies.length === 0) {
-      setError("Please select at least one investment strategy for this buyer.");
+    if (!companyName.trim() && !contactName.trim()) {
+      setError("Please provide an investor name or company / entity name.");
       return;
     }
     setError(null);
 
-    onSave(
-      {
-        companyName: companyName.trim(),
-        contactName: contactName.trim() || companyName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        clientType: "buyer",
-        stage: "Buyer",
-        dealValue: Number(maxBudget) || 0,
-        address: targetMarkets.trim(),
-        services: strategies,
-        customFields: [
-          { name: "Buyer Type", value: strategies.join(", ") },
-          { name: "Target Markets", value: targetMarkets.trim() },
-          { name: "Max Budget", value: `$${Number(maxBudget || 0).toLocaleString()}` },
-          { name: "Proof of Funds", value: pofStatus },
-          { name: "Buy Box", value: buyBox.trim() },
-        ],
-        notes: buyBox.trim(),
-      },
-      buyer,
-    );
-  }
+    const customFields = [
+      { name: "Buyer Type", value: buyerType },
+      { name: "Proof of Funds", value: proofOfFunds },
+      { name: "Max Budget", value: maxBudget ? String(maxBudget) : "" },
+      { name: "Target Markets", value: targetMarkets.trim() },
+      { name: "Buy Box", value: buyBox.trim() },
+      { name: "Investment Strategies", value: strategies.join(", ") },
+    ];
+
+    onSave({
+      companyName: (companyName.trim() || contactName.trim()),
+      contactName: contactName.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      clientType: "buyer",
+      stage: "Buyer",
+      dealValue: maxBudget,
+      address: targetMarkets.trim(),
+      services: strategies,
+      customFields,
+      notes: buyBox.trim(),
+      name: (companyName.trim() || contactName.trim()),
+      criteria: buyBox.trim(),
+      bought: "",
+    }, buyer);
+  };
 
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={buyer ? "Edit Investor" : "New Investor"}>
-      <div className="modal" style={{ maxWidth: "600px" }}>
+    <div className="overlay" role="dialog" aria-modal="true" aria-label="Investor Form">
+      <div className="modal" style={{ maxWidth: "680px", width: "95%" }}>
         <div className="modal-head">
-          <div>
-            <h2>{buyer ? "Edit Investor" : "New Investor"}</h2>
-            <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--muted)" }}>
-              Add a qualified investor to your wholesale disposition list.
-            </p>
-          </div>
-          <button className="icon-btn" onClick={onClose} disabled={busy} aria-label="Close modal">
+          <h2>{buyer ? "Edit Investor / Cash Buyer" : "Add Investor / Cash Buyer"}</h2>
+          <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
             ✕
           </button>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            {error && <div className="alert alert-error">{error}</div>}
+        <form onSubmit={handleSubmit} className="form modal-form">
+          {error && (
+            <div className="alert alert-error" role="alert">
+              {error}
+            </div>
+          )}
 
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px", padding: "16px 20px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <label className="field" style={{ gridColumn: "1 / -1" }}>
+              <label className="field">
                 <span className="field-label">Investor / Entity Name *</span>
                 <input
                   type="text"
-                  required
-                  placeholder="e.g. Apex Holdings LLC or Michael Vance"
+                  placeholder="e.g. Apex Acquisitions LLC"
                   value={companyName}
                   onChange={(e) => setCompanyName(e.target.value)}
                   disabled={busy}
@@ -164,19 +159,41 @@ export default function BuyerModal({ buyer, busy, onClose, onSave }: Props) {
               </label>
 
               <label className="field">
-                <span className="field-label">Contact Person</span>
+                <span className="field-label">Primary Contact Person</span>
                 <input
                   type="text"
-                  placeholder="e.g. Michael Vance"
+                  placeholder="e.g. Marcus Vance"
                   value={contactName}
                   onChange={(e) => setContactName(e.target.value)}
                   disabled={busy}
                 />
               </label>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              <label className="field">
+                <span className="field-label">Investor Category</span>
+                <select
+                  value={buyerType}
+                  onChange={(e) => setBuyerType(e.target.value)}
+                  disabled={busy}
+                >
+                  <option value="Cash Buyer">Cash Buyer (Direct / Proof of Funds)</option>
+                  <option value="Creative Financing">Creative Financing (SubTo / Seller Finance)</option>
+                  <option value="Fix & Flip">Fix & Flip Operator</option>
+                  <option value="Buy & Hold">Buy & Hold (Rental Portfolio)</option>
+                  <option value="Wholesaler / Dispo">Wholesaler / Co-Wholesaler</option>
+                  <option value="Institutional / Hedge Fund">Institutional / Hedge Fund</option>
+                </select>
+              </label>
 
               <label className="field">
                 <span className="field-label">Proof of Funds (POF)</span>
-                <select value={pofStatus} onChange={(e) => setPofStatus(e.target.value)} disabled={busy}>
+                <select
+                  value={proofOfFunds}
+                  onChange={(e) => setProofOfFunds(e.target.value)}
+                  disabled={busy}
+                >
                   {POF_OPTIONS.map((opt) => (
                     <option key={opt} value={opt}>
                       {opt}
@@ -184,12 +201,14 @@ export default function BuyerModal({ buyer, busy, onClose, onSave }: Props) {
                   ))}
                 </select>
               </label>
+            </div>
 
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               <label className="field">
                 <span className="field-label">Email</span>
                 <input
                   type="email"
-                  placeholder="e.g. investor@apex.com"
+                  placeholder="e.g. acquisitions@apex.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={busy}
@@ -216,7 +235,7 @@ export default function BuyerModal({ buyer, busy, onClose, onSave }: Props) {
                 </span>
               </span>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "4px" }}>
-                {STRATEGIES.map((s) => {
+                {STRATEGIES.map((s, idx) => {
                   const active = strategies.includes(s);
                   return (
                     <button
@@ -235,7 +254,7 @@ export default function BuyerModal({ buyer, busy, onClose, onSave }: Props) {
                         transition: "all 0.15s ease",
                       }}
                     >
-                      {active ? "✓ " : "+ "}
+                      {active ? `✓ ${idx + 1}. ` : `+ ${idx + 1}. `}
                       {s}
                     </button>
                   );

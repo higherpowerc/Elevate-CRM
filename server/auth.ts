@@ -115,7 +115,11 @@ export interface User {
    *  Additive key on /api/auth/me + login (and every user payload); drives the
    *  Settings "Team members" section and admin-bypass rendering. */
   isOrgAdmin: boolean;
+  /** Branding rename (2026-08-18) — true for the platform OWNER session
+   *  (owner org AND role='admin'); drives the owner cockpit UI. */
+  isOwner: boolean;
   orgName: string;
+  verticalKey: string;
   /** The tenant's ordered pipeline stages (Phase 3a) — the client stage
    *  dropdown and dashboard breakdown are driven by this list. */
   stages: string[];
@@ -164,10 +168,13 @@ export function toUser(row: UserRow): User {
     isOrgAdmin: isOrgAdminUser(row.id, row.org_id, row.role),
     isOwner: row.role === "admin" && isOwnerOrg(row.org_id),
     orgName: org?.name ?? "",
+    // Wholesale Biz custom menu (owner 2026-09-04) — the workspace's
+    // business type rides on the session user so the client nav can switch
+    // per vertical (additive key on /api/auth/me + login).
+    verticalKey: org?.vertical_key ?? "",
     stages: org ? parseStages(org.stages) : [...DEFAULT_STAGES],
     accentColor: org?.accent_color ?? DEFAULT_ACCENT,
     dashboardColor: org?.dashboard_color ?? "",
-    verticalKey: org?.vertical_key ?? "",
     created_at: row.created_at,
   };
 }

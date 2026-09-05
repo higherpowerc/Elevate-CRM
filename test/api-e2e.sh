@@ -1,6 +1,23 @@
 #!/bin/bash
 # End-to-end API test for Revzenta CRM. Points at $BASE (default :3001).
 #
+# ── PRE-DEPLOY GATE (run in this order; every step must pass) ─────────────
+#   1. bunx tsc --noEmit            # type-check ERRORS fail the gate
+#                                   #   (catches TDZ/hoisting ReferenceErrors
+#                                   #    that bun build never checks — the
+#                                   #    2026-09-04 blank-screen root cause)
+#   2. canonical e2e from clean:    # this suite, against a freshly built
+#                                   #   bundle + db:reset (below)
+#   3. bash test/render-smoke.sh    # browser render smoke: proves the built
+#                                   #   SPA actually renders (login + owner +
+#                                   #   tenant + wholesale states) with a clean
+#                                   #   console and NO fatal boundary — the
+#                                   #   second gate that would have caught the
+#                                   #   blank screen (the API suite never
+#                                   #   renders the React app)
+#   THEN deploy. `bun run build` itself runs `tsc --noEmit` first, so a build
+#   with type errors cannot even produce a bundle.
+# ───────────────────────────────────────────────────────────────────────────
 # CANONICAL RUN (what produced the green result — this sandbox exports PORT=80
 # and REAL Stripe/Resend secrets, so the main server must be booted with the
 # Stripe keys deliberately stripped; otherwise §48a's "no key -> 503" test makes
@@ -16,6 +33,12 @@
 #  email-asserting section runs its own throwaway server + mock on 3196-3212.)
 set -u
 BASE="${BASE:-http://localhost:3001}"
+# Repo root (this suite lives in test/). The DB-layer probes and throwaway
+# boots below import the app from HERE — the previously hardcoded pre-GitHub
+# path rotted when the repo moved to higherpowerc/Elevate-CRM (sections
+# 24b/25/27 silently probed the wrong DB).
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export APP_DIR
 # Hermeticity: this suite never calls Stripe with a real key — §48a needs the
 # main server AND the throwaways Stripe-key-free (the 503 path), §49's server
 # gets its own webhook secret explicitly. Strip any ambient secrets so they
@@ -1465,11 +1488,69 @@ S=$(code -b "$JARB2C" -X POST -H 'Content-Type: application/json' \
 check "b2c org writes its own field value → 201" 201 "$S"
 grep -q '"name":"Extra field","value":"y"' /tmp/body.json && echo "  ✓ own text field value round-trips" || echo "  ✗ b2c client: $(cat /tmp/body.json)"
 
-echo "-- 23f. UI surface strings in the built bundle =="
+echo "-- 23f. Wholesale Real Estate (owner 2026-09-03): wholesalebiz seeds the house-wholesaling pipeline + deal fields =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Wholesale Pilot LLC","email":"wsb@example.com","password":"wsbpass123","vertical":"wholesalebiz"}' "$BASE/api/admin/orgs")
+check "admin creates Wholesale Pilot LLC (vertical=wholesalebiz) → 201" 201 "$S"
+WSB_ORG_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARWSB=$(mktemp)
+S=$(code -c "$JARWSB" -b "$JARWSB" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"wsb@example.com","password":"wsbpass123"}' "$BASE/api/auth/login")
+check "wholesalebiz org login → 200" 200 "$S"
+S=$(code -b "$JARWSB" "$BASE/api/settings")
+check "wholesalebiz org GET settings → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+assert d['stages'] == ["Lead Sources","Property Under Contract","Marketing to Buyers","Buyer Under Contract","Closing"], d['stages']
+assert d['verticalKey'] == 'wholesalebiz', d['verticalKey']
+assert d['industry'] == 'professional', d['industry']
+assert d['serviceModel'] == 'commercial_only', d['serviceModel']
+assert d['deliveryType'] == 'both', d['deliveryType']
+assert d['revenueModel'] == 'sales', d['revenueModel']
+names = [f['name'] for f in d['customFields']]
+assert names == ["Property address","ARV","Repair estimate","Purchase price","Max allowable offer (MAO)","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"], names
+types = {f['name']: f['type'] for f in d['customFields']}
+assert types["Motivated seller"] == 'checkbox' and types["Clear title"] == 'checkbox', types
+assert types["ARV"] == 'text' and types["Property address"] == 'text' and types["Max allowable offer (MAO)"] == 'text', types
+print("  ✓ wholesalebiz seeds: 5 wholesale stages in order + key/industry/serviceModel/delivery/revenue + 10 deal fields (8 text incl. MAO, 2 checkbox)")
+PY
+S=$(code -b "$JARWSB" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"123 Maple St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"ARV","value":"325000"},{"name":"Assignment fee","value":"12000"},{"name":"End buyer","value":"Riverside Capital LLC"},{"name":"Motivated seller","value":true}]}' "$BASE/api/clients")
+check "wholesalebiz org creates a deal in its own stage with its own fields → 201" 201 "$S"
+grep -q '"stage":"Property Under Contract"' /tmp/body.json && grep -q '"name":"ARV","value":"325000"' /tmp/body.json && grep -q '"name":"Motivated seller","value":"1"' /tmp/body.json && echo "  ✓ wholesale deal values round-trip (text + yes/no checkbox)" || echo "  ✗ wholesale deal: $(cat /tmp/body.json)"
+WSB_CLIENT_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
+echo "-- 23f2. Wholesale property record: MAO roundtrip (Phase A1) =="
+S=$(code -b "$JARWSB" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"456 Oak Ave (assignment)","clientType":"commercial","stage":"Marketing to Buyers","customFields":[{"name":"Max allowable offer (MAO)","value":"248000"},{"name":"Purchase price","value":"230000"},{"name":"Assignment fee","value":"18000"},{"name":"Clear title","value":true}]}' "$BASE/api/clients/$WSB_CLIENT_ID")
+check "23f2: wholesale PUT property with MAO → 200" 200 "$S"
+grep -q '"name":"Max allowable offer (MAO)","value":"248000"' /tmp/body.json && grep -q '"name":"Purchase price","value":"230000"' /tmp/body.json && grep -q '"name":"Clear title","value":"1"' /tmp/body.json && echo "  ✓ wholesale property values round-trip (MAO + purchase price + yes/no)" || echo "  ✗ wholesale property PUT: $(cat /tmp/body.json)"
+S=$(code -b "$JARWSB" "$BASE/api/clients/$WSB_CLIENT_ID")
+check "23f2: wholesale GET property record → 200" 200 "$S"
+grep -q '"companyName":"456 Oak Ave (assignment)"' /tmp/body.json && grep -q '"name":"Max allowable offer (MAO)","value":"248000"' /tmp/body.json && echo "  ✓ wholesale property GET roundtrip incl. MAO" || echo "  ✗ wholesale property GET: $(cat /tmp/body.json)"
+S=$(code -b "$JARB2B" "$BASE/api/settings")
+check "23f2: plain b2b org settings still 200 → 200" 200 "$S"
+if ! grep -q 'Properties' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ non-wholesale org has NO Properties nav marker in its settings"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ non-wholesale org settings leaked a Properties marker: $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JAR" "$BASE/api/settings")
+check "owner settings → 200" 200 "$S"
+if grep -qv 'Property Under Contract' /tmp/body.json && grep -qv '"verticalKey":"wholesalebiz"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ owner org has NO wholesale stages/key (isolation)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ owner org touched by wholesale seed: $(cat /tmp/body.json)"
+fi
+S=$(code -b "$JARB2B" "$BASE/api/settings")
+check "b2b org settings after wholesale creation → 200" 200 "$S"
+grep -q '"verticalKey":"b2b"' /tmp/body.json && grep -q '"customFields":\[\]' /tmp/body.json && echo "  ✓ b2b org unaffected by wholesalebiz creation (isolation)" || echo "  ✗ b2b org: $(cat /tmp/body.json)"
+check "admin deletes Wholesale Pilot LLC → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$WSB_ORG_ID")
+echo "-- 23g. UI surface strings in the built bundle =="
 NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
 if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
-  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS"; then
-    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C generic pipeline"
+  if grep -q "Business type" "$NEWEST_JS" && grep -q "Apply template" "$NEWEST_JS" && grep -q '"B2B"' "$NEWEST_JS" && grep -q '"B2C"' "$NEWEST_JS" && grep -q '"Wholesale Real Estate"' "$NEWEST_JS" && grep -q "Property Under Contract" "$NEWEST_JS" && grep -q "Contacted" "$NEWEST_JS" && grep -q "Quoted" "$NEWEST_JS" && grep -q "Max allowable offer (MAO)" "$NEWEST_JS" && grep -q "+ New property" "$NEWEST_JS" && grep -q "Deal info" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle contains the business-type picker, apply-template + the B2B/B2C/Wholesale catalogs + wholesale Properties (MAO, New property, Deal info)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ B2B/B2C strings missing from $NEWEST_JS"
   fi
@@ -1530,7 +1611,7 @@ check "tenant starts from the legacy default stages (General org) → 200" 200 "
 grep -q '"stages":\["Prospect","Intake","Kickoff","Build","Launch","Retainer"\]' /tmp/body.json && echo "  ✓ tenant has the legacy 6-stage list (the migration must NOT touch it)" || echo "  ✗ tenant stages: $(cat /tmp/body.json)"
 
 cat > /tmp/mig_run.ts <<'TS'
-import { db, getOrg, parseStages, migrateOwnerPipeline } from "/home/team/shared/crm-app/server/db.ts";
+const { db, getOrg, parseStages, migrateOwnerPipeline } = await import(process.env.APP_DIR + "/server/db.ts");
 // Simulate the pre-3g-2 owner state: legacy 6-stage pipeline + one client per
 // old stage (inserted at the DB layer — the migration IS a data migration).
 const owner = db.query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get() as { org_id: number };
@@ -1642,7 +1723,7 @@ echo "== 25. Fresh-process boot: prod-style import-time migration (TDZ regressio
 # If the TDZ bug ever regresses, this section fails while section 24 stays
 # green — exactly the failure mode that hit prod.
 BOOT_DIR=$(mktemp -d)
-(cd /home/team/shared/crm-app && DATA_DIR="$BOOT_DIR" ADMIN_EMAIL=owner@elevate.studio \
+(cd "$APP_DIR" && DATA_DIR="$BOOT_DIR" ADMIN_EMAIL=owner@elevate.studio \
   ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
   bun ./server/seed.ts >/dev/null 2>&1)
 cat > "$BOOT_DIR/setup_legacy.ts" <<'TS'
@@ -1674,7 +1755,7 @@ cat > "$BOOT_DIR/boot_import.ts" <<'TS'
 // migrate the owner org to Leads → Onboarding → Sold. On a regression of the TDZ
 // bug this throws ReferenceError before the import completes and BOOT_RESULT
 // is never printed.
-import { db, getOrg, parseStages, OWNER_PIPELINE } from "/home/team/shared/crm-app/server/db.ts";
+const { db, getOrg, parseStages, OWNER_PIPELINE } = await import(process.env.APP_DIR + "/server/db.ts");
 const admin = db
   .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
   .get() as { org_id: number };
@@ -1718,7 +1799,7 @@ echo "-- 25b. Boot remap of the legacy 'Intakes' owner stage (owner direction 20
 # must rename the middle stage to "Onboarding" at the same position and move
 # the client with it. A SECOND import must be a no-op (idempotent).
 REN_DIR=$(mktemp -d)
-(cd /home/team/shared/crm-app && DATA_DIR="$REN_DIR" ADMIN_EMAIL=owner@elevate.studio \
+(cd "$APP_DIR" && DATA_DIR="$REN_DIR" ADMIN_EMAIL=owner@elevate.studio \
   ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
   bun ./server/seed.ts >/dev/null 2>&1)
 cat > "$REN_DIR/setup_rename.ts" <<'TS'
@@ -1748,7 +1829,7 @@ cat > "$REN_DIR/boot_rename.ts" <<'TS'
 // THE boot probe: import server/db.ts in a fresh process against the
 // pre-rename DB. The import-time migrateOwnerPipeline() pass must rename the
 // owner middle stage "Intakes" → "Onboarding" and move the client with it.
-import { db, getOrg, parseStages, OWNER_PIPELINE } from "/home/team/shared/crm-app/server/db.ts";
+const { db, getOrg, parseStages, OWNER_PIPELINE } = await import(process.env.APP_DIR + "/server/db.ts");
 const admin = db
   .query("SELECT org_id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
   .get() as { org_id: number };
@@ -1811,7 +1892,7 @@ echo "== 25c. Boot backfill: signed records stuck in a non-terminal stage advanc
 # account' task + next_action), must be a no-op when re-run (idempotent),
 # and must never block startup.
 BF_DIR=$(mktemp -d)
-(cd /home/team/shared/crm-app && DATA_DIR="$BF_DIR" ADMIN_EMAIL=owner@elevate.studio \
+(cd "$APP_DIR" && DATA_DIR="$BF_DIR" ADMIN_EMAIL=owner@elevate.studio \
   ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
   bun ./server/seed.ts >/dev/null 2>&1)
 cat > "$BF_DIR/setup_backfill.ts" <<'TS'
@@ -1858,8 +1939,8 @@ cat > "$BF_DIR/backfill_probe.ts" <<'TS'
 // THE probe: import the exported backfill and run it TWICE against the
 // pre-backfill DB — the first run must settle every stuck signed record, the
 // second must be a total no-op (idempotent).
-import { db } from "/home/team/shared/crm-app/server/db.ts";
-import { backfillSignedClients } from "/home/team/shared/crm-app/server/agreements.ts";
+const { db } = await import(process.env.APP_DIR + "/server/db.ts");
+const { backfillSignedClients } = await import(process.env.APP_DIR + "/server/agreements.ts");
 const state = () => {
   const rows = db
     .query(
@@ -1935,7 +2016,7 @@ else
   FAIL=$((FAIL+1)); echo "  ✗ revert failed: $BF_REVERT"
 fi
 BF_LOG="$BF_DIR/boot.log"
-(cd /home/team/shared/crm-app && DATA_DIR="$BF_DIR" PORT=3099 ADMIN_EMAIL=owner@elevate.studio \
+(cd "$APP_DIR" && DATA_DIR="$BF_DIR" PORT=3099 ADMIN_EMAIL=owner@elevate.studio \
   ADMIN_PASSWORD=AfSp1Bsh07nP9aFQ SESSION_SECRET=t COOKIE_SECURE=false \
   nohup bun ./server/index.ts > "$BF_LOG" 2>&1 & echo $! > "$BF_DIR/boot.pid")
 BF_BOOT_OK=0
@@ -4345,7 +4426,7 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage header missing from $NEWEST_JS39"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\("div",\{className:"stage-cell"' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9_$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\("div",\{className:"stage-cell"' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: StageBadge+stage-select td is owner-Leads-gated in the built rows"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Stage td missing from $NEWEST_JS39"
@@ -4360,7 +4441,7 @@ if [ -n "$NEWEST_JS39" ]; then
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: 8-col/7-col colgroup sequences missing from $NEWEST_JS39"
   fi
-  if grep -Eq '![A-Za-z0-9$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39" && ! grep -Eq 'jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39"; then
+  if grep -Eq '![A-Za-z0-9_$]+&&[A-Za-z0-9$_]+\.jsxDEV\("td",\{"data-label":"Stage",className:"lost-dnc-stage-cell",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39" && ! grep -Eq 'jsxDEV\("td",\{"data-label":"Stage",children:[A-Za-z0-9$_]+\.jsxDEV\([A-Za-z0-9$_]+,\{stage:' "$NEWEST_JS39"; then
     PASS=$((PASS+1)); echo "  ✓ bundle: Lost/DNC Stage cell is owner-gated in the built rows (hidden on owner Leads, kept for tenants)"
   else
     FAIL=$((FAIL+1)); echo "  ✗ bundle: gated Lost/DNC Stage cell missing from $NEWEST_JS39"
@@ -6822,6 +6903,7 @@ echo "-- 50e. Sales-Flow UI (PR #78): meeting-link invite, follow-up note, sold-
 code -b "$JA50" "$B50/api/settings" > /dev/null
 FIRST50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
 MID50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][1])")
+TERM50=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
 echo "     (owner buckets: Leads=\"$FIRST50\", onboarding first-middle=\"$MID50\")"
 S=$(code -b "$JA50" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Meeting Link Co\",\"contactName\":\"Miles M\",\"email\":\"miles@meet.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$FIRST50\"}" "$B50/api/clients")
@@ -6884,28 +6966,30 @@ assert me in leads_bucket, "maybe lead not in the first-stage Leads bucket"
 print("  ✓ 50e: maybe lead still appears in the owner Leads bucket (first stage)")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ 50e: maybe lead left the Leads bucket"; cat "$PASS_TMP"; fi
-# (c) Demo outcome 'sold' relocates the lead out of Leads INTO Onboarding. The
-#     edit modal's save performs exactly one updateClient with the full record
-#     (demoOutcome=sold) + stage=onboardingStage (orgStages[1]) — mirror that
-#     same call here.
+# (c) Demo outcome 'sold' relocates the lead out of Leads INTO the TERMINAL
+#     stage (owner Roo rework, PR #125: the sold quick-action writes
+#     stage=terminalStage = orgStages[-1], replacing the old onboarding
+#     relocation). The edit modal's save performs exactly one updateClient
+#     with the full record (demoOutcome=sold) + stage=terminalStage — mirror
+#     that same call here.
 S=$(code -b "$JA50" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Meeting Link Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$MID50\"}" "$B50/api/clients/$ML_ID")
-check "50e: owner marks lead sold and relocates it into Onboarding -> 200" 200 "$S"
-grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$MID50\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: sold outcome + Onboarding stage persisted"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: payload: $(cat /tmp/body.json)"; }
+  -d "{\"companyName\":\"Meeting Link Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$TERM50\"}" "$B50/api/clients/$ML_ID")
+check "50e: owner marks lead sold and relocates it into the terminal stage -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$TERM50\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 50e: sold outcome + terminal stage persisted"; } || { FAIL=$((FAIL+1)); echo "  ✗ 50e: payload: $(cat /tmp/body.json)"; }
 code -b "$JA50" "$B50/api/clients?archived=1" > /dev/null
-if ML_ID="$ML_ID" FIRST50="$FIRST50" MID50="$MID50" python3 - <<'PY' 2>"$PASS_TMP"
+if ML_ID="$ML_ID" FIRST50="$FIRST50" TERM50="$TERM50" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['ML_ID'])][0]
-first, mid = os.environ['FIRST50'], os.environ['MID50']
-assert me['stage'] == mid, me['stage']
+first, term = os.environ['FIRST50'], os.environ['TERM50']
+assert me['stage'] == term, me['stage']
 leads_bucket = [c for c in clients if c['stage'] == first]
 assert me not in leads_bucket, "sold lead still in the Leads bucket"
-onboard_bucket = [c for c in clients if c['stage'] == mid]
-assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
-print("  ✓ 50e: sold lead left the Leads bucket and now sits in the Onboarding bucket")
+terminal_bucket = [c for c in clients if c['stage'] == term]
+assert me in terminal_bucket, "sold lead not in the terminal-stage bucket"
+print("  ✓ 50e: sold lead left the Leads bucket and now sits in the terminal-stage bucket")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 50e: sold-lead relocation (Leads -> Onboarding) verified"; else FAIL=$((FAIL+1)); echo "  ✗ 50e: sold relocation failed"; cat "$PASS_TMP"; fi
+then PASS=$((PASS+1)); echo "  ✓ 50e: sold-lead relocation (Leads -> terminal stage) verified"; else FAIL=$((FAIL+1)); echo "  ✗ 50e: sold relocation failed"; cat "$PASS_TMP"; fi
 # (d) Source markers — the owner Leads tab is the 4-col layout (Name | Contact |
 #     Schedule Demo | Actions) with Edit/DNC/Lost inside the Actions dropdown
 #     (no inline Demo dropdown / no inline Lost/DNC buttons); Onboarding is the
@@ -6988,6 +7072,11 @@ if grep -Fq 'from "./demoTime"' src/Calendar.tsx && grep -Fq 'fmtDemoTime(t)' sr
   PASS=$((PASS+1)); echo "  ✓ source: Calendar renders demo time as 12-hour AM/PM + MST, never through a Date.toLocaleTimeString (no local-tz shift)"
 else
   FAIL=$((FAIL+1)); echo "  ✗ source: Calendar Arizona MST AM/PM markers missing from src/Calendar.tsx"
+fi
+if grep -Fq 'Great news, ${opts.clientName}!' server/email.ts && ! grep -Fq 'Thanks for your interest in Revzenta CRM.' server/email.ts; then
+  PASS=$((PASS+1)); echo "  ✓ source: demo invite opens with the Great-news greeting (owner Roo rework, PR #125)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ source: demo invite greeting drift — expected 'Great news, <name>!' in server/email.ts"
 fi
 if grep -Fq 'MST' server/email.ts && grep -Fq 'fmtMstTime' server/email.ts && grep -Fq 'Your demo call is scheduled for ${when}' server/email.ts && ! grep -Fq 'Your demo call is scheduled for ${opts.scheduledAt}' server/email.ts; then
   PASS=$((PASS+1)); echo "  ✓ source: demo invite email formats the datetime as Arizona MST AM/PM via fmtMstTime"
@@ -7084,33 +7173,35 @@ echo "-- 52a. OwnerActionsMenu one-click demo outcomes: the owner Leads row's Ac
 code -b "$JAR" "$BASE/api/settings" > /dev/null
 F52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][0])")
 M52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][1])")
-echo "     (owner buckets: Leads=\"$F52\", onboarding=\"$M52\")"
+T52=$(python3 -c "import json;print(json.load(open('/tmp/body.json'))['settings']['stages'][-1])")
+echo "     (owner buckets: Leads=\"$F52\", terminal=\"$T52\")"
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"One-Click Sale Co\",\"contactName\":\"Oscar O\",\"email\":\"oscar@oneclick.example\",\"clientType\":\"commercial\",\"dealValue\":5000,\"stage\":\"$F52\"}" "$BASE/api/clients")
 check "52a: owner creates a fresh lead in the first stage -> 201" 201 "$S"
 OC_ID=$(grep -o '"id":[0-9]*' /tmp/body.json | head -1 | cut -d: -f2)
 # The dropdown's Sold quick action calls handleDemoOutcome(c,'sold'), which fires a
-# SINGLE updateClient carrying demoOutcome=sold AND stage=onboardingStage together
-# (never a stale two-PUT that would clobber the outcome) — replay that call verbatim.
+# SINGLE updateClient carrying demoOutcome=sold AND stage=terminalStage together
+# (owner Roo rework, PR #125: sold relocates to the pipeline's LAST stage;
+# never a stale two-PUT that would clobber the outcome) — replay verbatim.
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"One-Click Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$M52\"}" "$BASE/api/clients/$OC_ID")
-check "52a: one-click Sold PUTs demoOutcome=sold + onboarding stage together -> 200" 200 "$S"
-grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$M52\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52a: sold lead now carries demoOutcome=sold and sits in the Onboarding stage (single PUT)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52a: payload: $(cat /tmp/body.json)"; }
+  -d "{\"companyName\":\"One-Click Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$T52\"}" "$BASE/api/clients/$OC_ID")
+check "52a: one-click Sold PUTs demoOutcome=sold + terminal stage together -> 200" 200 "$S"
+grep -q '"demoOutcome":"sold"' /tmp/body.json && grep -q "\"stage\":\"$T52\"" /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52a: sold lead now carries demoOutcome=sold and sits in the terminal stage (single PUT)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52a: payload: $(cat /tmp/body.json)"; }
 code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
-if OC_ID="$OC_ID" F52="$F52" M52="$M52" python3 - <<'PY' 2>"$PASS_TMP"
+if OC_ID="$OC_ID" F52="$F52" T52="$T52" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['OC_ID'])][0]
-first, mid = os.environ['F52'], os.environ['M52']
-assert me['stage'] == mid, me['stage']
+first, term = os.environ['F52'], os.environ['T52']
+assert me['stage'] == term, me['stage']
 assert me['demoOutcome'] == 'sold', me['demoOutcome']
 leads_bucket = [c for c in clients if c['stage'] == first]
-onboard_bucket = [c for c in clients if c['stage'] == mid]
+terminal_bucket = [c for c in clients if c['stage'] == term]
 assert me not in leads_bucket, "sold lead still in the Leads bucket"
-assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
-print("  ✓ 52a: one-click Sold moved the lead out of the Leads bucket into the Onboarding bucket (demoOutcome retained)")
+assert me in terminal_bucket, "sold lead not in the terminal-stage bucket"
+print("  ✓ 52a: one-click Sold moved the lead out of the Leads bucket into the terminal-stage bucket (demoOutcome retained)")
 PY
-then PASS=$((PASS+1)); echo "  ✓ 52a: sold relocation via the dropdown path verified (Leads -> Onboarding)"; else FAIL=$((FAIL+1)); echo "  ✗ 52a: sold relocation failed"; cat "$PASS_TMP"; fi
+then PASS=$((PASS+1)); echo "  ✓ 52a: sold relocation via the dropdown path verified (Leads -> terminal stage)"; else FAIL=$((FAIL+1)); echo "  ✗ 52a: sold relocation failed"; cat "$PASS_TMP"; fi
 # (b) 'Not sold' quick action: keeps the lead but flags it lost (not-interested),
 #     the same side-effect the edit modal applies.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
@@ -7123,7 +7214,7 @@ check "52b: one-click Not sold PUTs demoOutcome=not_sold + lost flag -> 200" 200
 grep -q '"demoOutcome":"not_sold"' /tmp/body.json && grep -q '"lost":true' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52b: not_sold lead flagged lost (not-interested)"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52b: payload: $(cat /tmp/body.json)"; }
 # (c) Source markers — the owner Leads Actions dropdown ships Edit / Sold / Not sold /
 #     Maybe / DNC / Lost in that order, wired to handleDemoOutcome; and
-#     handleDemoOutcome itself performs the sold -> onboarding relocation (owner Leads).
+#     handleDemoOutcome itself performs the sold -> terminal-stage relocation (owner Leads; owner Roo rework PR #125).
 if python3 - <<'PY'
 ts = open('src/Clients.tsx').read()
 oa = ts.index('function OwnerActionsMenu')
@@ -7149,11 +7240,11 @@ ts = open('src/Clients.tsx').read()
 hd = ts.index('async function handleDemoOutcome')
 blk = ts[hd:hd+1100]
 assert 'ownerLeadsTab' in blk, 'no ownerLeadsTab gate'
-assert '"sold"' in blk and 'onboardingStage' in blk, 'no sold relocate wiring'
-assert 'c.stage !== onboardingStage' in blk, 'no stage-compare guard'
-assert 'patch.stage = onboardingStage' in blk, 'no onboarding stage write on the patch'
+assert '"sold"' in blk and 'terminalStage' in blk, 'no sold relocate wiring'
+assert 'c.stage !== terminalStage' in blk, 'no stage-compare guard'
+assert 'patch.stage = terminalStage' in blk, 'no terminal stage write on the patch'
 assert 'demoOutcome: outcome' in blk and 'patch' in blk, 'single-PUT merge missing'
-print("  ✓ source: handleDemoOutcome performs the sold -> Onboarding relocate in a single PUT (owner Leads tab)")
+print("  ✓ source: handleDemoOutcome performs the sold -> terminal-stage relocate in a single PUT (owner Leads tab; owner Roo rework PR #125)")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleDemoOutcome sold-relocate logic missing from src/Clients.tsx"; fi
 # (d) Shipped bundle carries the quick-action labels.
@@ -7173,9 +7264,9 @@ fi
 #     `...editing` spread (whose PRE-SAVE demoOutcome would be written back over
 #     the new "sold"). Replay the exact two-PUT sequence handleSave performs:
 #     (1) save `input` (demoOutcome=sold, stage still first), then (2) the merged
-#     relocate `{...input, stage:onboardingStage}` — assert outcome+relocation
+#     relocate `{...input, stage:terminalStage}` — assert outcome+relocation
 #     BOTH persist. With the old stale-spread code, (2) was `{...editing,
-#     stage:onboardingStage}` and rewrote demoOutcome back to the stale value.
+#     stage:terminalStage}` and rewrote demoOutcome back to the stale value.
 S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Edit Modal Sale Co\",\"contactName\":\"Emma E\",\"email\":\"emma@editmodal.example\",\"clientType\":\"commercial\",\"dealValue\":4000,\"stage\":\"$F52\"}" "$BASE/api/clients")
 check "52e: owner creates a lead for the edit-modal path -> 201" 201 "$S"
@@ -7192,24 +7283,24 @@ S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
   -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$F52\"}" "$BASE/api/clients/$EM_ID")
 check "52e: edit-modal first PUT saves demoOutcome=sold -> 200" 200 "$S"
 grep -q '"demoOutcome":"sold"' /tmp/body.json && { PASS=$((PASS+1)); echo "  ✓ 52e: first PUT carried demoOutcome=sold"; } || { FAIL=$((FAIL+1)); echo "  ✗ 52e: payload: $(cat /tmp/body.json)"; }
-# (2) The merged relocate `{...input, stage:onboardingStage}` — input already
+# (2) The merged relocate `{...input, stage:terminalStage}` — input already
 #     carries demoOutcome=sold, so it must NOT be clobbered back to 'maybe'.
 S=$(code -b "$JAR" -X PUT -H 'Content-Type: application/json' \
-  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$M52\"}" "$BASE/api/clients/$EM_ID")
+  -d "{\"companyName\":\"Edit Modal Sale Co\",\"clientType\":\"commercial\",\"demoOutcome\":\"sold\",\"stage\":\"$T52\"}" "$BASE/api/clients/$EM_ID")
 check "52e: edit-modal merged relocate (demoOutcome=sold kept) -> 200" 200 "$S"
 code -b "$JAR" "$BASE/api/clients?archived=1" > /dev/null
-if EM_ID="$EM_ID" F52="$F52" M52="$M52" python3 - <<'PY' 2>"$PASS_TMP"
+if EM_ID="$EM_ID" F52="$F52" T52="$T52" python3 - <<'PY' 2>"$PASS_TMP"
 import json, os
 clients = json.load(open('/tmp/body.json'))['clients']
 me = [c for c in clients if c['id'] == int(os.environ['EM_ID'])][0]
-first, mid = os.environ['F52'], os.environ['M52']
-assert me['stage'] == mid, me['stage']
+first, term = os.environ['F52'], os.environ['T52']
+assert me['stage'] == term, me['stage']
 assert me['demoOutcome'] == 'sold', ("demoOutcome clobbered: " + repr(me['demoOutcome']))
 leads_bucket = [c for c in clients if c['stage'] == first]
-onboard_bucket = [c for c in clients if c['stage'] == mid]
+terminal_bucket = [c for c in clients if c['stage'] == term]
 assert me not in leads_bucket, "sold lead still in the Leads bucket"
-assert me in onboard_bucket, "sold lead not in the Onboarding bucket"
-print("  ✓ 52e: edit-modal sold lead relocated to Onboarding with demoOutcome=sold PERSISTED (no stale-spread clobber)")
+assert me in terminal_bucket, "sold lead not in the terminal-stage bucket"
+print("  ✓ 52e: edit-modal sold lead relocated to the terminal stage with demoOutcome=sold PERSISTED (no stale-spread clobber)")
 PY
 then PASS=$((PASS+1)); echo "  ✓ 52e: edit-modal sold relocation + retained outcome verified (no clobber)"; else FAIL=$((FAIL+1)); echo "  ✗ 52e: edit-modal sold relocate/clobber check failed"; cat "$PASS_TMP"; fi
 if python3 - <<'PY'
@@ -7217,10 +7308,10 @@ ts = open('src/Clients.tsx').read()
 hd = ts.index('async function handleSave')
 blk = ts[hd:ts.index('async function handleDelete', hd)]
 assert 'ownerLeadsTab' in blk, 'no ownerLeadsTab gate'
-assert '...input, stage: onboardingStage' in blk, 'sold relocate must merge into input, not a stale spread'
-assert 'editing, stage: onboardingStage' not in blk, 'stale ...editing spread still present in sold relocate'
+assert '...input, stage: terminalStage' in blk, 'sold relocate must merge into input, not a stale spread'
+assert 'editing, stage: terminalStage' not in blk, 'stale ...editing spread still present in sold relocate'
 assert '...input, lost: true' in blk, 'not_sold relocate must merge into input'
-print("  ✓ source: handleSave sold/not_sold relocates merge into the freshly-saved input (no stale ...editing spread)")
+print("  ✓ source: handleSave sold/not_sold relocates merge into the freshly-saved input (no stale ...editing spread; sold -> terminal stage, owner Roo rework PR #125)")
 PY
 then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); echo "  ✗ source: handleSave stale ...editing spread not fully removed from src/Clients.tsx"; fi
 echo "  ✓ 52: OwnerActionsMenu one-click demo outcomes complete"
@@ -10184,6 +10275,196 @@ code -b "$J75" -X DELETE "$BASE/api/admin/orgs/$ORG75" > /dev/null
 code -b "$J75" -X DELETE "$BASE/api/admin/orgs/$T75" > /dev/null
 rm -f "$J75" "$JT75"
 echo "  ✓ 75f: checklist orgs removed"
+
+echo "== 76. Wholesale Biz custom menu (owner 2026-09-04): admin vertical toggle + Buyers entity =="
+echo "-- 76a. POST /api/admin/orgs/:id/vertical applies the wholesalebiz template ADDITIVELY =="
+# Owner-only route (requireAdmin, like every /api/admin route) — built to flip a
+# live account that was created before the vertical existed. The org here is
+# provisioned with NO vertical and then seeds its own stage + custom field via
+# Settings; BOTH must survive the template apply (append-missing-only,
+# case-insensitive; never rename/remove/reorder existing stages/fields).
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"WS Toggle LLC","email":"wstoggle76@example.com","password":"wstoggle76pass"}' "$BASE/api/admin/orgs")
+check "76a: provision org with NO vertical → 201" 201 "$S"
+WSV_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARWSV=$(mktemp)
+S=$(code -c "$JARWSV" -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"wstoggle76@example.com","password":"wstoggle76pass"}' "$BASE/api/auth/login")
+check "76a: tenant login → 200" 200 "$S"
+S=$(code -b "$JARWSV" -X PUT -H 'Content-Type: application/json' \
+  -d '{"stages":["Leads","Onboarding","Sold"],"customFields":[{"name":"Source note","type":"text"}]}' "$BASE/api/settings")
+check "76a: tenant seeds its own 3 stages + 1 field first → 200" 200 "$S"
+S=$(code -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"wholesalebiz"}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+check "76a: TENANT hits the admin vertical route → 403" 403 "$S"
+check "76a: unauthenticated POST vertical → 401" 401 $(code -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"wholesalebiz"}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"wholesalebiz"}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+check "76a: owner POST vertical wholesalebiz → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))
+assert d.get("ok") is True and d.get("verticalKey") == "wholesalebiz", d
+assert isinstance(d.get("orgId"), int), d
+print("  ✓ response shape {ok, orgId, verticalKey=wholesalebiz}")
+PY
+S=$(code -b "$JARWSV" "$BASE/api/settings")
+check "76a: tenant settings after apply → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+assert d['verticalKey'] == 'wholesalebiz', d['verticalKey']
+assert d['industry'] == 'professional' and d['serviceModel'] == 'commercial_only', (d['industry'], d['serviceModel'])
+assert d['deliveryType'] == 'both' and d['revenueModel'] == 'sales', (d['deliveryType'], d['revenueModel'])
+st = d['stages']
+# ADDITIVE: the tenant's own three stages survive first, in order, and the 5
+# wholesale stages are APPENDED exactly once each (case-insensitive missing-only).
+assert st[:3] == ["Leads","Onboarding","Sold"], st
+for s in ["Lead Sources","Property Under Contract","Marketing to Buyers","Buyer Under Contract","Closing"]:
+    assert st.count(s) == 1, st
+assert len(st) == 8, st
+names = [f['name'] for f in d['customFields']]
+assert names[0] == 'Source note', names
+for f in ["Property address","ARV","Repair estimate","Purchase price","Max allowable offer (MAO)","Assignment fee","End buyer","Closing date","Motivated seller","Clear title"]:
+    assert names.count(f) == 1, names
+assert len(names) == 11, names
+print("  ✓ apply is ADDITIVE: pre-existing stage+field survive; 5 wholesale stages + 10 fields appended once")
+PY
+echo "-- 76b. general reset + empty string + unknown vertical + unknown org =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"general"}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+check "76b: owner POST vertical general → 200" 200 "$S"
+S=$(code -b "$JARWSV" "$BASE/api/settings")
+check "76b: tenant settings after general → 200" 200 "$S"
+python3 - <<'PY'
+import json
+d = json.load(open('/tmp/body.json'))['settings']
+assert d['verticalKey'] == '', d['verticalKey']
+assert d['serviceModel'] == 'both' and d['deliveryType'] == 'both', (d['serviceModel'], d['deliveryType'])
+assert 'Property Under Contract' in d['stages'], d['stages']
+assert any(f['name'] == 'Property address' for f in d['customFields']), d['customFields']
+print("  ✓ general clears the vertical config ONLY — stages/fields untouched")
+PY
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":""}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+check "76b: owner POST vertical empty string → 200 (same reset)" 200 "$S"
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"nail_salons"}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+check "76b: unknown vertical → 400" 400 "$S"
+check "76b: unknown org → 404" 404 $(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"wholesalebiz"}' "$BASE/api/admin/orgs/999999/vertical")
+# Re-apply wholesalebiz — the Buyers CRUD below runs as this wholesale org.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"vertical":"wholesalebiz"}' "$BASE/api/admin/orgs/$WSV_ORG/vertical")
+check "76b: re-apply wholesalebiz → 200" 200 "$S"
+echo "-- 76c. Buyers CRUD as the wholesale tenant (org-scoped, tasks-tab gated) =="
+check "76c: buyers without cookie → 401" 401 $(code "$BASE/api/buyers")
+S=$(code -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d '{"phone":"(602) 555-0142","criteria":"3BR/2BA under 150k"}' "$BASE/api/buyers")
+check "76c: POST buyer without name → 400" 400 "$S"
+LONGNAME=$(python3 -c "print('x'*121)")
+S=$(code -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d "{\"name\":\"$LONGNAME\"}" "$BASE/api/buyers")
+check "76c: POST buyer with a 121-char name → 400" 400 "$S"
+S=$(code -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Riverside Capital LLC","phone":"(602) 555-0142","criteria":"3BR/2BA under 150k, Maricopa","bought":"4 wholesaled homes in 2025"}' "$BASE/api/buyers")
+check "76c: POST buyer → 201" 201 "$S"
+BUYER_ID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['buyer']['id'])")
+python3 - <<'PY'
+import json
+b = json.load(open('/tmp/body.json'))['buyer']
+assert b['name'] == 'Riverside Capital LLC', b
+assert b['phone'] == '(602) 555-0142' and b['criteria'] == '3BR/2BA under 150k, Maricopa', b
+assert b['bought'] == '4 wholesaled homes in 2025', b
+print("  ✓ created buyer echoes name/phone/buying criteria/what they bought")
+PY
+S=$(code -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Desert Ridge Holdings"}' "$BASE/api/buyers")
+check "76c: POST second buyer (name only) → 201" 201 "$S"
+S=$(code -b "$JARWSV" "$BASE/api/buyers")
+check "76c: GET buyers → 200" 200 "$S"
+python3 - <<'PY'
+import json
+rows = json.load(open('/tmp/body.json'))['buyers']
+names = [b['name'] for b in rows]
+assert 'Riverside Capital LLC' in names and 'Desert Ridge Holdings' in names, names
+print("  ✓ list contains both buyers")
+PY
+S=$(code -b "$JARWSV" -X PUT -H 'Content-Type: application/json' \
+  -d '{"name":"Riverside Capital LLC","criteria":"3BR/2BA under 165k, any city in Maricopa","bought":"4 wholesaled homes in 2025 / 11 flips"}' "$BASE/api/buyers/$BUYER_ID")
+check "76c: PUT buyer edits → 200" 200 "$S"
+python3 - <<'PY'
+import json
+b = json.load(open('/tmp/body.json'))['buyer']
+assert b['criteria'] == '3BR/2BA under 165k, any city in Maricopa', b
+assert b['bought'] == '4 wholesaled homes in 2025 / 11 flips', b
+assert b['name'] == 'Riverside Capital LLC', b
+print("  ✓ PUT persists the edit")
+PY
+# Cross-org isolation: a DIFFERENT tenant's buyers list must NOT see these rows.
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"RVB Tenant LLC","email":"rvbtenant76@example.com","password":"rvbtenant76pass"}' "$BASE/api/admin/orgs")
+check "76c: provision a second tenant → 201" 201 "$S"
+RVB_ORG=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARRVB=$(mktemp)
+S=$(code -c "$JARRVB" -b "$JARRVB" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"rvbtenant76@example.com","password":"rvbtenant76pass"}' "$BASE/api/auth/login")
+check "76c: second tenant login → 200" 200 "$S"
+S=$(code -b "$JARRVB" "$BASE/api/buyers")
+check "76c: other tenant GET buyers → 200" 200 "$S"
+python3 - <<'PY'
+import json
+rows = json.load(open('/tmp/body.json'))['buyers']
+assert rows == [], rows
+print("  ✓ cross-org isolation: the other tenant sees NO wholesale buyers")
+PY
+check "76c: other tenant PUT the wholesale buyer → 404" 404 $(code -b "$JARRVB" -X PUT -H 'Content-Type: application/json' \
+  -d '{"name":"Hijack"}' "$BASE/api/buyers/$BUYER_ID")
+check "76c: other tenant DELETE the wholesale buyer → 404" 404 $(code -b "$JARRVB" -X DELETE "$BASE/api/buyers/$BUYER_ID")
+# Team-user gating: the buyers routes are gated on the TASKS tab (like tasks).
+# A fresh member defaults to all tabs view-only → reads pass, writes are 403.
+JMEM=$(mktemp)
+S=$(code -b "$JARWSV" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"wsmember76@wstoggle.example","password":"wsmember76pass","role":"member"}' "$BASE/api/org/members")
+check "76c: wholesale org creates a restricted member → 201" 201 "$S"
+MEMID=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['member']['id'])")
+S=$(code -c "$JMEM" -b "$JMEM" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"wsmember76@wstoggle.example","password":"wsmember76pass"}' "$BASE/api/auth/login")
+check "76c: member login → 200" 200 "$S"
+check "76c: view-only member GET buyers → 200" 200 $(code -b "$JMEM" "$BASE/api/buyers")
+check "76c: view-only member POST buyer → 403" 403 $(code -b "$JMEM" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Sneaky Buyer"}' "$BASE/api/buyers")
+S=$(code -b "$JARWSV" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{}}' "$BASE/api/org/members/$MEMID")
+check "76c: admin strips ALL member tabs → 200" 200 "$S"
+check "76c: member with no tabs GET buyers → 403" 403 $(code -b "$JMEM" "$BASE/api/buyers")
+S=$(code -b "$JARWSV" -X PATCH -H 'Content-Type: application/json' \
+  -d '{"permissions":{"tasks":{"edit":true}}}' "$BASE/api/org/members/$MEMID")
+check "76c: admin grants the tasks tab (edit) → 200" 200 "$S"
+check "76c: member with tasks edit GET buyers → 200" 200 $(code -b "$JMEM" "$BASE/api/buyers")
+S=$(code -b "$JMEM" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Member Added Buyer"}' "$BASE/api/buyers")
+check "76c: member with tasks edit POST buyer → 201" 201 "$S"
+echo "-- 76d. Wholesale-nav markers in the built bundle (23g/41b/41c pins untouched) =="
+NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ]; then
+  if grep -q '"Properties"' "$NEWEST_JS" && grep -q '"Buyers"' "$NEWEST_JS" && \
+     grep -q 'Quick-add a buyer by name' "$NEWEST_JS" && grep -q 'Buying criteria' "$NEWEST_JS" && \
+     grep -q "What they've bought" "$NEWEST_JS"; then
+    PASS=$((PASS+1)); echo "  ✓ bundle carries the wholesale nav (Properties/Buyers, Agreements relabel) + Buyers UI strings"
+  else
+    FAIL=$((FAIL+1)); echo "  ✗ wholesale nav/buyers strings missing from $NEWEST_JS"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "  ✗ dist build not found for bundle surface check"
+fi
+echo "-- 76e. Cleanup =="
+check "76e: admin deletes the wholesale org → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$WSV_ORG")
+check "76e: admin deletes the second tenant → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$RVB_ORG")
+rm -f "$JARWSV" "$JARRVB" "$JMEM"
+echo "  ✓ 76e: wholesale-toggle orgs removed (deleteOrgCascade also drops their buyers)"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

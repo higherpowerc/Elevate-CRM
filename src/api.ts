@@ -1,4 +1,5 @@
-import type { AgreementEnvelope, Appointment, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User, WholesaleOffer } from "./types";
+import type { AgreementEnvelope, Appointment, Buyer, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, User, WholesaleOffer } from "./types";
+
 
 export class ApiError extends Error {
   status: number;
@@ -33,7 +34,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-export type ClientInput = Omit<Client, "id" | "createdAt" | "updatedAt">;
+export type ClientInput = Partial<Omit<Client, "id" | "createdAt" | "updatedAt">> & { companyName: string };
 
 /** Writable task fields (server ignores unknown keys; client id optional). */
 export type TaskInput = Omit<Task, "id" | "clientName" | "createdAt" | "updatedAt">;
@@ -544,5 +545,20 @@ export const api = {
   /* Owner — force the day-before reminder sweep. */
   runAppointmentReminders: () =>
     request<{ ok: true; sent: number }>("/api/appointments/reminders", { method: "POST" }),
+  /* Wholesale Real Estate vertical (owner 2026-09-04) — Buyers entity.
+     Org-scoped CRUD over /api/buyers (tenant-only; the owner cockpit has no
+     buyers surface). */
+  buyers: () => request<{ buyers: Buyer[] }>("/api/buyers"),
+  createBuyer: (data: { name: string; phone?: string; criteria?: string; bought?: string }) =>
+    request<{ buyer: Buyer }>("/api/buyers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateBuyer: (id: number, data: { name?: string; phone?: string; criteria?: string; bought?: string }) =>
+    request<{ buyer: Buyer }>(`/api/buyers/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteBuyer: (id: number) => request<{ ok: true }>(`/api/buyers/${id}`, { method: "DELETE" }),
 };
 

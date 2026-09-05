@@ -7,6 +7,7 @@ import ClientsDirectory from "./ClientsDirectory";
 import Calendar from "./Calendar";
 import Appointments from "./Appointments";
 import Tasks from "./Tasks";
+import Buyers from "./Buyers";
 import Finance from "./Finance";
 import Admin from "./Admin";
 import Documents from "./Documents";
@@ -34,7 +35,8 @@ import ThemeToggle from "./ThemeToggle";
  * (prospects), Onboarding = the MIDDLE stages (intake leads), Clients = the
  * terminal stage (sold). Client accounts (role=member) are unchanged: their
  * Leads tab keeps showing every stage except their terminal one. */
-type View = "dashboard" | "leads" | "offers" | "buybox" | "onboarding" | "clients" | "calendar" | "appointments" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings";
+type View = "dashboard" | "leads" | "offers" | "buybox" | "onboarding" | "clients" | "calendar" | "appointments" | "tasks" | "finance" | "admin" | "documents" | "tickets" | "settings" | "buyers";
+
 
 /** 3k — the emailed reset link is `<appUrl>/#/reset?token=...`; pull the
  *  token out of the hash on boot so the login screen can render the
@@ -167,6 +169,24 @@ export default function App() {
      gates the owner-only Onboarding tab (owner direction 2026-08-15). */
   const isOwnerOrg = user?.isOwner === true;
 
+  /* Wholesale Biz custom menu (owner direction 2026-09-04) — the account's
+     business type (orgs.vertical_key, delivered on the session user as
+     verticalKey) switches the client workspace to the wholesale tab set.
+     Fresh state arrives on every login/me refresh (setUser is the only
+     setter), so an owner-side vertical change applies on the account's next
+     sign-in. Owner workspace unaffected — the cockpit keeps today's nav. */
+  const [verticalKey, setVerticalKey] = useState<string>("");
+  useEffect(() => {
+    setVerticalKey(user?.verticalKey ?? "");
+  }, [user]);
+  const isWholesale = Boolean(
+    !isOwnerOrg && (
+      verticalKey === "wholesalebiz" ||
+      verticalKey === "wholesale" ||
+      (orgName && orgName.toLowerCase().includes("wholesale"))
+    )
+  );
+
   /* Team users per client account (owner request 2026-08-14) — tab gating.
      Restricted members carry per-tab grants on user.permissions; org admins
      (stored role='admin' OR the account's original owner login — the server
@@ -213,11 +233,31 @@ export default function App() {
         return canSeeTab("settings");
       case "onboarding":
       case "admin":
-      case "documents":
         return isOwnerOrg;
+      case "documents":
+        /* Wholesale Biz custom menu (owner 2026-09-04) — the wholesale org's
+           "Agreements" tab reuses the Documents VIEW, tenant-side (a relabel
+           only; the same envelope list). For every other workspace it stays
+           owner-only. */
+        return isOwnerOrg || isWholesale;
+      case "buyers":
+        return isWholesale;
+      case "offers":
+      case "buybox":
+        return isWholesale && canSeeTab("clients");
     }
   };
   const effectiveView: View = viewAllowed(view) ? view : "dashboard";
+  /* Wholesale Biz custom menu (owner 2026-09-04): if the signed-in account's
+     vertical changed while a wholesale-hidden view was open (or a stale
+     wholesale-only view is somehow active), fall back to the Dashboard. */
+  const viewWholesaleAllowed = (v: View): boolean => {
+    if (!isWholesale) {
+      return v !== "buyers" && v !== "documents" && v !== "offers" && v !== "buybox";
+    }
+    return !(v === "appointments" || v === "finance");
+  };
+  const effectiveViewFinal: View = viewWholesaleAllowed(effectiveView) ? effectiveView : "dashboard";
 
   const handleLogout = useCallback(async () => {
     try {
@@ -368,12 +408,6 @@ export default function App() {
   }
 
   const isOwner = user?.isOwner === true;
-  const isWholesale = Boolean(
-    !isOwnerOrg && (
-      user?.verticalKey === "wholesale" ||
-      orgName.toLowerCase().includes("wholesale")
-    )
-  );
   const brandMark = isOwner ? "R" : initials(orgName) || "R";
 
   return (
@@ -405,7 +439,7 @@ export default function App() {
           </button>
           <nav className="tabs" aria-label="Main">
             <button
-              className={effectiveView === "dashboard" ? "tab active" : "tab"}
+              className={effectiveViewFinal === "dashboard" ? "tab active" : "tab"}
               onClick={() => setView("dashboard")}
             >
               Dashboard
@@ -413,7 +447,7 @@ export default function App() {
             {/* Pipeline tab: "Properties" for wholesale, "Leads" for general */}
             {canSeeTab("clients") && (
               <button
-                className={effectiveView === "leads" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "leads" ? "tab active" : "tab"}
                 onClick={() => {
                   setLeadsStage(null);
                   setOnboardingStage(null);
@@ -425,9 +459,9 @@ export default function App() {
               </button>
             )}
             {/* Wholesale Offers Repository tab */}
-            {canSeeTab("clients") && (
+            {isWholesale && canSeeTab("clients") && (
               <button
-                className={effectiveView === "offers" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "offers" ? "tab active" : "tab"}
                 onClick={() => setView("offers")}
               >
                 Offers
@@ -436,7 +470,7 @@ export default function App() {
             {/* Directory tab: "Investors" for wholesale, "Clients" for general */}
             {canSeeTab("clients") && (
               <button
-                className={effectiveView === "clients" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "clients" ? "tab active" : "tab"}
                 onClick={() => setView("clients")}
               >
                 {isWholesale ? "Investors" : "Clients"}
@@ -445,15 +479,23 @@ export default function App() {
             {/* Wholesale Buy Box Matches tab */}
             {isWholesale && canSeeTab("clients") && (
               <button
-                className={effectiveView === "buybox" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "buybox" ? "tab active" : "tab"}
                 onClick={() => setView("buybox")}
               >
                 Buy Box
               </button>
             )}
+            {isWholesale && (
+              <button
+                className={effectiveViewFinal === "documents" ? "tab active" : "tab"}
+                onClick={() => setView("documents")}
+              >
+                Agreements
+              </button>
+            )}
             {isOwnerOrg && (
               <button
-                className={effectiveView === "onboarding" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "onboarding" ? "tab active" : "tab"}
                 onClick={() => {
                   setOnboardingStage(null);
                   setView("onboarding");
@@ -464,7 +506,7 @@ export default function App() {
             )}
             {!isWholesale && (
               <button
-                className={effectiveView === "appointments" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "appointments" ? "tab active" : "tab"}
                 onClick={() => setView("appointments")}
               >
                 Appointments
@@ -472,7 +514,7 @@ export default function App() {
             )}
             {canSeeTab("tasks") && (
               <button
-                className={effectiveView === "tasks" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "tasks" ? "tab active" : "tab"}
                 onClick={() => setView("tasks")}
               >
                 Tasks
@@ -481,14 +523,14 @@ export default function App() {
             {/* Support tickets: "Tickets" for owner, "Support" for clients */}
             {isOwnerOrg ? (
               <button
-                className={effectiveView === "tickets" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "tickets" ? "tab active" : "tab"}
                 onClick={() => setView("tickets")}
               >
                 Tickets
               </button>
             ) : canSeeTab("support") ? (
               <button
-                className={effectiveView === "tickets" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "tickets" ? "tab active" : "tab"}
                 onClick={() => setView("tickets")}
               >
                 Support
@@ -497,7 +539,7 @@ export default function App() {
 
             {!isWholesale && canSeeTab("finance") && (
               <button
-                className={effectiveView === "finance" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "finance" ? "tab active" : "tab"}
                 onClick={() => setView("finance")}
               >
                 Finance
@@ -505,7 +547,7 @@ export default function App() {
             )}
             {isOwnerOrg && (
               <button
-                className={effectiveView === "admin" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "admin" ? "tab active" : "tab"}
                 onClick={() => setView("admin")}
               >
                 {/* Owner direction 2026-08-17 — the owner's admin tab reads
@@ -530,7 +572,7 @@ export default function App() {
                 can never see the list. */}
             {isOwnerOrg && (
               <button
-                className={effectiveView === "documents" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "documents" ? "tab active" : "tab"}
                 onClick={() => setView("documents")}
               >
                 Documents
@@ -538,7 +580,7 @@ export default function App() {
             )}
             {canSeeTab("settings") && (
               <button
-                className={effectiveView === "settings" ? "tab active" : "tab"}
+                className={effectiveViewFinal === "settings" ? "tab active" : "tab"}
                 onClick={() => setView("settings")}
               >
                 Settings
@@ -591,7 +633,7 @@ export default function App() {
           </div>
         )}
       <main className="main">
-        {effectiveView === "dashboard" ? (
+        {effectiveViewFinal === "dashboard" ? (
           <Dashboard
             onGoToStage={goToStage}
             onGoToLost={goToLost}
@@ -600,7 +642,7 @@ export default function App() {
             ownerOrg={isOwnerOrg}
             isWholesale={isWholesale}
           />
-        ) : effectiveView === "leads" ? (
+        ) : effectiveViewFinal === "leads" ? (
           /* Owner request 2026-08-15 — the owner's Leads tab scopes to the
              FIRST stage only; client accounts (role=member) keep the full
              pipeline (every stage except their terminal one, PR #35).
@@ -616,8 +658,9 @@ export default function App() {
             isWholesale={isWholesale}
             crmBusinessName={orgName}
             onGoToBuyBox={() => setView("buybox")}
+            verticalKey={verticalKey}
           />
-        ) : effectiveView === "offers" ? (
+        ) : effectiveViewFinal === "offers" ? (
           <Offers
             crmBusinessName={orgName}
             onNavigateToProperty={() => {
@@ -627,15 +670,15 @@ export default function App() {
               setView("leads");
             }}
           />
-        ) : effectiveView === "buybox" ? (
+        ) : effectiveViewFinal === "buybox" ? (
           <BuyBoxMatcher canEdit={canEditTab("clients")} />
-        ) : effectiveView === "onboarding" ? (
+        ) : effectiveViewFinal === "onboarding" ? (
           /* Owner request 2026-08-15 — OWNER ONLY: the Onboarding tab scopes
              the pipeline to the MIDDLE stages (between first and terminal).
              Client accounts never reach this view — no nav item, and the
              dashboard routes middle stages to their single Leads tab. */
-          <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} canEdit isWholesale={isWholesale} />
-        ) : effectiveView === "clients" ? (
+          <Clients stages={stages} ownerOrg={isOwnerOrg} scope="middle" initialStage={onboardingStage} canEdit isWholesale={isWholesale} verticalKey={verticalKey} />
+        ) : effectiveViewFinal === "clients" ? (
           /* Owner live-test reorg 2026-08-18 — the owner's Clients tab hosts
              the ACCOUNT management panel (create / view / reset / delete) via
              ClientsDirectory's Accounts sub-component. Owner 2026-08-20 — the
@@ -649,21 +692,25 @@ export default function App() {
             onViewAccount={isOwnerOrg ? handleImpersonate : undefined}
             isWholesale={isWholesale}
           />
-        ) : effectiveView === "calendar" ? (
+        ) : effectiveViewFinal === "calendar" ? (
           /* Owner 2026-08-20 sales rework — the owner's Calendar view of
              demo-call appointments. Owner-workspace only. */
           <Calendar />
-        ) : effectiveView === "appointments" ? (
+        ) : effectiveViewFinal === "appointments" ? (
           /* Appointments production (backlog 5a104eae): the general
              appointments tab, in both workspaces. ownerOrg lets the component
              pick the right API (owner /api/appointments vs tenant
              /api/org/appointments) and controls the status-mutation actions. */
           <Appointments ownerOrg={isOwnerOrg} />
-        ) : effectiveView === "tasks" ? (
+        ) : effectiveViewFinal === "tasks" ? (
           <Tasks canEdit={canEditTab("tasks")} />
-        ) : effectiveView === "finance" ? (
+        ) : effectiveViewFinal === "buyers" ? (
+          /* Wholesale Real Estate vertical (owner 2026-09-04) — the
+             account's end-buyer list, gated by the tasks grant. */
+          <Buyers canEdit={canEditTab("tasks")} />
+        ) : effectiveViewFinal === "finance" ? (
           <Finance canEdit={canEditTab("finance")} ownerOrg={isOwnerOrg} />
-        ) : effectiveView === "admin" ? (
+        ) : effectiveViewFinal === "admin" ? (
           /* Owner 2026-08-28 consolidation — Administration hosts the
              Agreements template editor (PIN-protected, moved back from
              Documents), the Agreements PIN control and the owner's "Your
@@ -671,9 +718,11 @@ export default function App() {
              2026-08-29 option b keeps the tenant export in tenant Settings).
              Client-account management moved to the Clients tab (2026-08-18). */
           <Admin />
-        ) : effectiveView === "documents" ? (
-          <Documents />
-        ) : effectiveView === "tickets" ? (
+        ) : effectiveViewFinal === "documents" ? (
+          /* Wholesale Biz custom menu (owner 2026-09-04) — the wholesale org
+             reaches this view as "Agreements" (relabel only). */
+          <Documents verticalLabel={isWholesale ? "agreements" : undefined} />
+        ) : effectiveViewFinal === "tickets" ? (
           <Tickets ownerOrg={isOwnerOrg} canEdit={canEditTab("support")} />
         ) : (
           <Settings

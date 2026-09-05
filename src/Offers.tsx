@@ -626,7 +626,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                             archived: false,
                             createdAt: new Date().toISOString(),
                             updatedAt: new Date().toISOString(),
-                          };
+                          } as unknown as Client;
                           setCalcProperty(mockClient);
                         }}
                         style={{

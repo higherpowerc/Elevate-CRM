@@ -74,6 +74,7 @@ interface Props {
   initialFilter?: Filter;
   crmBusinessName?: string;
   onGoToBuyBox?: () => void;
+  verticalKey?: string;
 }
 
 /** Short value label for a custom field chip, rendered per field type
@@ -82,6 +83,27 @@ function cfChipLabel(def: CustomFieldDef, value: string): string {
   if (def.type === "checkbox") return value === "1" ? "✓" : "✕";
   if (def.type === "date") return fmtDate(value);
   return value;
+}
+/** Wholesale Real Estate Properties (Phase A1) — the per-deal fields a
+ *  wholesaler tracks, in display order, fed from the record's custom-fields
+ *  values (the same data the chips render). The table's wholesale "Deal
+ *  info" cell renders each present value as a compact labelled line. */
+const WHOLESALE_DEAL_FIELDS = [
+  "Property address",
+  "ARV",
+  "Repair estimate",
+  "Purchase price",
+  "Max allowable offer (MAO)",
+  "Assignment fee",
+  "End buyer",
+  "Closing date",
+  "Motivated seller",
+  "Clear title",
+] as const;
+/** Pull a record's value for one custom field by name (case-insensitive). */
+function cfValue(c: Client, name: string): string {
+  const hit = c.customFields.find((cf) => cf.name.toLowerCase() === name.toLowerCase());
+  return hit ? hit.value : "";
 }
 
 /** GLOBAL name rule (owner direction 2026-08-16, amended 2026-08-29 — owner
@@ -343,10 +365,10 @@ function OwnerActionsMenu({ client, busy, onEdit, onDemo, onFlag }: {
   };
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
@@ -401,7 +423,8 @@ function OwnerActionsMenu({ client, busy, onEdit, onDemo, onFlag }: {
     </div>
   );
 }
-export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true, isWholesale = false, crmBusinessName, onGoToBuyBox }: Props) {
+export default function Clients({ stages, scope = "all", ownerOrg = false, initialStage = null, initialFilter, canEdit = true, isWholesale: isWholesaleProp = false, crmBusinessName, onGoToBuyBox, verticalKey = "" }: Props) {
+  const isWholesale = Boolean(isWholesaleProp || verticalKey === "wholesalebiz" || verticalKey === "wholesale");
   const [clients, setClients] = useState<Client[] | null>(null);
   const [customFieldDefs, setCustomFieldDefs] = useState<CustomFieldDef[]>([]);
   /* Adaptive intake Phase 1/2: the org's account-level vertical config —
@@ -1915,6 +1938,7 @@ export default function Clients({ stages, scope = "all", ownerOrg = false, initi
                         {money(c.dealValue)}
                       </td>
                     )}
+
                     {!ownerLeadsTab && (
                       <td data-label="Stage" style={{ textAlign: "center" }}>
                         {/* Owner direction 2026-08-15 (PR #53) — the OWNER's
