@@ -10465,6 +10465,123 @@ check "76e: admin deletes the second tenant → 200" 200 $(code -b "$JAR" -X DEL
 rm -f "$JARWSV" "$JARRVB" "$JMEM"
 echo "  ✓ 76e: wholesale-toggle orgs removed (deleteOrgCascade also drops their buyers)"
 
+echo "== 77. Phase A2 — wholesale Offer Package Generator (owner 2026-09-05) =="
+echo "-- 77a. Create a wholesale org + property with ARV + repair estimate (NO MAO field) =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Offer Pkg LLC","email":"offerpkg77@example.com","password":"offerpkg77pass","vertical":"wholesalebiz"}' "$BASE/api/admin/orgs")
+check "77a: admin creates Offer Pkg LLC (wholesalebiz) → 201" 201 "$S"
+OFFER_ORG77=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JAROFF=$(mktemp)
+S=$(code -c "$JAROFF" -b "$JAROFF" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"offerpkg77@example.com","password":"offerpkg77pass"}' "$BASE/api/auth/login")
+check "77a: offer org login → 200" 200 "$S"
+S=$(code -b "$JAROFF" -X POST -H 'Content-Type: application/json' \
+  -d '{"companyName":"101 Main St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"Property address","value":"101 Main St, Phoenix AZ"},{"name":"ARV","value":"325000"},{"name":"Repair estimate","value":"40000"},{"name":"Purchase price","value":"160000"},{"name":"Assignment fee","value":"18000"},{"name":"End buyer","value":"Riverside Capital LLC"},{"name":"Closing date","value":"2026-10-30"}]}' "$BASE/api/clients")
+check "77a: creates the property (ARV + repair estimate, no MAO) → 201" 201 "$S"
+OFFER_CLIENT77=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['client']['id'])")
+S=$(code -b "$JAROFF" -X POST -H 'Content-Type: application/json' -d '{}' "$BASE/api/clients/$OFFER_CLIENT77/offer-package")
+check "77a: POST offer-package (computed MAO path) → 200" 200 "$S"
+if grep -q '"ok":true' /tmp/body.json && grep -q '"offerId":"[a-f0-9]\{32\}"' /tmp/body.json && grep -q '"url":"/offer-pdf/' /tmp/body.json && grep -q '"offeredAmount":"\$187,500.00"' /tmp/body.json && grep -q '"computedMao":"\$187,500.00"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ computed MAO = ARV 325000 × 0.70 − 40000 = \$187,500.00; offerId 32-hex; url /offer-pdf/<id>"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ offer-package response: $(cat /tmp/body.json)"
+fi
+OFFER_ID77=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['offerId'])")
+echo "-- 77b. The generated PDF serves at /offer-pdf/<id> (200 + application/pdf + non-empty) =="
+OFFER_PDF_TMP=/tmp/offer77.pdf
+OFFER_STATUS=$(curl -s -o "$OFFER_PDF_TMP" -w "%{http_code}" "$BASE/offer-pdf/$OFFER_ID77")
+check "77b: public /offer-pdf/<id> → 200" 200 "$OFFER_STATUS"
+OFFER_CTYPE=$(curl -s -o /dev/null -w "%{content_type}" "$BASE/offer-pdf/$OFFER_ID77")
+if echo "$OFFER_CTYPE" | grep -q "application/pdf"; then
+  PASS=$((PASS+1)); echo "  ✓ content-type: $OFFER_CTYPE"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ content-type: $OFFER_CTYPE"
+fi
+OFFER_BYTES=$(wc -c < "$OFFER_PDF_TMP")
+if [ -n "$OFFER_BYTES" ] && [ "$OFFER_BYTES" -gt 500 ]; then
+  PASS=$((PASS+1)); echo "  ✓ offer PDF non-empty ($OFFER_BYTES bytes)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ offer PDF empty or missing ($OFFER_BYTES bytes)"
+fi
+if [ ! -f "$APP_DIR/data/offers/$OFFER_ID77.pdf" ] && [ ! -f "data/offers/$OFFER_ID77.pdf" ]; then
+  FAIL=$((FAIL+1)); echo "  ✗ offer PDF not stored on disk under data/offers/"
+else
+  PASS=$((PASS+1)); echo "  ✓ offer PDF stored under data/offers/<offerId>.pdf"
+fi
+check "77b: unknown /offer-pdf id → 404" 404 $(curl -s -o /dev/null -w "%{http_code}" "$BASE/offer-pdf/00000000000000000000000000000000")
+echo "-- 77c. PDF text: MAO worksheet math + offer letter amount in words + signatures =="
+cat > /tmp/offerprobe.ts <<'TS'
+import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
+const file = process.argv[2];
+const wants = process.argv.slice(3);
+const buf = readFileSync(file);
+const raw = buf.toString("latin1");
+const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+let m;
+const parts: string[] = [];
+while ((m = re.exec(raw)) !== null) {
+  try { parts.push(inflateSync(Buffer.from(m[1], "latin1")).toString("latin1")); } catch { /* keep */ }
+}
+const hexToText = (hex: string): string => {
+  const h = hex.replace(/\s+/g, "");
+  let out = "";
+  for (let i = 0; i + 1 < h.length; i += 2) out += String.fromCharCode(parseInt(h.slice(i, i + 2), 16));
+  return out;
+};
+let text = raw + "\n" + parts.join("\n");
+for (const part of parts) {
+  if (!part.includes("Tj") && !part.includes("TJ")) continue;
+  text += "\n" + part.replace(/<([0-9A-Fa-f\s]+)>/g, (_: string, h: string) => hexToText(h));
+}
+let ok = true;
+for (const w of wants) {
+  const neg = w.startsWith("\u0021");
+  const needle = neg ? w.slice(1) : w;
+  const hit = text.includes(needle);
+  if (neg ? hit : !hit) { ok = false; console.log((neg ? "UNEXPECTED-PRESENT: " : "MISSING: ") + needle); }
+}
+console.log(ok ? "ok" : "FAIL");
+process.exit(ok ? 0 : 1);
+TS
+if [ -f "$OFFER_PDF_TMP" ] && bun /tmp/offerprobe.ts "$OFFER_PDF_TMP" "Offer Package" "101 Main St, Phoenix AZ" "OFFER PACKAGE" "MAO WORKSHEET" "\$325,000.00" "\$40,000.00" "Computed MAO" "OFFER AMOUNT: \$187,500.00" "\$227,500.00" "minus \$40,000.00" "one hundred eighty-seven thousand five hundred dollars" "OFFER LETTER" "valid for 14 days" "SIGNATURES" "BUYER / OFFEROR" "SELLER / ACCEPTANCE" > /tmp/offerprobe.out 2>&1; then
+  PASS=$((PASS+1)); echo "  ✓ offer PDF text: worksheet math (ARV, repair, computed MAO \$187,500.00), the × 0.70 math intermediate \$227,500.00, offer amount in words+figures, 14-day validity, signature blocks"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ offer PDF text probe failed: $(cat /tmp/offerprobe.out 2>/dev/null)"
+fi
+echo "-- 77d. MAO field override: the recorded MAO becomes the offered amount =="
+S=$(code -b "$JAROFF" -X PUT -H 'Content-Type: application/json' \
+  -d '{"companyName":"101 Main St (assignment)","clientType":"commercial","stage":"Property Under Contract","customFields":[{"name":"Property address","value":"101 Main St, Phoenix AZ"},{"name":"ARV","value":"325000"},{"name":"Repair estimate","value":"40000"},{"name":"Max allowable offer (MAO)","value":"248000"}]}' "$BASE/api/clients/$OFFER_CLIENT77")
+check "77d: add the MAO field (248000) → 200" 200 "$S"
+S=$(code -b "$JAROFF" -X POST -H 'Content-Type: application/json' -d '{}' "$BASE/api/clients/$OFFER_CLIENT77/offer-package")
+check "77d: POST offer-package (MAO override path) → 200" 200 "$S"
+if grep -q '"offeredAmount":"\$248,000.00"' /tmp/body.json && grep -q '"computedMao":"\$187,500.00"' /tmp/body.json; then
+  PASS=$((PASS+1)); echo "  ✓ offered \$248,000.00 (MAO field wins over computed \$187,500.00 reference)"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ MAO-override response: $(cat /tmp/body.json)"
+fi
+echo "-- 77e. Cross-org isolation: another tenant can't generate offers for this property =="
+S=$(code -b "$JAR" -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"Sneaky Offer LLC","email":"sneakyoffer77@example.com","password":"sneakyoffer77pass"}' "$BASE/api/admin/orgs")
+check "77e: create a second tenant → 201" 201 "$S"
+SNEAKY_ORG77=$(python3 -c "import json; print(json.load(open('/tmp/body.json'))['org']['id'])")
+JARSNEAKY=$(mktemp)
+S=$(code -c "$JARSNEAKY" -b "$JARSNEAKY" -X POST -H 'Content-Type: application/json' \
+  -d '{"email":"sneakyoffer77@example.com","password":"sneakyoffer77pass"}' "$BASE/api/auth/login")
+check "77e: second tenant login → 200" 200 "$S"
+check "77e: other tenant POST offer-package on the offer org's property → 404" 404 $(code -b "$JARSNEAKY" -X POST -H 'Content-Type: application/json' -d '{}' "$BASE/api/clients/$OFFER_CLIENT77/offer-package")
+echo "-- 77f. Bundle carries the Properties action + cleanup =="
+NEWEST_JS=$(ls -t dist/index-*.js 2>/dev/null | head -1)
+if [ -n "$NEWEST_JS" ] && [ -f "$NEWEST_JS" ] && grep -q "Generate offer package" "$NEWEST_JS"; then
+  PASS=$((PASS+1)); echo "  ✓ bundle contains the wholesale Properties 'Generate offer package' action"
+else
+  FAIL=$((FAIL+1)); echo "  ✗ bundle missing 'Generate offer package' (or no dist build)"
+fi
+check "77f: admin deletes Offer Pkg LLC → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$OFFER_ORG77")
+check "77f: admin deletes the sneaky tenant → 200" 200 $(code -b "$JAR" -X DELETE "$BASE/api/admin/orgs/$SNEAKY_ORG77")
+rm -f "$JAROFF" "$JARSNEAKY" "$OFFER_PDF_TMP" /tmp/offerprobe.ts /tmp/offerprobe.out
+echo "  ✓ 77f: offer-package orgs removed"
+
 echo "RESULT: $PASS passed, $FAIL failed"
 
 

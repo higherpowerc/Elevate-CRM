@@ -157,8 +157,9 @@ export function newPdfId(): string {
 
 /** Wrap text to a max width measured in the embedded font (pdf-lib standard
  *  fonts don't wrap on their own). Word-boundary wrapping, tolerant of very
- *  long words (they get hard-broken). */
-function wrapText(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, size: number, maxWidth: number): string[] {
+ *  long words (they get hard-broken). Exported so the offer-package PDF
+ *  generator (server/offers.ts, Phase A2) reuses the same conventions. */
+export function wrapText(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, size: number, maxWidth: number): string[] {
   const out: string[] = [];
   for (const raw of text.split("\n")) {
     if (raw.trim() === "") {
