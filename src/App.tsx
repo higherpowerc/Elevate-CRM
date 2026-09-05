@@ -74,11 +74,19 @@ export default function App() {
    *  the user is signed out. */
   const [resetToken, setResetToken] = useState<string | null>(null);
   const [showLogin, setShowLogin] = useState<boolean>(() => window.location.hash.startsWith("#/login"));
+  const [viewingWebsite, setViewingWebsite] = useState<boolean>(() => window.location.hash.startsWith("#/website"));
 
   useEffect(() => {
     const onHash = () => {
-      if (window.location.hash.startsWith("#/login")) setShowLogin(true);
-      else if (window.location.hash.startsWith("#/website")) setShowLogin(false);
+      if (window.location.hash.startsWith("#/login")) {
+        setShowLogin(true);
+        setViewingWebsite(false);
+      } else if (window.location.hash.startsWith("#/website")) {
+        setShowLogin(false);
+        setViewingWebsite(true);
+      } else {
+        setViewingWebsite(false);
+      }
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -434,6 +442,21 @@ export default function App() {
     );
   }
 
+  if (viewingWebsite) {
+    return (
+      <Website
+        onSignIn={() => {
+          setViewingWebsite(false);
+          window.location.hash = "";
+        }}
+        onLaunchApp={() => {
+          setViewingWebsite(false);
+          window.location.hash = "";
+        }}
+      />
+    );
+  }
+
   const isOwner = user?.isOwner === true;
   const brandMark = isOwner ? "R" : initials(orgName) || "R";
 
@@ -617,6 +640,20 @@ export default function App() {
           <div className="nav-right">
             {/* Global theme toggle (Light / Dark mode) */}
             <ThemeToggle />
+            {/* View Marketing Website button */}
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => {
+                setViewingWebsite(true);
+                window.location.hash = "#/website";
+              }}
+              title="View Revzenta Marketing Website"
+              aria-label="View Revzenta Marketing Website"
+              style={{ fontSize: "14px", display: "inline-flex", alignItems: "center", justifyContent: "center", width: "32px", height: "32px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", cursor: "pointer" }}
+            >
+              🌐
+            </button>
             {/* Global privacy eye (owner request 2026-08-14) — blurs names,
                 phone, email, address everywhere while ON; "active" styling
                 (accent border/fill) marks the blurring state. */}
