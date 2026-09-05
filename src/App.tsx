@@ -702,6 +702,8 @@ export default function App() {
             onGoToStage={goToStage}
             onGoToLost={goToLost}
             onGoToBuyBox={() => setView("buybox")}
+            onGoToBuyers={() => setView("buyers")}
+            onGoToTransactions={() => setView("documents")}
             stages={stages}
             ownerOrg={isOwnerOrg}
             isWholesale={isWholesale}
