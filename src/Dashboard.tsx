@@ -636,22 +636,22 @@ export default function Dashboard({ onGoToStage, onGoToLost, onGoToBuyBox, stage
         <section aria-label="Revenue summary">
           <h2 className="section-title">Revenue</h2>
           <div className="kpi-row kpi-row-4">
-            <div className="card kpi" style={{ backgroundColor: revenueCardColors.totalBilled } as CSSProperties}>
+            <div className="card kpi revenue-card-billed">
               <span className="kpi-label">Total billed</span>
               <span className={`kpi-value lime${blur(moneyHidden)}`}>{money(revenue.invoiced)}</span>
               <span className="kpi-note">All invoices — draft + sent + paid</span>
             </div>
-            <div className="card kpi" style={{ backgroundColor: revenueCardColors.paid } as CSSProperties}>
+            <div className="card kpi revenue-card-paid">
               <span className="kpi-label">Paid</span>
               <span className={`kpi-value green${blur(moneyHidden)}`}>{money(revenue.paid)}</span>
               <span className="kpi-note">Marked paid — money in</span>
             </div>
-            <div className="card kpi" style={{ backgroundColor: revenueCardColors.outstanding } as CSSProperties}>
+            <div className="card kpi revenue-card-outstanding">
               <span className="kpi-label">Outstanding</span>
               <span className={`kpi-value${blur(moneyHidden)}`}>{money(revenue.outstanding)}</span>
               <span className="kpi-note">Sent, not yet paid</span>
             </div>
-            <div className="card kpi" style={{ backgroundColor: revenueCardColors.overdue } as CSSProperties}>
+            <div className="card kpi revenue-card-overdue">
               <span className="kpi-label">Overdue</span>
               <span className={`kpi-value red${blur(moneyHidden)}`}>{money(revenue.overdue)}</span>
               <span className="kpi-note">Sent, past due date</span>

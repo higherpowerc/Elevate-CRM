@@ -38,6 +38,31 @@
   --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
+
+  --rev-billed-bg: #171a1f;
+  --rev-billed-border: rgba(242, 241, 236, 0.12);
+  --rev-paid-bg: #13251a;
+  --rev-paid-border: rgba(124, 227, 139, 0.2);
+  --rev-outstanding-bg: #201d14;
+  --rev-outstanding-border: rgba(255, 196, 107, 0.2);
+  --rev-overdue-bg: #291719;
+  --rev-overdue-border: rgba(255, 107, 107, 0.2);
+
+  --status-badge-accepted-bg: #14532d;
+  --status-badge-accepted-ink: #86efac;
+  --status-badge-accepted-border: #22c55e;
+  --status-badge-review-bg: #1e3a8a;
+  --status-badge-review-ink: #93c5fd;
+  --status-badge-review-border: #3b82f6;
+  --status-badge-counter-bg: #713f12;
+  --status-badge-counter-ink: #fde047;
+  --status-badge-counter-border: #eab308;
+  --status-badge-declined-bg: #450a0a;
+  --status-badge-declined-ink: #fca5a5;
+  --status-badge-declined-border: #ef4444;
+  --status-badge-sent-bg: #0f172a;
+  --status-badge-sent-ink: #38bdf8;
+  --status-badge-sent-border: #0284c7;
 }
 
 [data-theme="light"] {
@@ -71,6 +96,31 @@
   --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
   color-scheme: light;
+
+  --rev-billed-bg: #f8fafc;
+  --rev-billed-border: #cbd5e1;
+  --rev-paid-bg: #f0fdf4;
+  --rev-paid-border: #86efac;
+  --rev-outstanding-bg: #fffbeb;
+  --rev-outstanding-border: #fde68a;
+  --rev-overdue-bg: #fef2f2;
+  --rev-overdue-border: #fca5a5;
+
+  --status-badge-accepted-bg: #dcfce7;
+  --status-badge-accepted-ink: #15803d;
+  --status-badge-accepted-border: #86efac;
+  --status-badge-review-bg: #dbeafe;
+  --status-badge-review-ink: #1d4ed8;
+  --status-badge-review-border: #93c5fd;
+  --status-badge-counter-bg: #fef9c3;
+  --status-badge-counter-ink: #a16207;
+  --status-badge-counter-border: #fde047;
+  --status-badge-declined-bg: #fee2e2;
+  --status-badge-declined-ink: #b91c1c;
+  --status-badge-declined-border: #fca5a5;
+  --status-badge-sent-bg: #e0f2fe;
+  --status-badge-sent-ink: #0284c7;
+  --status-badge-sent-border: #7dd3fc;
 }
 
 * {
@@ -91,6 +141,15 @@ body {
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--ink);
 }
 
 ::selection {
@@ -1517,28 +1576,79 @@ legend.field-label {
   color: var(--muted-2);
 }
 
-/* Dashboard color picker (owner 2026-08-29): when the account sets a
-   dashboard color, App.tsx puts --dash-color on the app root and the
-   dashboard's KPI figures, labels and notes take it. Scoped to the dashboard
-   page (.dashboard) so Finance / clients-directory KPIs keep the theme
-   palette; every rule falls back to the theme default when unset. */
+/* Dashboard KPI styling: theme-aware with crisp contrast in both Dark and Light modes.
+   Values, labels, and status colors adapt seamlessly without manual color tweaking. */
 .dashboard .kpi-value {
-  color: var(--dash-color, var(--ink));
+  color: var(--ink);
 }
 .dashboard .kpi-value.lime {
-  color: var(--dash-color, var(--lime));
+  color: var(--lime);
 }
 .dashboard .kpi-value.green {
-  color: var(--dash-color, var(--green));
+  color: var(--green);
 }
 .dashboard .kpi-value.red {
-  color: var(--dash-color, var(--danger));
+  color: var(--danger);
 }
 .dashboard .kpi-label {
-  color: var(--dash-color, var(--muted));
+  color: var(--muted);
 }
 .dashboard .kpi-note {
-  color: var(--dash-color, var(--muted-2));
+  color: var(--muted-2);
+}
+
+[data-theme="light"] .dashboard .kpi-value {
+  color: var(--ink);
+}
+[data-theme="light"] .dashboard .kpi-value.lime {
+  color: var(--lime);
+}
+[data-theme="light"] .dashboard .kpi-value.green {
+  color: var(--green);
+}
+[data-theme="light"] .dashboard .kpi-value.red {
+  color: var(--danger);
+}
+[data-theme="light"] .dashboard .kpi-label {
+  color: var(--muted);
+}
+[data-theme="light"] .dashboard .kpi-note {
+  color: var(--muted-2);
+}
+
+/* Revenue cards: high-contrast background and border in both Dark and Light modes */
+.revenue-card-billed {
+  background-color: var(--rev-billed-bg, #171a1f) !important;
+  border-color: var(--rev-billed-border, rgba(242, 241, 236, 0.12)) !important;
+}
+.revenue-card-paid {
+  background-color: var(--rev-paid-bg, #13251a) !important;
+  border-color: var(--rev-paid-border, rgba(124, 227, 139, 0.2)) !important;
+}
+.revenue-card-outstanding {
+  background-color: var(--rev-outstanding-bg, #201d14) !important;
+  border-color: var(--rev-outstanding-border, rgba(255, 196, 107, 0.2)) !important;
+}
+.revenue-card-overdue {
+  background-color: var(--rev-overdue-bg, #291719) !important;
+  border-color: var(--rev-overdue-border, rgba(255, 107, 107, 0.2)) !important;
+}
+
+[data-theme="light"] .revenue-card-billed {
+  background-color: var(--rev-billed-bg, #f8fafc) !important;
+  border-color: var(--rev-billed-border, #cbd5e1) !important;
+}
+[data-theme="light"] .revenue-card-paid {
+  background-color: var(--rev-paid-bg, #f0fdf4) !important;
+  border-color: var(--rev-paid-border, #86efac) !important;
+}
+[data-theme="light"] .revenue-card-outstanding {
+  background-color: var(--rev-outstanding-bg, #fffbeb) !important;
+  border-color: var(--rev-outstanding-border, #fde68a) !important;
+}
+[data-theme="light"] .revenue-card-overdue {
+  background-color: var(--rev-overdue-bg, #fef2f2) !important;
+  border-color: var(--rev-overdue-border, #fca5a5) !important;
 }
 /* Owner Dashboard — 2026-08-26: the "Lost" card renders exactly like the
    sibling count cards (.card.kpi with a link-btn "View →"); the inline

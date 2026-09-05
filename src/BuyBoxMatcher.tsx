@@ -140,7 +140,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
       {error && <div className="alert alert-error">{error}</div>}
 
       {/* Navigation Sub-Tabs */}
-      <div style={{ display: "flex", gap: "10px", borderBottom: "1px solid var(--border, #30363d)", paddingBottom: "10px" }}>
+      <div style={{ display: "flex", gap: "10px", borderBottom: "1px solid var(--border)", paddingBottom: "10px" }}>
         <button
           type="button"
           className={activeTab === "matcher" ? "btn btn-primary" : "btn btn-ghost"}
@@ -180,8 +180,8 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                       style={{
                         padding: "12px",
                         borderRadius: "8px",
-                        border: isSelected ? "2px solid #58a6ff" : "1px solid var(--border, #30363d)",
-                        backgroundColor: isSelected ? "rgba(56, 139, 253, 0.12)" : "var(--card-bg, #161b22)",
+                        border: isSelected ? "2px solid #58a6ff" : "1px solid var(--border)",
+                        backgroundColor: isSelected ? "rgba(56, 139, 253, 0.12)" : "var(--card-bg, var(--panel))",
                         cursor: "pointer",
                         transition: "all 0.15s ease",
                       }}
@@ -201,11 +201,11 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                           <span className="badge tone-gray" style={{ fontSize: "0.72rem" }}>No matches</span>
                         )}
                       </div>
-                      <div style={{ fontSize: "0.82rem", color: "#8b949e", marginBottom: "6px" }}>
+                      <div style={{ fontSize: "0.82rem", color: "var(--muted)", marginBottom: "6px" }}>
                         {[p.city, p.state].filter(Boolean).join(", ") || "Location unlisted"}
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", alignItems: "center" }}>
-                        <span style={{ fontWeight: 600, color: "#3fb950" }}>{money(price)}</span>
+                        <span style={{ fontWeight: 600, color: "var(--green)" }}>{money(price)}</span>
                         <span className="badge type-badge tone-teal" style={{ fontSize: "0.72rem" }}>
                           {p.clientType || "Wholesale"}
                         </span>
@@ -221,22 +221,22 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
           <div>
             {effectiveSelectedProperty ? (
               <div className="card" style={{ padding: "20px" }}>
-                <div style={{ borderBottom: "1px solid var(--border, #30363d)", paddingBottom: "14px", marginBottom: "18px" }}>
+                <div style={{ borderBottom: "1px solid var(--border)", paddingBottom: "14px", marginBottom: "18px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
                       <span className="badge tone-blue" style={{ marginBottom: "6px" }}>Selected Deal</span>
                       <h2 style={{ fontSize: "1.25rem", fontWeight: 700, margin: "4px 0" }}>
                         <span className={blurPii(pii)}>{effectiveSelectedProperty.address || effectiveSelectedProperty.companyName}</span>
                       </h2>
-                      <p style={{ color: "#8b949e", margin: 0, fontSize: "0.9rem" }}>
+                      <p style={{ color: "var(--muted)", margin: 0, fontSize: "0.9rem" }}>
                         {[effectiveSelectedProperty.city, effectiveSelectedProperty.state, effectiveSelectedProperty.zip].filter(Boolean).join(", ")}
                       </p>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "#3fb950" }}>
+                      <div style={{ fontSize: "1.25rem", fontWeight: 800, color: "var(--green)" }}>
                         {money(getPropertyPrice(effectiveSelectedProperty))}
                       </div>
-                      <div style={{ fontSize: "0.8rem", color: "#8b949e" }}>Contract / Asking Price</div>
+                      <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Contract / Asking Price</div>
                     </div>
                   </div>
                 </div>
@@ -271,10 +271,10 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                         <div
                           key={buyer.id}
                           style={{
-                            border: "1px solid var(--border, #30363d)",
+                            border: "1px solid var(--border)",
                             borderRadius: "8px",
                             padding: "16px",
-                            backgroundColor: "var(--card-bg, #161b22)",
+                            backgroundColor: "var(--card-bg, var(--panel))",
                           }}
                         >
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
@@ -300,7 +300,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                                 <span className="badge tone-green" style={{ fontSize: "0.75rem" }}>✓ {pof}</span>
                               </div>
                               {buyer.contactName && (
-                                <div style={{ fontSize: "0.85rem", color: "#8b949e", marginTop: "2px" }}>
+                                <div style={{ fontSize: "0.85rem", color: "var(--muted)", marginTop: "2px" }}>
                                   Contact: <span className={blurPii(pii)}>{buyer.contactName}</span>
                                 </div>
                               )}
@@ -316,7 +316,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                               >
                                 {m.matchScore}% Match
                               </span>
-                              <div style={{ fontSize: "0.8rem", color: "#8b949e", marginTop: "4px" }}>
+                              <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginTop: "4px" }}>
                                 Max Budget: {money(maxBudget)}
                               </div>
                             </div>
@@ -331,7 +331,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                                 style={{
                                   fontSize: "0.78rem",
                                   backgroundColor: "rgba(56, 139, 253, 0.15)",
-                                  color: "#58a6ff",
+                                  color: "var(--blue)",
                                   border: "1px solid rgba(56, 139, 253, 0.3)",
                                 }}
                                 title={r.detail}
@@ -348,7 +348,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                                 <a
                                   href={`tel:${buyer.phone}`}
                                   className={`link ${blurPii(pii)}`}
-                                  style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#58a6ff" }}
+                                  style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "var(--blue)" }}
                                 >
                                   📞 {buyer.phone}
                                 </a>
@@ -357,7 +357,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                                 <a
                                   href={`mailto:${buyer.email}?subject=Off-Market Deal in ${effectiveSelectedProperty.city || "Target Market"}`}
                                   className={`link ${blurPii(pii)}`}
-                                  style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "#58a6ff" }}
+                                  style={{ display: "inline-flex", alignItems: "center", gap: "4px", color: "var(--blue)" }}
                                 >
                                   ✉️ {buyer.email}
                                 </a>
@@ -428,7 +428,7 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                         {b.companyName}
                       </h3>
                       {b.contactName && (
-                        <div style={{ fontSize: "0.85rem", color: "#8b949e", marginTop: "2px" }}>
+                        <div style={{ fontSize: "0.85rem", color: "var(--muted)", marginTop: "2px" }}>
                           Contact: <span className={blurPii(pii)}>{b.contactName}</span>
                         </div>
                       )}
@@ -457,15 +457,15 @@ export default function BuyBoxMatcher({ canEdit = true }: Props) {
                   </div>
 
                   <div style={{ fontSize: "0.85rem", marginTop: "10px", lineHeight: "1.4" }}>
-                    <div style={{ color: "#8b949e", fontWeight: 600, fontSize: "0.78rem" }}>TARGET MARKETS:</div>
+                    <div style={{ color: "var(--muted)", fontWeight: 600, fontSize: "0.78rem" }}>TARGET MARKETS:</div>
                     <div style={{ marginBottom: "8px" }}>📍 {targetMarkets}</div>
 
-                    <div style={{ color: "#8b949e", fontWeight: 600, fontSize: "0.78rem" }}>BUY BOX CRITERIA:</div>
-                    <div style={{ color: "#c9d1d9", fontSize: "0.85rem" }}>{buyBox}</div>
+                    <div style={{ color: "var(--muted)", fontWeight: 600, fontSize: "0.78rem" }}>BUY BOX CRITERIA:</div>
+                    <div style={{ color: "var(--ink)", fontSize: "0.85rem" }}>{buyBox}</div>
                   </div>
                 </div>
 
-                <div style={{ marginTop: "16px", borderTop: "1px solid var(--border, #30363d)", paddingTop: "12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ marginTop: "16px", borderTop: "1px solid var(--border)", paddingTop: "12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span
                     className="badge tone-blue"
                     style={{ fontWeight: 700, fontSize: "0.8rem", cursor: "pointer" }}

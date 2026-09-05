@@ -140,19 +140,17 @@ export default function App() {
     document.title = orgName ? `${orgName} — CRM` : "Revzenta — CRM";
   }, [orgName]);
 
-  /* Branding + dashboard color picker (owner 2026-08-29): the same
-     per-account mechanism drives both custom properties on the app root —
-     --accent (brand accent) and --dash-color (dashboard KPI numbers/text).
-     Unset dashboardColor (empty) keeps the theme defaults via CSS fallbacks. */
+  /* Branding (accent color): drives --accent on the app root.
+     Dashboard KPI colors are driven by the theme (Light/Dark mode) to ensure
+     complete legibility and contrast across all pages without manual adjustment. */
   const brandStyle = useMemo<CSSProperties | undefined>(
     () =>
-      user?.accentColor || user?.dashboardColor
+      user?.accentColor
         ? ({
-            ...(user?.accentColor ? { "--accent": user.accentColor } : null),
-            ...(user?.dashboardColor ? { "--dash-color": user.dashboardColor } : null),
+            "--accent": user.accentColor,
           } as CSSProperties)
         : undefined,
-    [user?.accentColor, user?.dashboardColor],
+    [user?.accentColor],
   );
 
   const stages = useMemo(() => user?.stages ?? DEFAULT_STAGES, [user?.stages]);

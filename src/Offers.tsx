@@ -205,18 +205,18 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
           alignItems: "flex-start",
           flexWrap: "wrap",
           gap: "16px",
-          borderBottom: "1px solid #1e293b",
+          borderBottom: "1px solid var(--border)",
           paddingBottom: "16px",
         }}
       >
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <span style={{ fontSize: "24px" }}>📋</span>
-            <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 800, color: "#f8fafc" }}>
+            <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 800, color: "var(--ink)" }}>
               Wholesale Offers Repository
             </h1>
           </div>
-          <p style={{ margin: "6px 0 0 0", fontSize: "13px", color: "#94a3b8" }}>
+          <p style={{ margin: "6px 0 0 0", fontSize: "13px", color: "var(--muted-2)" }}>
             Central storage & reference for all property purchase proposals, LOI letters, and creative structures.
           </p>
         </div>
@@ -272,13 +272,13 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
         <div
           style={{
             backgroundColor: "var(--card-bg, var(--panel))",
-            border: "1px solid #21262d",
+            border: "1px solid var(--border)",
             borderRadius: "8px",
             padding: "16px",
           }}
         >
-          <div style={{ fontSize: "12px", color: "#8b949e", fontWeight: 600 }}>Total Offers Sent</div>
-          <div style={{ fontSize: "26px", fontWeight: 800, color: "#f8fafc", marginTop: "4px" }}>
+          <div style={{ fontSize: "12px", color: "var(--muted)", fontWeight: 600 }}>Total Offers Sent</div>
+          <div style={{ fontSize: "26px", fontWeight: 800, color: "var(--ink)", marginTop: "4px" }}>
             {stats.totalOffers}
           </div>
           <div style={{ fontSize: "11px", color: "#38bdf8", marginTop: "2px" }}>
@@ -289,16 +289,16 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
         <div
           style={{
             backgroundColor: "var(--card-bg, var(--panel))",
-            border: "1px solid #21262d",
+            border: "1px solid var(--border)",
             borderRadius: "8px",
             padding: "16px",
           }}
         >
-          <div style={{ fontSize: "12px", color: "#8b949e", fontWeight: 600 }}>Properties Under Offer</div>
+          <div style={{ fontSize: "12px", color: "var(--muted)", fontWeight: 600 }}>Properties Under Offer</div>
           <div style={{ fontSize: "26px", fontWeight: 800, color: "#58a6ff", marginTop: "4px" }}>
             {stats.uniqueProps}
           </div>
-          <div style={{ fontSize: "11px", color: "#8b949e", marginTop: "2px" }}>
+          <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
             Active homes pitched
           </div>
         </div>
@@ -306,12 +306,12 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
         <div
           style={{
             backgroundColor: "var(--card-bg, var(--panel))",
-            border: "1px solid #21262d",
+            border: "1px solid var(--border)",
             borderRadius: "8px",
             padding: "16px",
           }}
         >
-          <div style={{ fontSize: "12px", color: "#8b949e", fontWeight: 600 }}>Accepted Offers</div>
+          <div style={{ fontSize: "12px", color: "var(--muted)", fontWeight: 600 }}>Accepted Offers</div>
           <div style={{ fontSize: "26px", fontWeight: 800, color: "#3fb950", marginTop: "4px" }}>
             {stats.acceptedCount}
           </div>
@@ -323,16 +323,16 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
         <div
           style={{
             backgroundColor: "var(--card-bg, var(--panel))",
-            border: "1px solid #21262d",
+            border: "1px solid var(--border)",
             borderRadius: "8px",
             padding: "16px",
           }}
         >
-          <div style={{ fontSize: "12px", color: "#8b949e", fontWeight: 600 }}>Total Offer Volume</div>
+          <div style={{ fontSize: "12px", color: "var(--muted)", fontWeight: 600 }}>Total Offer Volume</div>
           <div style={{ fontSize: "24px", fontWeight: 800, color: "#d2a8ff", marginTop: "4px" }}>
             ${stats.totalVolume.toLocaleString()}
           </div>
-          <div style={{ fontSize: "11px", color: "#8b949e", marginTop: "2px" }}>
+          <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>
             Cumulative capital offered
           </div>
         </div>
@@ -342,7 +342,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
       <div
         style={{
           backgroundColor: "var(--panel, var(--bg-soft))",
-          border: "1px solid #30363d",
+          border: "1px solid var(--border)",
           borderRadius: "8px",
           padding: "14px 16px",
           display: "flex",
@@ -361,8 +361,8 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             placeholder="🔍 Search by property address, seller, or email..."
             style={{
               background: "var(--card-bg, var(--panel))",
-              color: "#f8fafc",
-              border: "1px solid #30363d",
+              color: "var(--ink)",
+              border: "1px solid var(--border)",
               padding: "7px 12px",
               borderRadius: "6px",
               fontSize: "13px",
@@ -376,8 +376,8 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             onChange={(e) => setStatusFilter(e.target.value)}
             style={{
               background: "var(--card-bg, var(--panel))",
-              color: "#f8fafc",
-              border: "1px solid #30363d",
+              color: "var(--ink)",
+              border: "1px solid var(--border)",
               padding: "7px 12px",
               borderRadius: "6px",
               fontSize: "13px",
@@ -397,8 +397,8 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             onChange={(e) => setStructureFilter(e.target.value)}
             style={{
               background: "var(--card-bg, var(--panel))",
-              color: "#f8fafc",
-              border: "1px solid #30363d",
+              color: "var(--ink)",
+              border: "1px solid var(--border)",
               padding: "7px 12px",
               borderRadius: "6px",
               fontSize: "13px",
@@ -420,9 +420,9 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             style={{
               padding: "6px 12px",
               borderRadius: "6px",
-              border: viewMode === "grouped" ? "1px solid #38bdf8" : "1px solid #30363d",
-              backgroundColor: viewMode === "grouped" ? "#1e293b" : "var(--card-bg, var(--panel))",
-              color: viewMode === "grouped" ? "#38bdf8" : "#8b949e",
+              border: viewMode === "grouped" ? "1.5px solid var(--accent, var(--lime))" : "1px solid var(--border)",
+              backgroundColor: viewMode === "grouped" ? "var(--panel-2)" : "var(--card-bg, var(--panel))",
+              color: viewMode === "grouped" ? "var(--ink)" : "var(--muted)",
               fontSize: "12px",
               fontWeight: 700,
               cursor: "pointer",
@@ -436,9 +436,9 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             style={{
               padding: "6px 12px",
               borderRadius: "6px",
-              border: viewMode === "flat" ? "1px solid #38bdf8" : "1px solid #30363d",
-              backgroundColor: viewMode === "flat" ? "#1e293b" : "var(--card-bg, var(--panel))",
-              color: viewMode === "flat" ? "#38bdf8" : "#8b949e",
+              border: viewMode === "flat" ? "1.5px solid var(--accent, var(--lime))" : "1px solid var(--border)",
+              backgroundColor: viewMode === "flat" ? "var(--panel-2)" : "var(--card-bg, var(--panel))",
+              color: viewMode === "flat" ? "var(--ink)" : "var(--muted)",
               fontSize: "12px",
               fontWeight: 700,
               cursor: "pointer",
@@ -458,7 +458,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
 
       {/* Loading state */}
       {loading ? (
-        <div style={{ textAlign: "center", padding: "40px", color: "#8b949e", fontSize: "14px" }}>
+        <div style={{ textAlign: "center", padding: "40px", color: "var(--muted)", fontSize: "14px" }}>
           Loading wholesale offers repository...
         </div>
       ) : propertyGroups.length === 0 ? (
@@ -469,12 +469,12 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             padding: "50px 20px",
             backgroundColor: "var(--card-bg, var(--panel))",
             borderRadius: "10px",
-            border: "1px dashed #30363d",
+            border: "1px dashed var(--border)",
           }}
         >
           <div style={{ fontSize: "42px", marginBottom: "12px" }}>📬</div>
-          <h3 style={{ margin: 0, fontSize: "17px", color: "#f8fafc" }}>No Offers Found</h3>
-          <p style={{ margin: "6px auto 18px auto", maxWidth: "420px", fontSize: "13px", color: "#8b949e" }}>
+          <h3 style={{ margin: 0, fontSize: "17px", color: "var(--ink)" }}>No Offers Found</h3>
+          <p style={{ margin: "6px auto 18px auto", maxWidth: "420px", fontSize: "13px", color: "var(--muted)" }}>
             {search || statusFilter !== "all" || structureFilter !== "all"
               ? "No offers matched your active search or filters."
               : "No formal purchase offers have been generated yet. Open any property in your pipeline or click below to calculate and issue your first offer."}
@@ -522,14 +522,14 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
               >
                 Expand all
               </button>
-              <span style={{ color: "#475569" }}>·</span>
+              <span style={{ color: "var(--muted-2)" }}>·</span>
               <button
                 type="button"
                 onClick={() => setExpandedProperties({})}
                 style={{
                   background: "none",
                   border: "none",
-                  color: "#8b949e",
+                  color: "var(--muted)",
                   fontSize: "12px",
                   fontWeight: 600,
                   cursor: "pointer",
@@ -547,7 +547,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                 key={group.key}
                 style={{
                   backgroundColor: "var(--card-bg, var(--panel))",
-                  border: "1px solid #30363d",
+                  border: "1px solid var(--border)",
                   borderRadius: "10px",
                   overflow: "hidden",
                   boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
@@ -572,7 +572,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                     <span style={{ fontSize: "20px" }}>🏡</span>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                        <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "#f8fafc" }}>
+                        <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "var(--ink)" }}>
                           {group.propertyAddress}
                         </h3>
                         <span
@@ -580,16 +580,16 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                             fontSize: "11px",
                             padding: "2px 8px",
                             borderRadius: "12px",
-                            backgroundColor: "#1e293b",
-                            color: "#94a3b8",
-                            border: "1px solid #334155",
+                            backgroundColor: "var(--panel-2)",
+                            color: "var(--muted-2)",
+                            border: "1px solid var(--border)",
                           }}
                         >
                           Stage: {group.stage}
                         </span>
                       </div>
-                      <div style={{ fontSize: "12px", color: "#8b949e", marginTop: "3px" }}>
-                        Seller: <strong style={{ color: "#cbd5e1" }}>{group.sellerName || "Unknown Owner"}</strong>
+                      <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "3px" }}>
+                        Seller: <strong style={{ color: "var(--ink-dim)" }}>{group.sellerName || "Unknown Owner"}</strong>
                         {group.sellerEmail ? ` · ${group.sellerEmail}` : ""}
                         {group.sellerPhone ? ` · ${group.sellerPhone}` : ""}
                       </div>
@@ -598,7 +598,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
 
                   <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
                     <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: "11px", color: "#8b949e" }}>
+                      <div style={{ fontSize: "11px", color: "var(--muted)" }}>
                         {group.offers.length} {group.offers.length === 1 ? "Offer Sent" : "Offers Sent"}
                       </div>
                       <div style={{ fontSize: "14px", fontWeight: 800, color: "#38bdf8", marginTop: "2px" }}>
@@ -630,7 +630,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                           setCalcProperty(mockClient);
                         }}
                         style={{
-                          backgroundColor: "#1e293b",
+                          backgroundColor: "var(--panel-2)",
                           border: "1px solid #38bdf8",
                           color: "#38bdf8",
                           padding: "6px 12px",
@@ -648,8 +648,8 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                         onClick={() => togglePropertyExpanded(group.key)}
                         style={{
                           background: "none",
-                          border: "1px solid #30363d",
-                          color: "#8b949e",
+                          border: "1px solid var(--border)",
+                          color: "var(--muted)",
                           padding: "6px 10px",
                           borderRadius: "6px",
                           fontSize: "12px",
@@ -665,7 +665,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                 {/* Associated Offers List for this Property */}
                 {isExpanded && (
                   <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-                    <div style={{ fontSize: "12px", color: "#8b949e", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    <div style={{ fontSize: "12px", color: "var(--muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.5px" }}>
                       Offers Associated with {group.propertyAddress} ({group.offers.length}):
                     </div>
 
@@ -680,7 +680,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                           key={offer.id}
                           style={{
                             backgroundColor: "var(--panel, var(--bg-soft))",
-                            border: "1px solid #30363d",
+                            border: "1px solid var(--border)",
                             borderRadius: "8px",
                             padding: "16px",
                             display: "flex",
@@ -702,7 +702,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                               <span
                                 style={{
                                   backgroundColor: "var(--line)",
-                                  color: "#f8fafc",
+                                  color: "var(--ink)",
                                   padding: "3px 8px",
                                   borderRadius: "4px",
                                   fontSize: "11px",
@@ -711,17 +711,17 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                               >
                                 Offer #{group.offers.length - idx}
                               </span>
-                              <span style={{ fontSize: "12px", color: "#8b949e" }}>
-                                📅 Sent: <strong style={{ color: "#cbd5e1" }}>{new Date(offer.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</strong>
+                              <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                                📅 Sent: <strong style={{ color: "var(--ink-dim)" }}>{new Date(offer.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</strong>
                               </span>
-                              <span style={{ fontSize: "12px", color: "#8b949e" }}>
+                              <span style={{ fontSize: "12px", color: "var(--muted)" }}>
                                 🏢 Buyer: <strong style={{ color: "#38bdf8" }}>{offer.businessName || "Elevate Capital"} and/or assigns</strong>
                               </span>
                             </div>
 
                             {/* Status Selector */}
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span style={{ fontSize: "11px", color: "#8b949e" }}>Status:</span>
+                              <span style={{ fontSize: "11px", color: "var(--muted)" }}>Status:</span>
                               <select
                                 value={offer.status || "Sent"}
                                 onChange={(e) => handleUpdateStatus(offer.id, e.target.value)}
@@ -752,7 +752,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                               backgroundColor: "var(--card-bg, var(--panel))",
                               padding: "12px",
                               borderRadius: "6px",
-                              border: "1px solid #21262d",
+                              border: "1px solid var(--border)",
                             }}
                           >
                             {/* Option 1: Cash Offer */}
@@ -761,10 +761,10 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                                 <div style={{ fontSize: "11px", color: "#4ade80", fontWeight: 700 }}>
                                   💵 CASH OFFER (MAO)
                                 </div>
-                                <div style={{ fontSize: "17px", fontWeight: 800, color: "#f8fafc", marginTop: "2px" }}>
+                                <div style={{ fontSize: "17px", fontWeight: 800, color: "var(--ink)", marginTop: "2px" }}>
                                   ${(offer.cashOfferAmount || 0).toLocaleString()}
                                 </div>
-                                <div style={{ fontSize: "11px", color: "#8b949e" }}>
+                                <div style={{ fontSize: "11px", color: "var(--muted)" }}>
                                   {offer.closingDays || 14}-Day Close · 100% As-Is
                                 </div>
                               </div>
@@ -776,10 +776,10 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                                 <div style={{ fontSize: "11px", color: "#38bdf8", fontWeight: 700 }}>
                                   🔄 SUBJECT-TO RELIEF
                                 </div>
-                                <div style={{ fontSize: "17px", fontWeight: 800, color: "#f8fafc", marginTop: "2px" }}>
+                                <div style={{ fontSize: "17px", fontWeight: 800, color: "var(--ink)", marginTop: "2px" }}>
                                   Take over ${(offer.subtoDebt || 0).toLocaleString()} Debt
                                 </div>
-                                <div style={{ fontSize: "11px", color: "#8b949e" }}>
+                                <div style={{ fontSize: "11px", color: "var(--muted)" }}>
                                   +${(offer.subtoCashToSeller || 0).toLocaleString()} Cash · ${(offer.subtoMonthlyPayment || 0).toLocaleString()}/mo
                                 </div>
                               </div>
@@ -791,10 +791,10 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                                 <div style={{ fontSize: "11px", color: "#c084fc", fontWeight: 700 }}>
                                   🔥 SELLER FINANCING
                                 </div>
-                                <div style={{ fontSize: "17px", fontWeight: 800, color: "#f8fafc", marginTop: "2px" }}>
+                                <div style={{ fontSize: "17px", fontWeight: 800, color: "var(--ink)", marginTop: "2px" }}>
                                   ${(offer.creativePurchasePrice || 0).toLocaleString()} Price
                                 </div>
-                                <div style={{ fontSize: "11px", color: "#8b949e" }}>
+                                <div style={{ fontSize: "11px", color: "var(--muted)" }}>
                                   ${(offer.creativeDownPayment || 0).toLocaleString()} Down · ${(offer.creativeMonthlyPayment || 0).toLocaleString()}/mo ({offer.creativeBalloonYears || 5}-Yr Balloon)
                                 </div>
                               </div>
@@ -809,11 +809,11 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                               alignItems: "center",
                               flexWrap: "wrap",
                               gap: "10px",
-                              borderTop: "1px solid #21262d",
+                              borderTop: "1px solid var(--border)",
                               paddingTop: "10px",
                             }}
                           >
-                            <div style={{ fontSize: "11px", color: "#8b949e" }}>
+                            <div style={{ fontSize: "11px", color: "var(--muted)" }}>
                               Ref: <code style={{ color: "#38bdf8" }}>{offer.pdfId ? `LOI-${offer.pdfId.slice(0, 8)}` : "LOI"}</code> · Delivered to: {offer.sellerEmail || group.sellerEmail || "Seller"}
                             </div>
 
@@ -844,9 +844,9 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                                 type="button"
                                 onClick={() => setViewingOffer(offer)}
                                 style={{
-                                  backgroundColor: "#1e293b",
-                                  border: "1px solid #334155",
-                                  color: "#f8fafc",
+                                  backgroundColor: "var(--panel-2)",
+                                  border: "1px solid var(--border)",
+                                  color: "var(--ink)",
                                   padding: "6px 12px",
                                   borderRadius: "6px",
                                   fontSize: "12px",
@@ -863,7 +863,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                                 onClick={() => handleDeleteOffer(offer.id)}
                                 style={{
                                   background: "none",
-                                  border: "1px solid #334155",
+                                  border: "1px solid var(--border)",
                                   color: "#f87171",
                                   padding: "6px 10px",
                                   borderRadius: "6px",
@@ -892,14 +892,14 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
         <div
           style={{
             backgroundColor: "var(--card-bg, var(--panel))",
-            border: "1px solid #30363d",
+            border: "1px solid var(--border)",
             borderRadius: "10px",
             overflow: "hidden",
           }}
         >
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
             <thead>
-              <tr style={{ backgroundColor: "var(--panel, var(--bg-soft))", borderBottom: "1px solid #30363d", color: "#8b949e", textAlign: "left" }}>
+              <tr style={{ backgroundColor: "var(--panel, var(--bg-soft))", borderBottom: "1px solid var(--border)", color: "var(--muted)", textAlign: "left" }}>
                 <th style={{ padding: "12px 16px" }}>Property Address</th>
                 <th style={{ padding: "12px 16px" }}>Seller</th>
                 <th style={{ padding: "12px 16px" }}>Date Sent</th>
@@ -917,19 +917,19 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                   <tr
                     key={offer.id}
                     style={{
-                      borderBottom: "1px solid #21262d",
-                      color: "#f8fafc",
+                      borderBottom: "1px solid var(--border)",
+                      color: "var(--ink)",
                     }}
                   >
                     <td style={{ padding: "12px 16px", fontWeight: 700 }}>
-                      <div style={{ color: "#f8fafc" }}>{offer.propertyAddress}</div>
-                      <div style={{ fontSize: "11px", color: "#8b949e" }}>Ref: {offer.pdfId?.slice(0, 8)}</div>
+                      <div style={{ color: "var(--ink)" }}>{offer.propertyAddress}</div>
+                      <div style={{ fontSize: "11px", color: "var(--muted)" }}>Ref: {offer.pdfId?.slice(0, 8)}</div>
                     </td>
-                    <td style={{ padding: "12px 16px", color: "#cbd5e1" }}>
+                    <td style={{ padding: "12px 16px", color: "var(--ink-dim)" }}>
                       <div>{offer.sellerName || "—"}</div>
-                      <div style={{ fontSize: "11px", color: "#8b949e" }}>{offer.sellerEmail}</div>
+                      <div style={{ fontSize: "11px", color: "var(--muted)" }}>{offer.sellerEmail}</div>
                     </td>
-                    <td style={{ padding: "12px 16px", color: "#8b949e" }}>
+                    <td style={{ padding: "12px 16px", color: "var(--muted)" }}>
                       {new Date(offer.createdAt).toLocaleDateString()}
                     </td>
                     <td style={{ padding: "12px 16px", color: "#38bdf8", fontWeight: 600 }}>
@@ -965,9 +965,9 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                           type="button"
                           onClick={() => setViewingOffer(offer)}
                           style={{
-                            backgroundColor: "#1e293b",
-                            border: "1px solid #334155",
-                            color: "#f8fafc",
+                            backgroundColor: "var(--panel-2)",
+                            border: "1px solid var(--border)",
+                            color: "var(--ink)",
                             padding: "4px 8px",
                             borderRadius: "4px",
                             fontSize: "11px",
@@ -1004,8 +1004,8 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
         >
           <div
             style={{
-              backgroundColor: "#11141a",
-              border: "1px solid #334155",
+              backgroundColor: "var(--panel)",
+              border: "1px solid var(--border)",
               borderRadius: "10px",
               width: "100%",
               maxWidth: "700px",
@@ -1019,27 +1019,27 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             <div
               style={{
                 padding: "14px 20px",
-                borderBottom: "1px solid #1e293b",
+                borderBottom: "1px solid var(--border)",
                 backgroundColor: "var(--card-bg, var(--panel))",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
               }}
             >
-              <h3 style={{ margin: 0, fontSize: "16px", color: "#f8fafc" }}>
+              <h3 style={{ margin: 0, fontSize: "16px", color: "var(--ink)" }}>
                 Purchase Offer: {viewingOffer.propertyAddress}
               </h3>
               <button
                 type="button"
                 onClick={() => setViewingOffer(null)}
-                style={{ background: "none", border: "none", color: "#94a3b8", fontSize: "18px", cursor: "pointer" }}
+                style={{ background: "none", border: "none", color: "var(--muted-2)", fontSize: "18px", cursor: "pointer" }}
               >
                 ✕
               </button>
             </div>
 
             <div style={{ padding: "20px", overflowY: "auto", flex: 1 }}>
-              <div style={{ marginBottom: "14px", fontSize: "12px", color: "#8b949e" }}>
+              <div style={{ marginBottom: "14px", fontSize: "12px", color: "var(--muted)" }}>
                 <div><strong>Recipient:</strong> {viewingOffer.sellerEmail}</div>
                 <div><strong>Date:</strong> {new Date(viewingOffer.createdAt).toLocaleString()}</div>
                 <div><strong>Buyer Entity:</strong> {viewingOffer.businessName || "Elevate Capital"} and/or assigns</div>
@@ -1050,11 +1050,11 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                   backgroundColor: "var(--card-bg, var(--panel))",
                   padding: "14px",
                   borderRadius: "6px",
-                  border: "1px solid #21262d",
+                  border: "1px solid var(--border)",
                   fontFamily: "monospace",
                   fontSize: "12px",
                   whiteSpace: "pre-wrap",
-                  color: "#cbd5e1",
+                  color: "var(--ink-dim)",
                   lineHeight: "1.6",
                 }}
               >
@@ -1065,7 +1065,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
             <div
               style={{
                 padding: "12px 20px",
-                borderTop: "1px solid #1e293b",
+                borderTop: "1px solid var(--border)",
                 backgroundColor: "var(--card-bg, var(--panel))",
                 display: "flex",
                 justifyContent: "space-between",

@@ -671,7 +671,7 @@ export default function CsvImportModal({ initialTarget = "properties", stages = 
                     <label key={field.key} className="field" style={{ margin: 0 }}>
                       <span className="field-label" style={{ display: "flex", justifyContent: "space-between" }}>
                         <span>
-                          {field.label} {field.required && <strong style={{ color: "#f85149" }}>*</strong>}
+                          {field.label} {field.required && <strong style={{ color: "var(--danger)" }}>*</strong>}
                         </span>
                         <span style={{ fontSize: "11px", color: "var(--muted)" }}>{field.description}</span>
                       </span>
@@ -776,7 +776,7 @@ export default function CsvImportModal({ initialTarget = "properties", stages = 
                             ? [r.city, r.state, r.zip].filter(Boolean).join(", ") || "—"
                             : r.contactName || r.phone || r.email || "—"}
                         </td>
-                        <td style={{ color: "#3fb950", fontWeight: 600 }}>{money(r.dealValue || 0)}</td>
+                        <td style={{ color: "var(--green)", fontWeight: 600 }}>{money(r.dealValue || 0)}</td>
                         <td>
                           <span className="badge tone-blue" style={{ fontSize: "11px" }}>
                             {r.services?.join(" · ") || r.clientType}
@@ -833,7 +833,7 @@ export default function CsvImportModal({ initialTarget = "properties", stages = 
           {step === "done" && (
             <div style={{ textAlign: "center", padding: "36px 20px" }}>
               <div style={{ fontSize: "3rem", marginBottom: "12px" }}>🎉</div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, color: "#3fb950" }}>
+              <h3 style={{ fontSize: "18px", fontWeight: 700, color: "var(--green)" }}>
                 Successfully Imported {importCount} {target === "properties" ? "Properties" : "Investors"}!
               </h3>
               <p style={{ color: "var(--muted)", fontSize: "13px", maxWidth: "420px", margin: "8px auto 20px" }}>

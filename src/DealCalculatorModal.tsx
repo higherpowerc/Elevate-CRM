@@ -39,7 +39,7 @@ function CurrencyInput({
   return (
     <div className="form-group" style={{ margin: 0 }}>
       <label className="field-label" style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-        <span style={{ fontWeight: 600, fontSize: "12px", color: "var(--ink, #f4f4f6)" }}>{label}</span>
+        <span style={{ fontWeight: 600, fontSize: "12px", color: "#f8fafc" }}>{label}</span>
         {helper && <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>{helper}</span>}
       </label>
       <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -100,7 +100,7 @@ function NumberInput({
   return (
     <div className="form-group" style={{ margin: 0 }}>
       <label className="field-label" style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-        <span style={{ fontWeight: 600, fontSize: "12px", color: "var(--ink, #f4f4f6)" }}>{label}</span>
+        <span style={{ fontWeight: 600, fontSize: "12px", color: "#f8fafc" }}>{label}</span>
         {helper && <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>{helper}</span>}
       </label>
       <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
