@@ -865,9 +865,11 @@ export default function Accounts({ ownerOrgId, onViewAccount, initialCreateOpen 
                           <span className="acc-muted">&mdash;</span>
                         )}
                       </td>
-                      <td className="acc-line" data-label="Email">
+                      <td className="acc-line acc-email" data-label="Email">
                         {o.loginEmail ? (
-                          <span className={blurPii(pii)}>{o.loginEmail}</span>
+                          <span className={`acc-email-text${blurPii(pii)}`} title={o.loginEmail}>
+                            {o.loginEmail}
+                          </span>
                         ) : (
                           <span className="acc-muted">&mdash;</span>
                         )}
@@ -1083,9 +1085,11 @@ export default function Accounts({ ownerOrgId, onViewAccount, initialCreateOpen 
                         <span className="acc-muted">&mdash;</span>
                       )}
                     </td>
-                    <td className="acc-line" data-label="Email">
+                    <td className="acc-line acc-email" data-label="Email">
                       {o.loginEmail ? (
-                        <span className={blurPii(pii)}>{o.loginEmail}</span>
+                        <span className={`acc-email-text${blurPii(pii)}`} title={o.loginEmail}>
+                          {o.loginEmail}
+                        </span>
                       ) : (
                         <span className="acc-muted">&mdash;</span>
                       )}

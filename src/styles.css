@@ -4966,6 +4966,8 @@ input.accent-hex::placeholder,
    (.accounts-table .acc-note code) was removed with it. */
 .accounts-table {
   table-layout: auto;
+  width: 100%;
+  min-width: 1180px;
 }
 .accounts-table th {
   white-space: normal;
@@ -5026,18 +5028,53 @@ input.accent-hex::placeholder,
 .accounts-table .acc-strong {
   font-weight: 600;
 }
-/* Phone/Email keep a small floor so long unbroken strings wrap into
-   readable chunks instead of 4-character slivers on tight viewports. */
-.accounts-table .acc-line {
-  min-width: 9ch;
+/* Column min-widths so content fits cleanly and never crushes into slivers */
+.accounts-table td[data-label="Account"] {
+  min-width: 150px;
 }
-/* Owner bug 2026-08-28 — COLUMN MISALIGNMENT (the "phone shows email,
-   email shows password" report): the PREVIOUS version of this rule applied
-   display: block to the elements THEMSELVES — and .acc-line sits ON the
-   Phone/Email <td> (.acc-name is the span inside the Account td). A
-   block-displayed table cell leaves the column grid, so every value from
-   Phone onward painted one column LEFT of its header. The td keeps its
-   native table-cell display; only the .acc-name SPAN stays display:block. */
+.accounts-table td[data-label="Business Type"] {
+  min-width: 130px;
+  white-space: nowrap;
+}
+.accounts-table td[data-label="Phone"] {
+  min-width: 125px;
+  white-space: nowrap;
+}
+/* Email gets generous dedicated width so standard and long addresses fit */
+.accounts-table td[data-label="Email"],
+.accounts-table th:nth-child(4),
+.accounts-table .acc-email {
+  min-width: 220px;
+}
+.accounts-table .acc-email-text {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.accounts-table td[data-label="Members"],
+.accounts-table td[data-label="Clients records"] {
+  min-width: 75px;
+  white-space: nowrap;
+  text-align: center;
+}
+.accounts-table td[data-label="Created"] {
+  min-width: 100px;
+  white-space: nowrap;
+}
+.accounts-table td[data-label="Subscription"] {
+  min-width: 140px;
+  white-space: nowrap;
+}
+.accounts-table td[data-label="Actions"],
+.accounts-table th.actions-th {
+  min-width: 280px;
+}
+
+.accounts-table .acc-line {
+  min-width: 12ch;
+}
 .accounts-table .acc-name,
 .accounts-table td.acc-line {
   overflow: visible;
