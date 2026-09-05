@@ -508,7 +508,7 @@ export default function DealCalculatorModal({ property, onClose, onUpdated, crmB
   useEffect(() => {
     const addr = propertyAddress.trim() || property?.companyName || "Subject Property";
     const name = sellerName.trim() || property?.contactName || "Property Owner";
-    const company = (businessName && businessName.trim()) ? businessName.trim() : "Elevate Capital";
+    const company = (businessName && businessName.trim()) ? businessName.trim() : "Revzenta Capital";
     const buyerEntity = `${company} and/or assigns`;
     const today = new Date().toLocaleDateString("en-US", {
       year: "numeric",

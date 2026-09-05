@@ -2557,7 +2557,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         propertyAddress: tx.property_address,
         sellerName: tx.seller_name,
         buyerName: tx.buyer_name,
-        companyName: org?.name || "Elevate Capital",
+        companyName: org?.name || "Revzenta Capital",
         purchasePrice: tx.purchase_price,
         assignmentFee: tx.assignment_fee,
         earnestMoney: tx.earnest_money,
@@ -4756,7 +4756,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
     const crmOrgName = (org?.name || "").trim();
     const businessName = typeof body.businessName === "string" && body.businessName.trim()
       ? body.businessName.trim()
-      : (crmOrgName || "Elevate Capital");
+      : (crmOrgName || "Revzenta Capital");
 
     const offerAmount = typeof body.offerAmount === "number" ? body.offerAmount : 0;
     const purchasePrice = typeof body.purchasePrice === "number" ? body.purchasePrice : 0;
@@ -4942,7 +4942,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         `).all(orgId) as ClientRow[];
 
         const org = db.query("SELECT name FROM orgs WHERE id = ?").get(orgId) as { name: string } | null;
-        const defaultBiz = (org?.name || "Elevate Capital").trim();
+        const defaultBiz = (org?.name || "Revzenta Capital").trim();
 
         for (const c of clientsWithOffers) {
           let pdfId = "";
@@ -5036,7 +5036,7 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
         propertyAddress: r.property_address || r.client_company || "Subject Property",
         sellerName: r.seller_name || "",
         sellerEmail: r.seller_email || "",
-        businessName: r.business_name || "Elevate Capital",
+        businessName: r.business_name || "Revzenta Capital",
         offerType: r.offer_type,
         selectedOffers,
         cashOfferAmount: r.cash_offer_amount,

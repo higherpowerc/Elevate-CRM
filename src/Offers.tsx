@@ -715,7 +715,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                                 📅 Sent: <strong style={{ color: "var(--ink-dim)" }}>{new Date(offer.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</strong>
                               </span>
                               <span style={{ fontSize: "12px", color: "var(--muted)" }}>
-                                🏢 Buyer: <strong style={{ color: "#38bdf8" }}>{offer.businessName || "Elevate Capital"} and/or assigns</strong>
+                                🏢 Buyer: <strong style={{ color: "#38bdf8" }}>{offer.businessName || "Revzenta Capital"} and/or assigns</strong>
                               </span>
                             </div>
 
@@ -933,7 +933,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
                       {new Date(offer.createdAt).toLocaleDateString()}
                     </td>
                     <td style={{ padding: "12px 16px", color: "#38bdf8", fontWeight: 600 }}>
-                      {offer.businessName || "Elevate Capital"} and/or assigns
+                      {offer.businessName || "Revzenta Capital"} and/or assigns
                     </td>
                     <td style={{ padding: "12px 16px", fontWeight: 800, color: "#34d399" }}>
                       ${maxAmt.toLocaleString()}
@@ -1042,7 +1042,7 @@ export default function Offers({ crmBusinessName, onNavigateToProperty }: Props)
               <div style={{ marginBottom: "14px", fontSize: "12px", color: "var(--muted)" }}>
                 <div><strong>Recipient:</strong> {viewingOffer.sellerEmail}</div>
                 <div><strong>Date:</strong> {new Date(viewingOffer.createdAt).toLocaleString()}</div>
-                <div><strong>Buyer Entity:</strong> {viewingOffer.businessName || "Elevate Capital"} and/or assigns</div>
+                <div><strong>Buyer Entity:</strong> {viewingOffer.businessName || "Revzenta Capital"} and/or assigns</div>
               </div>
 
               <div

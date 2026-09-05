@@ -20,9 +20,25 @@
  */
 
 const RESEND_API = process.env.RESEND_URL ?? "https://api.resend.com/emails";
-/** The sender shown on every 3g-4 email. The PM flips `EMAIL_FROM` via env
- *  once the domain verifies — no code change needed later. */
-export const EMAIL_FROM = process.env.EMAIL_FROM ?? "Revzenta <onboarding@revzenta.com>";
+
+export function cleanBranding(str: string): string {
+  if (!str) return str;
+  return str
+    .replace(/Elevate\s*Studio\s*CRM/gi, "Revzenta CRM")
+    .replace(/Elevate\s*Studio/gi, "Revzenta")
+    .replace(/Elevate\s*Capital/gi, "Revzenta")
+    .replace(/Elevate\s*CRM/gi, "Revzenta CRM")
+    .replace(/\belevate\b/gi, "Revzenta");
+}
+
+export function resolveEmailFrom(): string {
+  const env = (process.env.EMAIL_FROM ?? "").trim();
+  if (!env) return "Revzenta <onboarding@resend.dev>";
+  return cleanBranding(env);
+}
+
+/** The sender shown on every email. */
+export const EMAIL_FROM = resolveEmailFrom();
 /** The exact error returned when RESEND_API_KEY is unset — call sites map it
  *  to the "skipped" emailStatus (deliberate no-op, not a failure). */
 export const RESEND_KEY_MISSING_ERROR = "RESEND_API_KEY not configured";
@@ -31,7 +47,7 @@ export const RESEND_KEY_MISSING_ERROR = "RESEND_API_KEY not configured";
  *  try/catch of their own. */
 export type SendEmailResult = { ok: true; id?: string } | { ok: false; error: string };
 /** App URL used when the triggering request has no usable origin. */
-export const DEFAULT_APP_URL = "https://elevate-crm-mwp7.onrender.com";
+export const DEFAULT_APP_URL = "https://app.revzenta.com";
 
 export interface SendEmailInput {
   to: string;
@@ -78,13 +94,14 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     const redirect = input.testRedirect !== false && testTo !== "";
     const to = redirect ? testTo : input.to;
     const text = redirect ? `[TEST] Intended for ${input.to}\n\n${input.text}` : input.text;
+    const fromSender = resolveEmailFrom();
     const body: Record<string, unknown> = {
-      from: EMAIL_FROM,
+      from: fromSender,
       to: [to],
-      subject: input.subject,
-      text,
+      subject: cleanBranding(input.subject),
+      text: cleanBranding(text),
     };
-    if (input.html) body.html = input.html;
+    if (input.html) body.html = cleanBranding(input.html);
     if (input.attachments && input.attachments.length > 0) body.attachments = input.attachments;
     const res = await fetch(RESEND_API, {
       method: "POST",

@@ -95,7 +95,7 @@ export async function generateOfferPdf(input: OfferPdfInput): Promise<Uint8Array
   const margin = 50;
   const contentWidth = width - margin * 2;
 
-  const companyName = (input.businessName && input.businessName.trim()) ? input.businessName.trim() : "Elevate Capital";
+  const companyName = (input.businessName && input.businessName.trim()) ? input.businessName.trim() : "Revzenta Capital";
   const buyerEntity = `${companyName} and/or assigns`;
 
   // Navy Masthead Header Banner

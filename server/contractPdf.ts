@@ -99,7 +99,7 @@ export async function generateContractPdf(input: ContractPdfInput): Promise<Uint
     ? "REAL ESTATE PURCHASE AND SALE AGREEMENT"
     : "ASSIGNMENT OF REAL ESTATE PURCHASE AND SALE AGREEMENT";
 
-  const company = (input.companyName || "Elevate Capital").trim();
+  const company = (input.companyName || "Revzenta Capital").trim();
   const buyerEntity = `${company} and/or assigns`;
   const seller = input.sellerName.trim() || "Owner of Record";
   const state = input.stateJurisdiction || "US General";

@@ -648,7 +648,7 @@ export function renderTitlePortalPage(token: string): Response {
         </div>
         <div style="background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155;">
           <div class="label">Buyer / Assignee</div>
-          <div style="font-weight: 700; margin-top: 4px; font-size: 15px;">${tx.buyer_name || "Elevate Capital and/or assigns"}</div>
+          <div style="font-weight: 700; margin-top: 4px; font-size: 15px;">${tx.buyer_name || "Revzenta Capital and/or assigns"}</div>
           <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">Email: ${tx.buyer_email || "—"}</div>
           <div style="font-size: 12px; color: #94a3b8;">Phone: ${tx.buyer_phone || "—"}</div>
         </div>
