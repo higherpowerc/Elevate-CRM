@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { Client, CustomFieldDef, CustomField, ClientType, Stage } from "./types";
+import type { Client, CustomFieldDef, CustomField, ClientType, PropertyEnrichmentResult, Stage } from "./types";
+import { api } from "./api";
 import { PACKAGE_TIERS, TIER_LABELS, TIER_SERVICE_TAGS, type PackageTier } from "./types";
 import { CLIENT_TIMEZONES, timezoneLabel } from "./timezone";
 import { usePii, blurPii, PII_FIELD_KEYS } from "./pii";
@@ -234,6 +235,59 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
   /** The Business name / LLC tab is collapsed by default; auto-expands when
    *  editing a client that already has a DBA or EIN/SSN on file. */
   const [llcOpen, setLlcOpen] = useState(() => !!(client?.dbaName || client?.einSsn));
+  const [enriching, setEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [enrichSuccess, setEnrichSuccess] = useState<string | null>(null);
+  const [enrichedData, setEnrichedData] = useState<PropertyEnrichmentResult | null>(null);
+
+  const handleAutoEnrich = async () => {
+    const fullQuery = `${form.address}, ${form.city} ${form.state} ${form.zip}`.replace(/^[\s,]+|[\s,]+$/g, "");
+    if (!fullQuery) {
+      setEnrichError("Please enter at least a property street address first.");
+      return;
+    }
+    setEnriching(true);
+    setEnrichError(null);
+    setEnrichSuccess(null);
+    try {
+      const res = await api.lookupProperty(fullQuery);
+      if (res.property) {
+        const p = res.property;
+        setEnrichedData(p);
+        setForm((prev) => {
+          const nextCustom = [...prev.customFields];
+          const setCustom = (name: string, val: string | number) => {
+            const idx = nextCustom.findIndex((c) => c.name === name);
+            if (idx >= 0) nextCustom[idx] = { name, value: String(val) };
+            else nextCustom.push({ name, value: String(val) });
+          };
+          if (p.bedrooms) setCustom("bedrooms", p.bedrooms);
+          if (p.bathrooms) setCustom("bathrooms", p.bathrooms);
+          if (p.squareFootage) setCustom("squareFootage", p.squareFootage);
+          if (p.yearBuilt) setCustom("yearBuilt", p.yearBuilt);
+          if (p.estimatedValue) setCustom("estimatedValue", p.estimatedValue);
+          if (p.estimatedRent) setCustom("rentEstimate", p.estimatedRent);
+
+          return {
+            ...prev,
+            address: p.addressLine1 || prev.address,
+            city: p.city || prev.city,
+            state: p.state || prev.state,
+            zip: p.zipCode || prev.zip,
+            dealValue: p.estimatedValue || prev.dealValue,
+            companyName: prev.companyName || p.ownerName || "",
+            customFields: nextCustom,
+          };
+        });
+        setEnrichSuccess(`Auto-enriched specs & AVM ($${p.estimatedValue.toLocaleString()}) via ${p.source === "rentcast" ? "RentCast API" : "Property Valuation Engine"}!`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to auto-enrich property.";
+      setEnrichError(msg);
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   // Esc closes the modal (keyboard nicety).
   useEffect(() => {
@@ -855,6 +909,85 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
                 {error}
               </div>
             )}
+
+            {/* Auto-Enrichment Toolbar */}
+            <div
+              style={{
+                background: "var(--surface-sunken, rgba(255,255,255,0.03))",
+                border: "1px solid var(--border)",
+                borderRadius: "10px",
+                padding: "14px 16px",
+                marginBottom: "16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                <div>
+                  <strong style={{ fontSize: "14px", display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span>⚡</span> Property Lead Auto-Enrichment
+                  </strong>
+                  <span style={{ fontSize: "12px", color: "var(--text-dim)", display: "block" }}>
+                    Pull beds, baths, sqft, year built, AVM market value & comps automatically.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleAutoEnrich}
+                  disabled={enriching || !form.address.trim()}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {enriching ? "🔍 Enriching..." : "⚡ Auto-Enrich Data"}
+                </button>
+              </div>
+
+              {enrichError && (
+                <div className="alert alert-error" style={{ margin: 0, fontSize: "12px", padding: "6px 10px" }}>
+                  {enrichError}
+                </div>
+              )}
+              {enrichSuccess && (
+                <div className="alert alert-success" style={{ margin: 0, fontSize: "12px", padding: "6px 10px" }}>
+                  ✓ {enrichSuccess}
+                </div>
+              )}
+
+              {enrichedData && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                    gap: "8px",
+                    background: "var(--surface)",
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: "1px solid var(--border)",
+                    fontSize: "12px",
+                  }}
+                >
+                  <div>
+                    <span style={{ color: "var(--text-dim)", display: "block" }}>AVM Value</span>
+                    <strong style={{ color: "var(--primary)" }}>${enrichedData.estimatedValue.toLocaleString()}</strong>
+                  </div>
+                  {enrichedData.estimatedRent ? (
+                    <div>
+                      <span style={{ color: "var(--text-dim)", display: "block" }}>Market Rent</span>
+                      <strong>${enrichedData.estimatedRent.toLocaleString()}/mo</strong>
+                    </div>
+                  ) : null}
+                  <div>
+                    <span style={{ color: "var(--text-dim)", display: "block" }}>Specs</span>
+                    <strong>{enrichedData.bedrooms}b / {enrichedData.bathrooms}ba • {enrichedData.squareFootage} sqft</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: "var(--text-dim)", display: "block" }}>Year / Type</span>
+                    <strong>{enrichedData.yearBuilt || "N/A"} • {enrichedData.propertyType}</strong>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* 1. Property Address */}
             <fieldset className="field addr-group intake-block">

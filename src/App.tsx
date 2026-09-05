@@ -16,6 +16,7 @@ import Settings from "./Settings";
 import Offers from "./Offers";
 import BuyBoxMatcher from "./BuyBoxMatcher";
 import TransactionHub from "./TransactionHub";
+import Website from "./Website";
 import { api } from "./api";
 import { DEFAULT_STAGES, TENANT_TABS, type TenantTab, type User } from "./types";
 import { initials } from "./bits";
@@ -72,6 +73,16 @@ export default function App() {
   /** 3k — a reset token from the URL hash (`#/reset?token=…`), shown while
    *  the user is signed out. */
   const [resetToken, setResetToken] = useState<string | null>(null);
+  const [showLogin, setShowLogin] = useState<boolean>(() => window.location.hash.startsWith("#/login"));
+
+  useEffect(() => {
+    const onHash = () => {
+      if (window.location.hash.startsWith("#/login")) setShowLogin(true);
+      else if (window.location.hash.startsWith("#/website")) setShowLogin(false);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   /* Phase 3d — owner impersonation. True while the owner's session is swapped
      into a client tenant's workspace; drives the banner in the shell. */
   const [impersonating, setImpersonating] = useState(false);
@@ -392,12 +403,32 @@ export default function App() {
   }
 
   if (!user) {
+    if (showLogin) {
+      return (
+        <Login
+          onLogin={(u) => {
+            setUser(u);
+            setResetToken(null);
+            if (window.location.hash.startsWith("#/reset") || window.location.hash.startsWith("#/login")) {
+              window.location.hash = "";
+            }
+          }}
+          onBackToWebsite={() => {
+            setShowLogin(false);
+            if (window.location.hash.startsWith("#/login")) window.location.hash = "";
+          }}
+        />
+      );
+    }
     return (
-      <Login
-        onLogin={(u) => {
-          setUser(u);
-          setResetToken(null);
-          if (window.location.hash.startsWith("#/reset")) window.location.hash = "";
+      <Website
+        onSignIn={() => {
+          setShowLogin(true);
+          window.location.hash = "#/login";
+        }}
+        onLaunchApp={() => {
+          setShowLogin(true);
+          window.location.hash = "#/login";
         }}
       />
     );

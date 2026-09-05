@@ -10,7 +10,13 @@ import ThemeToggle from "./ThemeToggle";
  * same whether or not the email is registered (no account enumeration), so
  * the UI never needs to know which case happened.
  */
-export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
+export default function Login({
+  onLogin,
+  onBackToWebsite,
+}: {
+  onLogin: (u: User) => void;
+  onBackToWebsite?: () => void;
+}) {
   const [mode, setMode] = useState<"signin" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -66,6 +72,16 @@ export default function Login({ onLogin }: { onLogin: (u: User) => void }) {
 
   return (
     <div className="login">
+      {onBackToWebsite && (
+        <button
+          type="button"
+          onClick={onBackToWebsite}
+          className="btn btn-ghost btn-sm"
+          style={{ position: "absolute", top: "20px", left: "20px", zIndex: 10, display: "flex", alignItems: "center", gap: "6px" }}
+        >
+          ← Back to Revzenta Website
+        </button>
+      )}
       <div style={{ position: "absolute", top: "20px", right: "20px", zIndex: 10 }}>
         <ThemeToggle />
       </div>

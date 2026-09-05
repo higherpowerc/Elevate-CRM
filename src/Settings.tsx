@@ -13,6 +13,7 @@ import {
   type OrgSettings,
   type TabPermissions,
   type TenantTab,
+  type WebhookSettings,
   money,
 } from "./types";
 import StageEditor from "./StageEditor";
@@ -128,6 +129,15 @@ export default function Settings({
      (owner or client) controls its OWN setting; the server persists + enforces
      it per org. */
   const [allowSelfSchedule, setAllowSelfSchedule] = useState(false);
+
+  /* Wholesale Inbound Webhook & Real Estate APIs */
+  const [webhookSettings, setWebhookSettings] = useState<WebhookSettings | null>(null);
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const [rentcastKeyDraft, setRentcastKeyDraft] = useState("");
+  const [savingRentcast, setSavingRentcast] = useState(false);
+  const [rentcastMsg, setRentcastMsg] = useState<string | null>(null);
+  const [testingWebhook, setTestingWebhook] = useState(false);
+  const [testWebhookMsg, setTestWebhookMsg] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -445,6 +455,13 @@ export default function Settings({
       setRevenueModel(settings.revenueModel);
       setMonthlySubscriptionAmount(settings.monthlySubscriptionAmount);
       setAllowSelfSchedule(!!settings.allowSelfSchedule);
+      try {
+        const wh = await api.webhookSettings();
+        setWebhookSettings(wh);
+        setRentcastKeyDraft(wh.rentcastApiKey || "");
+      } catch {
+        /* non-blocking */
+      }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     }
@@ -1719,6 +1736,177 @@ export default function Settings({
             </button>
           </div>
         )}
+
+        {/* Inbound Lead Webhooks & Property APIs */}
+        <div className="card admin-form">
+          <div className="admin-card-head">
+            <h2 className="admin-card-title">⚡ Inbound Lead Webhook & Property APIs</h2>
+            <p className="admin-card-sub">
+              Automatically stream leads from PropStream, BatchLeads, Zapier, Make, or custom web forms directly into your CRM. Each lead auto-enriches property specs, comps, and AVM valuations.
+            </p>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginTop: "12px" }}>
+            {/* 1. Webhook URL */}
+            <div className="field">
+              <span className="field-label" style={{ fontWeight: 600 }}>Your Inbound Webhook URL (POST)</span>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type="text"
+                  readOnly
+                  value={webhookSettings?.webhookUrl || "Generating..."}
+                  style={{ fontFamily: "monospace", fontSize: "12px", background: "var(--surface-sunken)" }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    if (webhookSettings?.webhookUrl) {
+                      navigator.clipboard.writeText(webhookSettings.webhookUrl);
+                      setWebhookCopied(true);
+                      setTimeout(() => setWebhookCopied(false), 2500);
+                    }
+                  }}
+                  disabled={!webhookSettings?.webhookUrl}
+                >
+                  {webhookCopied ? "✓ Copied!" : "Copy URL"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={async () => {
+                    if (!confirm("Regenerate webhook key? Any existing integrations will need the new URL.")) return;
+                    try {
+                      const res = await api.regenerateWebhookKey();
+                      if (res.ok) {
+                        setWebhookSettings((prev) => prev ? { ...prev, webhookSecret: res.webhookSecret, webhookUrl: res.webhookUrl } : null);
+                      }
+                    } catch (e) {
+                      alert(e instanceof Error ? e.message : "Failed to rotate key");
+                    }
+                  }}
+                  title="Regenerate Webhook Secret"
+                >
+                  🔄 Rotate
+                </button>
+              </div>
+              <span className="field-hint" style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "4px" }}>
+                Send JSON payloads with property details (address, city, state, zip, seller_name, phone, email, asking_price, notes).
+              </span>
+            </div>
+
+            {/* Test Button */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={async () => {
+                  setTestingWebhook(true);
+                  setTestWebhookMsg(null);
+                  try {
+                    const res = await api.testWebhookLead();
+                    if (res.ok) {
+                      setTestWebhookMsg(`✓ Test lead created: "${res.client.companyName}". Check your Leads pipeline!`);
+                      const wh = await api.webhookSettings();
+                      setWebhookSettings(wh);
+                    }
+                  } catch (e) {
+                    setTestWebhookMsg(e instanceof Error ? e.message : "Failed to send test lead");
+                  } finally {
+                    setTestingWebhook(false);
+                  }
+                }}
+                disabled={testingWebhook}
+              >
+                {testingWebhook ? "Sending Lead..." : "⚡ Send Test Inbound Lead"}
+              </button>
+              {testWebhookMsg && (
+                <span style={{ fontSize: "13px", color: "var(--primary)" }}>{testWebhookMsg}</span>
+              )}
+            </div>
+
+            {/* 2. RentCast API Key */}
+            <div className="field" style={{ borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
+              <span className="field-label" style={{ fontWeight: 600 }}>RentCast API Key (Optional)</span>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type="password"
+                  value={rentcastKeyDraft}
+                  onChange={(e) => setRentcastKeyDraft(e.target.value)}
+                  placeholder="Paste RentCast API key (e.g. 5a1b2c3d...)"
+                  style={{ fontFamily: "monospace" }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    setSavingRentcast(true);
+                    setRentcastMsg(null);
+                    try {
+                      const res = await api.saveRentcastKey(rentcastKeyDraft);
+                      if (res.ok) {
+                        setRentcastMsg("Saved!");
+                        setTimeout(() => setRentcastMsg(null), 3000);
+                      }
+                    } catch (e) {
+                      setRentcastMsg(e instanceof Error ? e.message : "Save failed");
+                    } finally {
+                      setSavingRentcast(false);
+                    }
+                  }}
+                  disabled={savingRentcast}
+                >
+                  {savingRentcast ? "Saving..." : rentcastMsg || "Save Key"}
+                </button>
+              </div>
+              <span className="field-hint" style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "4px" }}>
+                Get a free API key at <a href="https://rentcast.io/api" target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>rentcast.io</a> for live MLS records, tax appraisal data & comps. Revzenta uses built-in smart valuation heuristics when unset.
+              </span>
+            </div>
+
+            {/* 3. Inbound Webhook Delivery Logs */}
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
+              <span className="field-label" style={{ fontWeight: 600, display: "block", marginBottom: "8px" }}>
+                Recent Inbound Webhook Deliveries ({webhookSettings?.recentLogs?.length || 0})
+              </span>
+              {(!webhookSettings?.recentLogs || webhookSettings.recentLogs.length === 0) ? (
+                <div style={{ fontSize: "12px", color: "var(--text-dim)", fontStyle: "italic" }}>
+                  No webhook events received yet. Try clicking "Send Test Inbound Lead" above to verify your pipeline.
+                </div>
+              ) : (
+                <div style={{ maxHeight: "220px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "6px" }}>
+                  <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse", textAlign: "left" }}>
+                    <thead>
+                      <tr style={{ background: "var(--surface-sunken)", borderBottom: "1px solid var(--border)" }}>
+                        <th style={{ padding: "6px 10px" }}>Status</th>
+                        <th style={{ padding: "6px 10px" }}>Source</th>
+                        <th style={{ padding: "6px 10px" }}>Client ID</th>
+                        <th style={{ padding: "6px 10px" }}>Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {webhookSettings.recentLogs.map((log) => (
+                        <tr key={log.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                          <td style={{ padding: "6px 10px" }}>
+                            <span style={{
+                              color: log.status === "success" ? "#10b981" : "#ef4444",
+                              fontWeight: 600,
+                            }}>
+                              {log.status === "success" ? "✓ Received" : "✕ Error"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "6px 10px", textTransform: "capitalize" }}>{log.source}</td>
+                          <td style={{ padding: "6px 10px" }}>{log.clientId ? `#${log.clientId}` : "—"}</td>
+                          <td style={{ padding: "6px 10px", color: "var(--text-dim)" }}>{log.createdAt}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
       </div>
 

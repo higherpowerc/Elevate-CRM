@@ -1,4 +1,4 @@
-import type { AgreementEnvelope, Appointment, Buyer, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, Transaction, User, WholesaleOffer } from "./types";
+import type { AgreementEnvelope, Appointment, Buyer, Client, CreatedOrg, CreatedOrgUser, CustomFieldDef, CustomIntakeGroup, DashboardData, Invoice, InvoiceStatus, MeResponse, OnboardingItem, Org, OrgMember, OrgSettings, PropertyEnrichmentResult, ProvisionEvent, RevenueModel, TabPermissions, Task, Ticket, TicketPriority, TicketReply, TicketStatus, Transaction, User, WebhookLog, WebhookSettings, WholesaleOffer } from "./types";
 
 
 export class ApiError extends Error {
@@ -589,5 +589,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data || {}),
     }),
+  /* Wholesale Inbound Webhooks & Property Lead Engine */
+  webhookSettings: () => request<WebhookSettings>("/api/webhooks/settings"),
+  regenerateWebhookKey: () =>
+    request<{ ok: true; webhookSecret: string; webhookUrl: string }>("/api/webhooks/regenerate-key", { method: "POST" }),
+  testWebhookLead: () => request<{ ok: true; clientId: number; client: Client }>("/api/webhooks/test", { method: "POST" }),
+  saveRentcastKey: (apiKey: string) =>
+    request<{ ok: true; rentcastApiKey: string }>("/api/settings/rentcast-key", {
+      method: "POST",
+      body: JSON.stringify({ apiKey }),
+    }),
+  lookupProperty: (address: string) =>
+    request<{ ok: true; property: PropertyEnrichmentResult }>(`/api/properties/lookup?address=${encodeURIComponent(address)}`),
 };
 

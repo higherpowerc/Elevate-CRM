@@ -817,3 +817,54 @@ export interface Transaction {
   contractPdfUrl: string | null;
   titlePortalUrl: string;
 }
+
+export interface WebhookLog {
+  id: number;
+  orgId: number;
+  source: string;
+  status: "success" | "failed";
+  payload: string;
+  clientId: number | null;
+  errorMessage: string;
+  createdAt: string;
+}
+
+export interface WebhookSettings {
+  webhookSecret: string;
+  webhookUrl: string;
+  rentcastApiKey: string;
+  recentLogs: WebhookLog[];
+}
+
+export interface PropertyEnrichmentResult {
+  formattedAddress: string;
+  addressLine1: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  county?: string;
+  propertyType: string;
+  bedrooms: number;
+  bathrooms: number;
+  squareFootage: number;
+  lotSize?: number;
+  yearBuilt: number;
+  estimatedValue: number;
+  valueRangeLow?: number;
+  valueRangeHigh?: number;
+  estimatedRent: number;
+  lastSalePrice?: number;
+  lastSaleDate?: string;
+  taxAssessedValue?: number;
+  ownerName?: string;
+  comps?: Array<{
+    address: string;
+    price: number;
+    bedrooms: number;
+    bathrooms: number;
+    squareFootage: number;
+    distanceMiles: number;
+  }>;
+  source: "rentcast" | "attom" | "public_records_estimate";
+}
+

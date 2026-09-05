@@ -86,6 +86,7 @@ import {
   deleteAgreementPdf,
 } from "./agreements";
 import { randomBytes } from "node:crypto";
+import { lookupPropertyData, normalizeWebhookPayload } from "./propertyEnrichment";
 
 export const SESSION_COOKIE = "elevate_session";
 /** Map a sendEmail result to the emailStatus vocabulary the UI renders:
@@ -2606,6 +2607,168 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
 
     db.query(`UPDATE transactions SET title_status = ?, updated_at = datetime('now') WHERE id = ?`).run(titleStatus, tx.id);
     return json({ ok: true, titleStatus });
+  }
+
+  /* ── Wholesale Inbound Lead Webhook (PropStream, BatchLeads, Zapier, Make, Form Submissions) ── */
+  if (pathname === "/api/leads/webhook" && method === "POST") {
+    let secret = url.searchParams.get("key") ?? req.headers.get("x-webhook-secret") ?? "";
+    if (!secret) {
+      const authHeader = req.headers.get("authorization") ?? "";
+      if (authHeader.toLowerCase().startsWith("bearer ")) {
+        secret = authHeader.slice(7).trim();
+      }
+    }
+    secret = secret.trim();
+
+    if (!secret) {
+      return err("Unauthorized: Missing webhook key. Provide ?key=<secret> or Authorization: Bearer <secret>.", 401);
+    }
+
+    const org = db.query("SELECT * FROM orgs WHERE webhook_secret = ?").get(secret) as {
+      id: number;
+      name: string;
+      stages: string;
+      custom_fields: string;
+      custom_intake_groups: string;
+      rentcast_api_key?: string;
+    } | null;
+
+    if (!org) {
+      return err("Unauthorized: Invalid webhook key.", 401);
+    }
+
+    const body = await readBody(req);
+    if (!body || typeof body !== "object") {
+      db.query(
+        "INSERT INTO inbound_webhooks (org_id, source, status, payload, client_id, error_message) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(org.id, "webhook", "failed", "{}", null, "Invalid JSON payload");
+      return err("Invalid JSON payload.", 400);
+    }
+
+    const rawPayloadStr = JSON.stringify(body);
+
+    try {
+      const normalized = normalizeWebhookPayload(body);
+      const source = (typeof body.source === "string" && body.source.trim()) ? body.source.trim() : "webhook";
+
+      let enriched: any = null;
+      if (normalized.address) {
+        try {
+          const fullQuery = `${normalized.address}, ${normalized.city} ${normalized.state} ${normalized.zip}`.trim();
+          enriched = await lookupPropertyData(fullQuery, org.rentcast_api_key);
+        } catch {
+          // Graceful fallback
+        }
+      }
+
+      const propAddress = normalized.address || enriched?.addressLine1 || "Unknown Property Address";
+      const propCity = normalized.city || enriched?.city || "";
+      const propState = normalized.state || enriched?.state || "";
+      const propZip = normalized.zip || enriched?.zipCode || "";
+      const seller = normalized.sellerName || enriched?.ownerName || "Property Owner";
+      const phone = normalized.phone;
+      const email = normalized.email;
+      const beds = normalized.bedrooms || enriched?.bedrooms || 0;
+      const baths = normalized.bathrooms || enriched?.bathrooms || 0;
+      const sqft = normalized.squareFootage || enriched?.squareFootage || 0;
+      const year = enriched?.yearBuilt || 0;
+      const estValue = normalized.estimatedValue || enriched?.estimatedValue || 0;
+      const asking = normalized.askingPrice || 0;
+
+      const orgStages = parseStages(org.stages);
+      const initialStage = orgStages[0] ?? "Leads";
+
+      const customFields: Record<string, unknown> = {
+        bedrooms: beds,
+        bathrooms: baths,
+        squareFootage: sqft,
+        yearBuilt: year,
+        estimatedValue: estValue,
+        askingPrice: asking,
+        distressType: normalized.distressType,
+        propertyType: enriched?.propertyType || "Single Family",
+      };
+      if (enriched?.estimatedRent) {
+        customFields.rentEstimate = enriched.estimatedRent;
+      }
+      if (enriched?.comps && enriched.comps.length > 0) {
+        customFields.comps = enriched.comps;
+      }
+
+      let leadNotes = normalized.notes ? `${normalized.notes}\n\n` : "";
+      leadNotes += `--- Inbound Lead Details ---\n`;
+      leadNotes += `Source: ${source} (${normalized.distressType})\n`;
+      if (beds || baths || sqft) leadNotes += `Specs: ${beds} beds, ${baths} baths, ${sqft} sqft${year ? `, Built ${year}` : ""}\n`;
+      if (estValue) leadNotes += `Estimated Value (AVM): $${estValue.toLocaleString()}\n`;
+      if (asking) leadNotes += `Asking Price: $${asking.toLocaleString()}\n`;
+      if (enriched?.estimatedRent) leadNotes += `Market Rent: $${enriched.estimatedRent.toLocaleString()}/mo\n`;
+
+      const insertStmt = db.prepare(
+        `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, agent_name, agent_email, agent_phone, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?, ?)`
+      );
+
+      const emptyIntake = intakeColumns({} as any).values;
+      const emptyStatus = statusValues({} as any);
+
+      const info = insertStmt.run(
+        org.id,
+        propAddress,
+        seller,
+        email,
+        phone,
+        "Real Estate Wholesaling",
+        JSON.stringify([]),
+        JSON.stringify(customFields),
+        estValue,
+        initialStage,
+        "Review incoming lead & run comps",
+        leadNotes.trim(),
+        0,
+        "single_family",
+        propAddress,
+        propCity,
+        propState,
+        propZip,
+        "",
+        `Webhook: ${normalized.distressType || source}`,
+        "",
+        "",
+        "",
+        0,
+        ...emptyIntake,
+        ...emptyStatus,
+        "not_sent",
+        "",
+        DEFAULT_CLIENT_TIMEZONE
+      );
+
+      const clientId = Number(info.lastInsertRowid);
+
+      db.query(
+        "INSERT INTO inbound_webhooks (org_id, source, status, payload, client_id, error_message) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(org.id, source, "success", rawPayloadStr, clientId, "");
+
+      return json({
+        ok: true,
+        message: "Lead successfully ingested",
+        clientId,
+        property: {
+          address: propAddress,
+          city: propCity,
+          state: propState,
+          zip: propZip,
+          estimatedValue: estValue,
+          specs: { beds, baths, sqft, year }
+        }
+      }, 201);
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      db.query(
+        "INSERT INTO inbound_webhooks (org_id, source, status, payload, client_id, error_message) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(org.id, "webhook", "failed", rawPayloadStr, null, errMsg);
+      return err(`Webhook processing failed: ${errMsg}`, 500);
+    }
   }
 
   /* Auth */
@@ -6820,6 +6983,194 @@ Thank you!
     }
 
     return err("Method not allowed.", 405);
+  }
+
+  /* ── Wholesale Inbound Webhooks & Property Lead Engine Settings ── */
+  if (pathname === "/api/webhooks/settings" && method === "GET") {
+    let org = db.query("SELECT id, webhook_secret, rentcast_api_key FROM orgs WHERE id = ?").get(orgId) as {
+      id: number;
+      webhook_secret: string;
+      rentcast_api_key?: string;
+    } | null;
+
+    if (!org) return err("Organization not found.", 404);
+
+    let secret = org.webhook_secret;
+    if (!secret) {
+      secret = "whsec_" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      db.query("UPDATE orgs SET webhook_secret = ? WHERE id = ?").run(secret, orgId);
+    }
+
+    const appUrl = appUrlFrom(req);
+    const webhookUrl = `${appUrl}/api/leads/webhook?key=${secret}`;
+
+    const recentLogs = db
+      .query(
+        `SELECT id, org_id as orgId, source, status, payload, client_id as clientId, error_message as errorMessage, created_at as createdAt
+         FROM inbound_webhooks
+         WHERE org_id = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT 25`
+      )
+      .all(orgId);
+
+    return json({
+      webhookSecret: secret,
+      webhookUrl,
+      rentcastApiKey: org.rentcast_api_key ?? "",
+      recentLogs,
+    });
+  }
+
+  if (pathname === "/api/webhooks/regenerate-key" && method === "POST") {
+    const deniedAdmin = requireOrgAdmin(auth);
+    if (deniedAdmin) return deniedAdmin;
+
+    const newSecret = "whsec_" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    db.query("UPDATE orgs SET webhook_secret = ? WHERE id = ?").run(newSecret, orgId);
+
+    const appUrl = appUrlFrom(req);
+    return json({
+      ok: true,
+      webhookSecret: newSecret,
+      webhookUrl: `${appUrl}/api/leads/webhook?key=${newSecret}`,
+    });
+  }
+
+  if (pathname === "/api/webhooks/test" && method === "POST") {
+    const org = getOrg(orgId);
+    if (!org) return err("Organization not found.", 404);
+
+    const orgRow = db.query("SELECT rentcast_api_key FROM orgs WHERE id = ?").get(orgId) as { rentcast_api_key?: string } | null;
+
+    const sampleAddresses = [
+      { addr: "742 Evergreen Terrace", city: "Springfield", state: "OR", zip: "97477", beds: 4, baths: 2.5, sqft: 2150, estVal: 385000, ask: 265000, seller: "Homer Simpson", phone: "(555) 733-4663" },
+      { addr: "1044 N 24th St", city: "Phoenix", state: "AZ", zip: "85008", beds: 3, baths: 2, sqft: 1650, estVal: 345000, ask: 230000, seller: "David Reynolds", phone: "(602) 555-8912" },
+      { addr: "3822 Oakridge Lane", city: "Dallas", state: "TX", zip: "75201", beds: 3, baths: 2, sqft: 1820, estVal: 410000, ask: 290000, seller: "Elena Martinez", phone: "(214) 555-3490" },
+    ];
+    const sample = sampleAddresses[Math.floor(Math.random() * sampleAddresses.length)];
+
+    let enriched: any = null;
+    try {
+      enriched = await lookupPropertyData(`${sample.addr}, ${sample.city} ${sample.state} ${sample.zip}`, orgRow?.rentcast_api_key);
+    } catch {
+      // fallback
+    }
+
+    const beds = sample.beds || enriched?.bedrooms || 3;
+    const baths = sample.baths || enriched?.bathrooms || 2;
+    const sqft = sample.sqft || enriched?.squareFootage || 1800;
+    const estVal = sample.estVal || enriched?.estimatedValue || 350000;
+    const asking = sample.ask;
+
+    const customFields: Record<string, unknown> = {
+      bedrooms: beds,
+      bathrooms: baths,
+      squareFootage: sqft,
+      yearBuilt: enriched?.yearBuilt || 1994,
+      estimatedValue: estVal,
+      askingPrice: asking,
+      distressType: "Distressed Property (Test Webhook)",
+      propertyType: enriched?.propertyType || "Single Family",
+    };
+    if (enriched?.estimatedRent) {
+      customFields.rentEstimate = enriched.estimatedRent;
+    }
+    if (enriched?.comps) {
+      customFields.comps = enriched.comps;
+    }
+
+    const stages = parseStages(org.stages);
+    const initialStage = stages[0] ?? "Leads";
+
+    let leadNotes = `--- Test Inbound Lead ---\n`;
+    leadNotes += `Source: Test Inbound Webhook\n`;
+    leadNotes += `Specs: ${beds} beds, ${baths} baths, ${sqft} sqft\n`;
+    leadNotes += `Estimated Value (AVM): $${estVal.toLocaleString()}\n`;
+    leadNotes += `Asking Price: $${asking.toLocaleString()}\n`;
+    if (enriched?.estimatedRent) leadNotes += `Market Rent: $${enriched.estimatedRent.toLocaleString()}/mo\n`;
+
+    const insertStmt = db.prepare(
+      `INSERT INTO clients (org_id, company_name, contact_name, email, phone, industry, services, custom_fields, deal_value, stage, next_action, notes, archived, client_type, address, city, state, zip, website, lead_source, agent_name, agent_email, agent_phone, monthly_amount, ${INTAKE_COLS.join(", ")}, ${STATUS_COLS.join(", ")}, agreement_status, tier, timezone)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${INTAKE_COLS.map(() => "?").join(", ")}, ${STATUS_COLS.map(() => "?").join(", ")}, ?, ?, ?)`
+    );
+
+    const emptyIntake = intakeColumns({} as any).values;
+    const emptyStatus = statusValues({} as any);
+
+    const info = insertStmt.run(
+      orgId,
+      sample.addr,
+      sample.seller,
+      "seller@example.com",
+      sample.phone,
+      "Real Estate Wholesaling",
+      JSON.stringify(["Cash MAO"]),
+      JSON.stringify(customFields),
+      estVal,
+      initialStage,
+      "Verify comps and send cash offer",
+      leadNotes.trim(),
+      0,
+      "single_family",
+      sample.addr,
+      sample.city,
+      sample.state,
+      sample.zip,
+      "",
+      "Webhook: Test Submission",
+      "",
+      "",
+      "",
+      0,
+      ...emptyIntake,
+      ...emptyStatus,
+      "not_sent",
+      "",
+      DEFAULT_CLIENT_TIMEZONE
+    );
+
+    const clientId = Number(info.lastInsertRowid);
+    const clientRow = db.query("SELECT * FROM clients WHERE id = ? AND org_id = ?").get(clientId, orgId) as ClientRow;
+
+    db.query(
+      "INSERT INTO inbound_webhooks (org_id, source, status, payload, client_id, error_message) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(orgId, "test_webhook", "success", JSON.stringify(sample), clientId, "");
+
+    return json({
+      ok: true,
+      clientId,
+      client: toClient(clientRow, isOwnerSession(auth)),
+    }, 201);
+  }
+
+  if (pathname === "/api/settings/rentcast-key" && method === "POST") {
+    const deniedAdmin = requireOrgAdmin(auth);
+    if (deniedAdmin) return deniedAdmin;
+
+    const body = await readBody(req);
+    if (!body) return err("Invalid JSON body.", 400);
+
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+    db.query("UPDATE orgs SET rentcast_api_key = ? WHERE id = ?").run(apiKey, orgId);
+
+    return json({ ok: true, rentcastApiKey: apiKey });
+  }
+
+  if (pathname === "/api/properties/lookup" && method === "GET") {
+    const address = (url.searchParams.get("address") ?? "").trim();
+    if (!address) return err("Address parameter is required.", 400);
+
+    const orgRow = db.query("SELECT rentcast_api_key FROM orgs WHERE id = ?").get(orgId) as { rentcast_api_key?: string } | null;
+    const apiKey = orgRow?.rentcast_api_key || "";
+
+    try {
+      const result = await lookupPropertyData(address, apiKey);
+      return json({ ok: true, property: result });
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return err(`Property lookup failed: ${m}`, 500);
+    }
   }
 
   return err("Not found.", 404);

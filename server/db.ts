@@ -1870,3 +1870,39 @@ CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions(created_a
     db.exec("ALTER TABLE transactions ADD COLUMN custom_terms TEXT NOT NULL DEFAULT ''");
   }
 }
+
+/**
+ * Inbound Webhooks & Property Data Ingestion Migration
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS inbound_webhooks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  org_id INTEGER NOT NULL REFERENCES orgs(id),
+  source TEXT NOT NULL DEFAULT 'webhook',
+  status TEXT NOT NULL DEFAULT 'success',
+  payload TEXT NOT NULL DEFAULT '{}',
+  client_id INTEGER REFERENCES clients(id),
+  error_message TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbound_webhooks_org_id ON inbound_webhooks(org_id);
+CREATE INDEX IF NOT EXISTS idx_inbound_webhooks_created_at ON inbound_webhooks(created_at);
+`);
+
+{
+  const orgCols = db.query("PRAGMA table_info(orgs)").all() as { name: string }[];
+  if (!orgCols.some((c) => c.name === "webhook_secret")) {
+    db.exec("ALTER TABLE orgs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''");
+  }
+  if (!orgCols.some((c) => c.name === "rentcast_api_key")) {
+    db.exec("ALTER TABLE orgs ADD COLUMN rentcast_api_key TEXT NOT NULL DEFAULT ''");
+  }
+
+  // Backfill missing webhook_secret with a random token for each org
+  const orgsWithoutSecret = db.query("SELECT id FROM orgs WHERE webhook_secret = '' OR webhook_secret IS NULL").all() as { id: number }[];
+  for (const o of orgsWithoutSecret) {
+    const secret = "whsec_" + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    db.query("UPDATE orgs SET webhook_secret = ? WHERE id = ?").run(secret, o.id);
+  }
+}
