@@ -167,22 +167,19 @@ export default function App() {
      stored role='admin' stay in their client account's workspace and never
      inherit the owner cockpit (server sends isOwner:false for them). Also
      gates the owner-only Onboarding tab (owner direction 2026-08-15). */
-  const isOwnerOrg = user?.isOwner === true;
+  const isOwnerOrg = !impersonating && user?.isOwner === true;
 
   /* Wholesale Biz custom menu (owner direction 2026-09-04) — the account's
      business type (orgs.vertical_key, delivered on the session user as
      verticalKey) switches the client workspace to the wholesale tab set.
-     Fresh state arrives on every login/me refresh (setUser is the only
-     setter), so an owner-side vertical change applies on the account's next
-     sign-in. Owner workspace unaffected — the cockpit keeps today's nav. */
-  const [verticalKey, setVerticalKey] = useState<string>("");
-  useEffect(() => {
-    setVerticalKey(user?.verticalKey ?? "");
-  }, [user]);
+     Synchronously derived so owner impersonation switches immediately. */
+  const verticalKey = user?.verticalKey ?? "";
   const isWholesale = Boolean(
     !isOwnerOrg && (
       verticalKey === "wholesalebiz" ||
       verticalKey === "wholesale" ||
+      verticalKey.toLowerCase().includes("wholesale") ||
+      (user?.orgName && user.orgName.toLowerCase().includes("wholesale")) ||
       (orgName && orgName.toLowerCase().includes("wholesale"))
     )
   );

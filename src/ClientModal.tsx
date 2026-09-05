@@ -120,7 +120,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     nextAction: "",
     notes: "",
     archived: false,
-    clientType: isWholesale ? "single_family" : "residential",
+    clientType: isWholesale ? "single_family" : "commercial",
     address: "",
     city: "",
     state: "",
@@ -134,7 +134,7 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
     billingZip: "",
     billingSame: true,
     preferredContactMethod: "",
-    businessType: "",
+    businessType: "Wholesale Real Estate",
     taxIdEin: "",
     apContact: "",
     poRequired: false,
@@ -312,88 +312,26 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.companyName.trim()) {
-      setError(form.clientType === "commercial" ? "Company name is required." : "Name is required.");
+      setError("Business / Company name is required.");
       return;
     }
-    // Phase 3e: the segmented toggle must be one of the two types — a choice
-    // is forced before saving (the server enforces it too).
-    if (form.clientType !== "commercial" && form.clientType !== "residential") {
-      setError("Choose Commercial or Individual.");
-      return;
-    }
-    // Build the payload custom fields from the tenant's definitions: every
-    // checkbox is sent (0/1); text/number/date fields are sent only when they
-    // have a value (empty values are omitted — the server treats them as
-    // unset, and all custom fields are optional).
-    const customFields: CustomField[] = [];
-    for (const def of customFieldDefs) {
-      const value = valueOf(def.name).trim();
-      if (def.type === "checkbox") {
-        customFields.push({ name: def.name, value: value === "1" ? "1" : "0" });
-      } else if (value) {
-        customFields.push({ name: def.name, value });
-      }
-    }
-    // Adaptive intake Phase 3: values from the org's ENABLED custom intake
-    // groups that apply to this client type — stored by group field key in
-    // the SAME customFields array. Yes/no fields always send 1/0; text and
-    // select fields send only non-empty values.
-    for (const g of getCustomGroupsFor(intake, intakeClientType(form.clientType))) {
-      for (const f of g.fields) {
-        const value = valueOf(f.key).trim();
-        if (f.kind === "yesno") {
-          customFields.push({ name: f.key, value: value === "1" ? "1" : "0" });
-        } else if (value) {
-          customFields.push({ name: f.key, value });
-        }
-      }
-    }
-    const billingSame = form.billingSame !== false;
     setError(null);
-    // Owner 2026-08-27 — the package tier drives auto Services tags: merge the
-    // tier's tags into services before saving so the tags persist even if the
-    // owner only picked a tier (the server enforces the same merge).
-    const tierTags = TIER_SERVICE_TAGS[form.tier === "" ? "" : (form.tier as PackageTier)] ?? [];
-    const services = [...form.services];
-    for (const t of tierTags) {
-      if (!services.some((s) => s.toLowerCase() === t.toLowerCase())) services.push(t);
-    }
+    const subCost = Number(form.monthlyAmount) || 0;
+    const bType = form.businessType?.trim() || "Wholesale Real Estate";
     onSave(
       {
         ...form,
-        services,
-        // Owner 2026-08-27 — the package tier ships with the save (owner
-        // workspace only in the UI; the server persists it solely for the
-        // owner org).
-        tier: (form.tier ?? "") as PackageTier,
-        timezone: form.timezone ?? "",
-        billingSame,
-        // When billing is the same as the service address the address values
-        // are omitted from the save (nothing to store).
-        ...(billingSame
-          ? {}
-          : {
-              billingAddress: form.billingAddress.trim(),
-              billingCity: form.billingCity.trim(),
-              billingState: form.billingState.trim(),
-              billingZip: form.billingZip.trim(),
-            }),
-        customFields,
-        dealValue: Number(form.dealValue) || 0,
-        monthlyAmount: Number(form.monthlyAmount) || 0,
-        // Owner request 2026-08-14 — lost/DNC: cleared flags ship cleared
-        // metadata (the server normalizes anyway — this keeps the payload
-        // honest for the modal's own optimistic render).
-        lost: form.lost,
-        lostReason: form.lost ? form.lostReason.trim() : "",
-        dnc: form.dnc,
-        dncReason: form.dnc ? form.dncReason.trim() : "",
-        dncDate: form.dnc ? form.dncDate : "",
-        // Owner 2026-08-20 sales rework — demo outcome + follow-up note ship
-        // with the save (owner Leads tab only in the UI; the server persists
-        // them solely for the owner org).
-        demoOutcome: form.demoOutcome ?? "",
-        followUpNote: (form.followUpNote ?? "").trim(),
+        companyName: form.companyName.trim(),
+        contactName: form.contactName.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        businessType: bType,
+        clientType: form.clientType === "residential" ? "residential" : "commercial",
+        monthlyAmount: subCost,
+        dealValue: Number(form.dealValue) || subCost,
+        stage: form.stage || createStage,
+        services: [...form.services],
+        customFields: form.customFields,
       },
       client,
     );
@@ -1178,10 +1116,10 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
   }
 
   return (
-    <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit client" : "New client"}>
-      <div className="modal modal-lg">
+    <div className="overlay" role="dialog" aria-modal="true" aria-label={client ? "Edit Lead" : "New Lead"}>
+      <div className="modal">
         <div className="modal-head">
-          <h2>{client ? "Edit client" : "New client"}</h2>
+          <h2>{client ? "Edit Lead" : "New Lead"}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close" disabled={busy}>
             ✕
           </button>
@@ -1192,328 +1130,144 @@ export default function ClientModal({ client, stages, defaultStage, customFieldD
               {error}
             </div>
           )}
+
+          {/* 1. Workspace Type */}
           <div className="field">
-            <span className="field-label">Client type *</span>
-            <div className="seg seg-type" role="radiogroup" aria-label="Client type">
-              {(["commercial", "residential"] as ClientType[]).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.clientType === t}
-                  className={form.clientType === t ? "seg-btn active" : "seg-btn"}
-                  onClick={() => set("clientType", t)}
-                >
-                  {t === "commercial" ? "Commercial" : "Individual"}
-                </button>
-              ))}
+            <label className="field-label" style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", display: "block" }}>
+              🏢 Workspace Type *
+            </label>
+            <div className="seg seg-type" role="radiogroup" aria-label="Workspace type">
+              {[
+                { value: "Wholesale Real Estate", label: "Wholesale Real Estate" },
+                { value: "B2B", label: "B2B" },
+                { value: "B2C", label: "B2C" },
+              ].map((t) => {
+                const isChecked =
+                  form.businessType === t.value ||
+                  (!form.businessType && t.value === "Wholesale Real Estate");
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={isChecked}
+                    className={isChecked ? "seg-btn active" : "seg-btn"}
+                    onClick={() => set("businessType", t.value)}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
-          {/* Owner 2026-08-27 — LEAD INFORMATION: deal value + package tier
-              surfaced in the record's info window, visible at every step of
-              the lead process (Leads / Onboarding / Sold — the modal is shared
-              across all stages). OWNER-only: both are owner concepts (deal
-              value is the owner's projected deal; the tier is owner-only
-              data). Fix 2026-08-27: the deal value here is an EDITABLE input
-              (it was read-only and no intake field wrote dealValue, so a value
-              entered at intake was silently lost — stored 0). It binds to
-              form.dealValue and ships with the same save path; the tier stays
-              editable via the selector below. Tenants never see this block. */}
-          {ownerOrg && (
-            <div className="intake-block lead-info" aria-label="Lead information">
-              <div className="lead-info-title">Lead information</div>
-              <div className="form-grid intake-grid">
-                <label className="field">
-                  <span className="field-label">Deal value ($)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    placeholder="0"
-                    value={form.dealValue === 0 ? "" : String(form.dealValue)}
-                    onChange={(e) => set("dealValue", e.target.value === "" ? 0 : Number(e.target.value))}
-                    aria-label="Deal value in dollars"
-                  />
-                  <span className="field-hint">
-                    The projected deal for this lead — it shows on the Leads row, the Lead information panel and
-                    the Client accounts Deal value column.
-                  </span>
-                </label>
-                <div className="field">
-                  <span className="field-label">Package tier</span>
-                  <div className="lead-info-value">
-                    {form.tier ? (TIER_LABELS[form.tier] ?? form.tier) : "— None set —"}
-                  </div>
-                </div>
-              </div>
-              {(() => {
-                const offerPdf = client?.customFields?.find((cf) => cf.name.toLowerCase() === "offer pdf")?.value;
-                const offerSent = client?.customFields?.find((cf) => cf.name.toLowerCase() === "offer sent")?.value;
-                const cashOffer = client?.customFields?.find((cf) => cf.name.toLowerCase() === "cash offer")?.value;
-                const creativePrice = client?.customFields?.find((cf) => cf.name.toLowerCase() === "creative price")?.value;
-                if (!offerPdf && !offerSent && !cashOffer && !creativePrice) return null;
-                return (
-                  <div style={{ marginTop: "16px", padding: "14px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
-                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span>📁 Client Offers & Files Repository</span>
-                      {offerSent && <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>Sent: {offerSent}</span>}
-                    </div>
-                    <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
-                      {cashOffer && (
-                        <div style={{ background: "#ffffff", padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
-                          <span style={{ color: "#64748b" }}>Cash Offer: </span>
-                          <strong style={{ color: "#16a34a" }}>{cashOffer}</strong>
-                        </div>
-                      )}
-                      {creativePrice && (
-                        <div style={{ background: "#ffffff", padding: "6px 10px", borderRadius: "6px", border: "1px solid #e2e8f0", fontSize: "12px" }}>
-                          <span style={{ color: "#64748b" }}>Creative Price: </span>
-                          <strong style={{ color: "#9333ea" }}>{creativePrice}</strong>
-                        </div>
-                      )}
-                      {offerPdf && (
-                        <a
-                          href={offerPdf}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "6px",
-                            padding: "6px 12px",
-                            background: "#0284c7",
-                            color: "#ffffff",
-                            borderRadius: "6px",
-                            fontWeight: 600,
-                            fontSize: "12px",
-                            textDecoration: "none",
-                            boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                          }}
-                        >
-                          📥 Download Formal Offer Letter (PDF)
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
+
+          {/* 2. Contact Information */}
+          <section className="intake-section" aria-label="Contact information" style={{ marginTop: "18px" }}>
+            <div className="intake-section-title" style={{ fontSize: "14px", fontWeight: 700, marginBottom: "12px" }}>
+              👤 Contact Information
             </div>
-          )}
-          {/* Owner 2026-08-27 — CLIENT PACKAGE TIER selector. OWNER-only:
-              renders only in the owner workspace (ownerOrg). The 4 tiers
-              (Tier 1 Website only / Tier 2 Website + CRM / Tier 3 Website +
-              CRM + Lead gen / Tier 4 Custom package) are the owner's defined
-              package tiers; the tier drives auto Services tags, the per-tier
-              onboarding checklist and the future billing tier (per-tier
-              pricing is the owner's call at charge time — no hard-coded
-              rates). Tenants never see this selector nor the field. */}
-          {ownerOrg && (
-            <div className="field intake-block tier-picker">
-              <span className="field-label">Package tier</span>
-              <select
-                className="tier-select"
-                value={form.tier}
-                aria-label="Package tier"
-                onChange={(e) => set("tier", e.target.value as PackageTier)}
-              >
-                <option value="">— None set —</option>
-                {PACKAGE_TIERS.map((t) => (
-                  <option key={t} value={t}>
-                    {TIER_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-              <span className="field-hint">
-                Select the client's package tier. It drives the Services tags (Website / CRM / Lead
-                gen / Custom package) and the onboarding checklist. Pricing is set at charge time.
-              </span>
-            </div>
-          )}
-          {/* Owner 2026-08-27 — CLIENT TIMEZONE selector. OWNER-only: renders
-              only in the owner workspace (ownerOrg). The lead/client's IANA
-              timezone drives the calendar/appointments auto-conversion — the
-              owner schedules in their fixed Arizona/MST and the client's local
-              time is shown converted across DST. '' = unset (treated as the
-              owner's Arizona/MST). Tenants never see this selector nor the
-              field. */}
-          {ownerOrg && (
-            <div className="field intake-block timezone-picker">
-              <span className="field-label">Client timezone</span>
-              <select
-                className="timezone-select"
-                value={form.timezone}
-                aria-label="Client timezone"
-                onChange={(e) => set("timezone", e.target.value)}
-              >
-                {CLIENT_TIMEZONES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-              <span className="field-hint">
-                {form.timezone
-                  ? `Appointments will show ${timezoneLabel(form.timezone)} local time beside the owner's Arizona/MST time.`
-                  : "Unset: appointments show in the owner's Arizona/MST time."}
-              </span>
-            </div>
-          )}
-          {sections.map((section) =>
-            section.fields.length === 0 ? null : (
-              <section className="intake-section" key={section.id} aria-label={section.title}>
-                <div className="intake-section-title">{section.title}</div>
-                <div className="form-grid intake-grid">
-                  {section.fields.map((f) =>
-                    CELL_KINDS.has(f.kind) ? renderCell(f) : renderBlock(f),
-                  )}
-                </div>
-              </section>
-            ),
-          )}
-          {/* Owner 2026-08-20 sales rework — DEMO OUTCOME (owner Leads tab
-              ONLY, in the edit modal — NOT a list column/dropdown). The owner
-              records the demo result here: Sold / Not sold / Maybe. 'sold'
-              relocates the lead to the Onboarding bucket (the same positional
-              path "Start Onboarding" used); 'maybe' keeps the lead on Leads
-              and stores a follow-up note (shown here when Maybe is set) so
-              the owner can pick it up later; 'not_sold' keeps the lead on
-              Leads and can be flagged lost below. The scheduled demo time +
-              meeting link are shown read-only for reference. */}
-          {ownerLeadsTab && (
-            <section className="intake-section" aria-label="Demo outcome">
-              <div className="intake-section-title">Demo outcome</div>
-              {(client?.demoScheduledAt || client?.demoMeetingLink) && (
-                <p className="cell-muted demo-sched-line">
-                  {client?.demoScheduledAt ? `Demo scheduled for ${client.demoScheduledAt}.` : ""}{" "}
-                  {client?.demoMeetingLink ? `Meeting link: ${client.demoMeetingLink}` : ""}
-                </p>
-              )}
-              <div className="form-grid intake-grid">
-                <div className="field intake-block demo-outcome-block">
-                  <span className="field-label">Demo result</span>
-                  <select
-                    className="demo-outcome-field"
-                    value={form.demoOutcome}
-                    aria-label="Demo outcome"
-                    onChange={(e) => set("demoOutcome", e.target.value as "" | "sold" | "not_sold" | "maybe")}
-                  >
-                    <option value="">— No demo recorded —</option>
-                    <option value="sold">Sold</option>
-                    <option value="not_sold">Not sold</option>
-                    <option value="maybe">Maybe</option>
-                  </select>
-                  {form.demoOutcome === "maybe" && (
-                    <div className="field status-reason">
-                      <span className="field-label">Follow-up note</span>
-                      <textarea
-                        value={form.followUpNote}
-                        onChange={(e) => set("followUpNote", e.target.value)}
-                        placeholder="What to follow up on with this lead"
-                        rows={3}
-                        maxLength={600}
-                        aria-label="Follow-up note"
-                      />
-                      <span className="field-hint">Saving keeps this lead on Leads and stores the note here for follow-up.</span>
-                    </div>
-                  )}
-                  {form.demoOutcome === "not_sold" && (
-                    <span className="field-hint">Keep the lead on Leads and use Lead status below to mark it lost if it is not interested.</span>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-          {/* Owner request 2026-08-14 — Lead status: the lost + DNC flags.
-              Rendered OUTSIDE the adaptive intake engine so these controls
-              exist for every record and every workspace (owner + client
-              accounts alike); the DNC warning banner shows prominently while
-              the flag is set. The DNC date auto-fills to today when the
-              toggle is switched on (editable after). */}
-          <section className="intake-section" aria-label="Lead status">
-            <div className="intake-section-title">Lead status</div>
-            {form.dnc && (
-              <div className="alert alert-warn dnc-banner" role="alert">
-                <strong>Do not call/contact</strong>
-                <span>
-                  {form.dncDate ? ` marked ${form.dncDate}` : ""}
-                  {form.dncReason ? ` — ${form.dncReason}` : ""}
-                </span>
-              </div>
-            )}
             <div className="form-grid intake-grid">
-              <div className="field intake-block">
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={form.lost}
-                    onChange={(e) => {
-                      set("lost", e.target.checked);
-                      if (!e.target.checked) set("lostReason", "");
-                    }}
-                  />
-                  <span>Mark as lost (not interested)</span>
-                </label>
-                {form.lost && (
-                  <div className="field status-reason">
-                    <span className="field-label">Lost reason</span>
-                    <input
-                      value={form.lostReason}
-                      onChange={(e) => set("lostReason", e.target.value)}
-                      placeholder="Why this lead is lost"
-                      maxLength={300}
-                      aria-label="Lost reason"
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="field intake-block">
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={form.dnc}
-                    onChange={(e) => {
-                      set("dnc", e.target.checked);
-                      if (e.target.checked && !form.dncDate) set("dncDate", localToday());
-                      if (!e.target.checked) {
-                        set("dncReason", "");
-                        set("dncDate", "");
-                      }
-                    }}
-                  />
-                  <span>Do not contact (DNC)</span>
-                </label>
-                {form.dnc && (
-                  <>
-                    <div className="field status-reason">
-                      <span className="field-label">DNC reason</span>
-                      <input
-                        value={form.dncReason}
-                        onChange={(e) => set("dncReason", e.target.value)}
-                        placeholder="e.g. Asked not to be contacted"
-                        maxLength={300}
-                        aria-label="DNC reason"
-                      />
-                    </div>
-                    <div className="field status-reason">
-                      <span className="field-label">DNC date</span>
-                      <input
-                        type="date"
-                        value={form.dncDate}
-                        onChange={(e) => set("dncDate", e.target.value)}
-                        aria-label="DNC date"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
+              <label className="field" style={{ gridColumn: "1 / -1" }}>
+                <span className="field-label">Business / Company Name *</span>
+                <input
+                  value={form.companyName}
+                  className={pii ? "pii-blur" : undefined}
+                  onChange={(e) => set("companyName", e.target.value)}
+                  placeholder="e.g. Apex Property Investments"
+                  maxLength={200}
+                  required
+                  autoFocus
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">Contact Name</span>
+                <input
+                  value={form.contactName}
+                  className={pii ? "pii-blur" : undefined}
+                  onChange={(e) => set("contactName", e.target.value)}
+                  placeholder="e.g. John Doe"
+                  maxLength={100}
+                />
+              </label>
+              <label className="field">
+                <span className="field-label">Email Address</span>
+                <input
+                  type="email"
+                  value={form.email}
+                  className={pii ? "pii-blur" : undefined}
+                  onChange={(e) => set("email", e.target.value)}
+                  placeholder="john@example.com"
+                  maxLength={100}
+                />
+              </label>
+              <label className="field" style={{ gridColumn: "1 / -1" }}>
+                <span className="field-label">Phone Number</span>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  className={pii ? "pii-blur" : undefined}
+                  onChange={(e) => set("phone", e.target.value)}
+                  placeholder="(555) 000-0000"
+                  maxLength={50}
+                />
+              </label>
             </div>
           </section>
-          <div className="modal-actions">
+
+          {/* 3. Subscription Cost */}
+          <section className="intake-section" aria-label="Subscription cost" style={{ marginTop: "18px" }}>
+            <div className="intake-section-title" style={{ fontSize: "14px", fontWeight: 700, marginBottom: "12px" }}>
+              💳 Subscription Cost
+            </div>
+            <label className="field">
+              <span className="field-label">Monthly Subscription Cost ($ / month)</span>
+              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                <span style={{ position: "absolute", left: "12px", color: "var(--muted)", fontWeight: 600 }}>$</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  placeholder="199"
+                  value={form.monthlyAmount === 0 ? "" : String(form.monthlyAmount)}
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? 0 : Number(e.target.value);
+                    set("monthlyAmount", val);
+                    set("dealValue", val);
+                  }}
+                  style={{ paddingLeft: "26px", fontSize: "15px" }}
+                  aria-label="Monthly subscription cost in dollars"
+                />
+              </div>
+              <span className="field-hint">
+                The recurring monthly subscription cost for this client's workspace.
+              </span>
+            </label>
+          </section>
+
+          {/* Stage selector */}
+          {stages && stages.length > 0 && (
+            <div className="field" style={{ marginTop: "18px" }}>
+              <span className="field-label">Pipeline Stage</span>
+              <select
+                value={form.stage}
+                onChange={(e) => set("stage", e.target.value)}
+                style={{ fontSize: "14px", padding: "8px 12px" }}
+              >
+                {stages.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="modal-actions" style={{ marginTop: "24px" }}>
             <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={busy}>
-              {busy ? "Saving…" : client ? "Save changes" : "Create client"}
+              {busy ? "Saving…" : client ? "Save changes" : "Create Lead"}
             </button>
           </div>
         </form>

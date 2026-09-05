@@ -156,10 +156,11 @@ function TypeBadgeCell({ c, isWholesale }: { c: Client; isWholesale?: boolean })
       </td>
     );
   }
+  const displayLabel = c.businessType || (c.clientType === "commercial" ? "Commercial" : "Individual");
   return (
     <td data-label="Type" style={{ textAlign: "center" }}>
-      <span className={`badge type-badge tone-${c.clientType === "commercial" ? "blue" : "teal"}`} style={{ display: "inline-flex", justifyContent: "center", whiteSpace: "nowrap" }}>
-        {c.clientType === "commercial" ? "Commercial" : "Individual"}
+      <span className={`badge type-badge tone-${c.businessType ? "purple" : c.clientType === "commercial" ? "blue" : "teal"}`} style={{ display: "inline-flex", justifyContent: "center", whiteSpace: "nowrap" }}>
+        {displayLabel}
       </span>
     </td>
   );
