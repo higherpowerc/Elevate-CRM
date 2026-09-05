@@ -574,6 +574,8 @@ export interface Org {
    *  linked sold lead on auto-provision; editable via the owner. Owner-only
    *  admin data (never in tenant responses). */
   tier?: PackageTier;
+  verticalKey?: string;
+  industry?: string;
   /** Owner 2026-08-27 — the account's AUTO-SEEDED onboarding checklist
    *  progress (done/total item counts; 0/0 until a tier is set). The items
    *  themselves come from /api/admin/orgs/:id/onboarding. Owner-only admin

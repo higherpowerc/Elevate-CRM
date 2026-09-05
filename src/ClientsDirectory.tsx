@@ -40,6 +40,8 @@ interface Props {
   onViewAccount?: (orgId: number) => Promise<void>;
   /** Housing wholesale vertical customization — displays as Buyers / Cash Buyers list. */
   isWholesale?: boolean;
+  /** Automatically open the create account form */
+  initialCreateOpen?: boolean;
 }
 
 /** The sold-customer directory (owner request 2026-08-14): every client in
@@ -53,7 +55,7 @@ interface Props {
  *  filtering happens client-side. For the OWNER this tab ALSO hosts the
  *  Accounts panel (create / view / reset password / delete client accounts —
  *  the account management moved here from Administration on 2026-08-18). */
-export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = true, ownerOrgId, onViewAccount, isWholesale = false }: Props) {
+export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = true, ownerOrgId, onViewAccount, isWholesale = false, initialCreateOpen = false }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur client
      names/addresses/contact details in the directory rows. */
   const pii = usePii();
@@ -361,7 +363,13 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
             {buildNotice}
           </div>
         )}
-        {ownerOrgId && onViewAccount && <Accounts ownerOrgId={ownerOrgId} onViewAccount={onViewAccount} />}
+        {ownerOrgId && onViewAccount && (
+          <Accounts
+            ownerOrgId={ownerOrgId}
+            onViewAccount={onViewAccount}
+            initialCreateOpen={initialCreateOpen}
+          />
+        )}
       </div>
     );
   }
@@ -677,7 +685,11 @@ export default function ClientsDirectory({ stages, ownerOrg = false, canEdit = t
            single hub for ACCOUNT management: provision a workspace, view a
            client's CRM, reset a password, or delete an account. The records
            directory above stays the heart of the tab. */
-        <Accounts ownerOrgId={ownerOrgId} onViewAccount={onViewAccount} />
+        <Accounts
+          ownerOrgId={ownerOrgId}
+          onViewAccount={onViewAccount}
+          initialCreateOpen={initialCreateOpen}
+        />
       )}
 
       {modal && isWholesale ? (

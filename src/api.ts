@@ -347,10 +347,15 @@ export const api = {
      amount. Owner 2026-08-27 — the hub's Edit-account action also renames the
      account (name): the org name IS the account name in the Clients cell.
      Owner-only; members get 403. */
-  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string; tier?: string; name?: string }) =>
+  adminUpdateOrg: (id: number, data: { monthlySubscriptionAmount?: number; billingCycleDate?: string; tier?: string; name?: string; verticalKey?: string; vertical?: string }) =>
     request<{ ok: true; org: { id: number; name: string } }>(`/api/admin/orgs/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+  adminSetOrgVertical: (id: number, vertical: string) =>
+    request<{ ok: true; orgId: number; verticalKey: string }>(`/api/admin/orgs/${id}/vertical`, {
+      method: "POST",
+      body: JSON.stringify({ vertical }),
     }),
   /* 3g-3 — sold-lead auto-provisioning notifications (owner-only): the
      undismissed list + dismiss. */

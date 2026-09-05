@@ -1863,6 +1863,8 @@ interface OrgRow {
   /** Owner 2026-08-27 — this client account's package tier ('' unset |
    *  tier1..4). Owner-only admin data (the client accounts table). */
   tier: string;
+  vertical_key?: string;
+  industry?: string;
   /** Owner 2026-08-27 — the account's auto-seeded onboarding checklist
    *  progress (total / done item counts) for the Client accounts table.
    *  Owner-only admin data. */
@@ -1900,6 +1902,8 @@ function toOrg(row: OrgRow) {
     billingCycleDate: row.billing_cycle_date ?? "",
     // Owner 2026-08-27 — package tier ('' unset | tier1..4).
     tier: row.tier ?? "",
+    verticalKey: row.vertical_key || "",
+    industry: row.industry || "",
     // Owner 2026-08-27 — the auto-seeded onboarding checklist progress
     // (done/total) shown on the Client accounts table. Owner-only.
     onboardingTotal: row.onboarding_total ?? 0,
@@ -3206,6 +3210,8 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
                 o.revenue_model,
                 o.billing_cycle_date,
                 o.tier,
+                o.vertical_key,
+                o.industry,
                 o.status,
                 o.canceled_at,
                 o.retention_until,
@@ -3477,6 +3483,18 @@ async function handleApi(req: Request, url: URL, server?: { requestIP(req: Reque
       }
       sets.push("tier = ?");
       params.push(t === "" ? "" : t);
+    }
+    if (body.verticalKey !== undefined || body.vertical !== undefined) {
+      const vKey = String(body.verticalKey ?? body.vertical ?? "").trim().toLowerCase();
+      if (vKey === "" || vKey === "general") {
+        sets.push("vertical_key = '', industry = ''");
+      } else {
+        const tpl = VERTICAL_MAP[vKey];
+        if (tpl) {
+          sets.push("vertical_key = ?, industry = ?");
+          params.push(tpl.key, tpl.industry);
+        }
+      }
     }
     // Owner 2026-08-27 — the Client accounts hub renames an account: the org
     // name IS the account name shown in the table's Clients cell. The linked

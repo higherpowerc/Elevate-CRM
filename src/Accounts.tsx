@@ -5,7 +5,7 @@ import { PACKAGE_TIERS, TIER_LABELS, TIER_SHORT_LABELS, type PackageTier } from 
 import { ALL_VERTICALS, verticalLabel } from "./verticals";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import ProvisionNotices from "./ProvisionNotices";
-import { usePii, blurPii } from "./pii";
+import { usePii, blurPii, PiiEyeIcon, PiiEyeOffIcon } from "./pii";
 
 interface Props {
   /** The admin's own org id — the owner workspace is never deletable. */
@@ -14,6 +14,8 @@ interface Props {
    *  workspace (server-side impersonation). Throws on failure so the caller
    *  can surface the error. */
   onViewAccount: (orgId: number) => Promise<void>;
+  /** Optional: start with the Create Client Account form expanded */
+  initialCreateOpen?: boolean;
 }
 
 /** Random password (crypto-grade): one from each class + extras, 19 chars. */
@@ -55,7 +57,7 @@ function generatePassword(): string {
  *  their content and can never collide. The PR #102 money-at-a-glance
  *  subscription value keeps its own column (was stacked above the cycle
  *  date); the cycle date stays inline-editable. */
-export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
+export default function Accounts({ ownerOrgId, onViewAccount, initialCreateOpen }: Props) {
   /* Global privacy eye (2026-08-14 owner request) — blur PII (client/company names, phone, email, address) here too. */
   const pii = usePii();
   const [orgs, setOrgs] = useState<Org[] | null>(null);
@@ -78,6 +80,32 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   const [editPhone, setEditPhone] = useState("");
   const [editDeal, setEditDeal] = useState("");
   const [editSub, setEditSub] = useState("");
+  const [editVertical, setEditVertical] = useState("");
+  const [editBillingDate, setEditBillingDate] = useState("");
+
+  /* Privacy eye for Subscription charges (persists across reloads) */
+  const SUB_HIDDEN_KEY = "crm:sub-hidden";
+  const [subHidden, setSubHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SUB_HIDDEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SUB_HIDDEN_KEY, subHidden ? "1" : "0");
+    } catch {
+      /* ignore storage error */
+    }
+  }, [subHidden]);
+
+  /* Per-row privacy eye override */
+  const [revealedSubRows, setRevealedSubRows] = useState<Record<number, boolean>>({});
+  const toggleRowSub = (orgId: number) => {
+    setRevealedSubRows((prev) => ({ ...prev, [orgId]: !prev[orgId] }));
+  };
+
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [agreementBusy, setAgreementBusy] = useState(false);
@@ -116,7 +144,10 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
   /** Owner live-test 2026-08-28 (be3024e9): the create-account form is
    *  collapsible and starts COLLAPSED so the Clients tab account hub opens
    *  compact; the owner expands it to add a client account. */
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(Boolean(initialCreateOpen));
+  useEffect(() => {
+    if (initialCreateOpen) setCreateOpen(true);
+  }, [initialCreateOpen]);
   /** 3f-1: the business type picker (owner direction 2026-08-16 — the catalog
    *  is B2B & B2C only; B2B is the default: "Mainly we will be selling B2B"). */
   const [vertical, setVertical] = useState("b2b");
@@ -398,6 +429,8 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
     // Monthly subscription lives on the ORG (the billing book) — prefill from
     // the org regardless of any linked client record.
     setEditSub(String(o.monthlySubscriptionAmount ?? 0));
+    setEditVertical(o.verticalKey || "");
+    setEditBillingDate(o.billingCycleDate || "");
   }
 
   /** Save: PUT the linked owner-org client record (name / phone / deal value),
@@ -424,7 +457,16 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
       setEditBusy(true);
       setEditError(null);
       try {
-        await api.adminUpdateOrg(editing.id, { monthlySubscriptionAmount: subValue });
+        if (editVertical && editVertical !== editing.verticalKey) {
+          try {
+            await api.adminSetOrgVertical(editing.id, editVertical);
+          } catch {}
+        }
+        await api.adminUpdateOrg(editing.id, {
+          monthlySubscriptionAmount: subValue,
+          billingCycleDate: editBillingDate,
+          verticalKey: editVertical,
+        });
         setEditing(null);
         await load(); // re-join: Subscription column + prefill data
       } catch (e) {
@@ -454,12 +496,19 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
         phone: editPhone.trim(),
         dealValue,
       });
+      if (editVertical && editVertical !== editing.verticalKey) {
+        try {
+          await api.adminSetOrgVertical(editing.id, editVertical);
+        } catch {}
+      }
       // The org name IS the visible account name (the Clients cell renders
       // o.name) — rename it through the owner-only PATCH so the table follows.
-      await api.adminUpdateOrg(editing.id, { name: companyName });
-      // Owner 2026-08-29 — the monthly subscription lives on the ORG (billing
-      // book), separate from the client record's deal value (sales book).
-      await api.adminUpdateOrg(editing.id, { monthlySubscriptionAmount: subValue });
+      await api.adminUpdateOrg(editing.id, {
+        name: companyName,
+        monthlySubscriptionAmount: subValue,
+        billingCycleDate: editBillingDate,
+        verticalKey: editVertical,
+      });
       setEditing(null);
       await load(); // re-join: Deal value column + Clients cell + prefill data
     } catch (e) {
@@ -738,15 +787,30 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
               <thead>
                 <tr>
                   <th>Account</th>
-                  <th>Package</th>
-                  <th>Status</th>
+                  <th>Business Type</th>
                   <th>Phone</th>
                   <th>Email</th>
                   <th className="num">Members</th>
-                  <th className="num">Client records</th>
+                  <th className="num">Clients records</th>
                   <th>Created</th>
-                  <th className="num">Subscription</th>
-                  <th>Billing cycle</th>
+                  <th className="num">
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "flex-end" }}>
+                      <span>Subscription</span>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        style={{ padding: "2px", border: "none", background: "transparent", cursor: "pointer", color: "inherit", opacity: 0.8 }}
+                        title={subHidden ? "Show subscription charges" : "Hide subscription charges"}
+                        aria-label={subHidden ? "Show subscription charges" : "Hide subscription charges"}
+                        onClick={() => {
+                          setSubHidden((prev) => !prev);
+                          setRevealedSubRows({});
+                        }}
+                      >
+                        {subHidden ? <PiiEyeOffIcon /> : <PiiEyeIcon />}
+                      </button>
+                    </div>
+                  </th>
                   <th className="actions-th">Actions</th>
                 </tr>
               </thead>
@@ -755,6 +819,11 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                   /* The linked owner-org client record (provisionedOrgId join)
                      — feeds the Phone column. */
                   const linked = clientByOrg[o.id];
+                  const bType = (o.verticalKey ? verticalLabel(o.verticalKey) : "") || o.industry || linked?.industry || "B2B";
+                  const isRevealed = subHidden ? !!revealedSubRows[o.id] : !revealedSubRows[o.id];
+                  const isSubPrivate = !isRevealed;
+                  const amt = o.monthlySubscriptionAmount ?? 0;
+
                   return (
                     <tr key={o.id}>
                       <td className="acc-strong" data-label="Account">
@@ -762,36 +831,32 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                         <span className={`acc-name${blurPii(pii)}`} title={o.name}>
                           {o.name}
                         </span>
-                      </td>
-                      <td data-label="Package">
-                        {o.tier ? (
-                          <span className="chip chip-tier" title={TIER_LABELS[o.tier] ?? o.tier}>
-                            {TIER_SHORT_LABELS[o.tier] ?? o.tier}
-                          </span>
-                        ) : (
-                          <span className="acc-muted">&mdash;</span>
-                        )}
-                      </td>
-                      <td data-label="Status">
-                        {/* Owner 2026-08-29 — every active row shows a clear
-                            Active indicator; the auto-provisioned chip + sold
-                            lead note stay alongside it when present. Rows in
-                            this window are ALL active (canceled accounts live
-                            in the Inactive clients window below). */}
-                        <span className="chip chip-active" title="Active — the account is live and the client can sign in">Active</span>
                         {o.provisionedFromClient ? (
-                          <>
+                          <div style={{ marginTop: "4px" }}>
                             <span
                               className="chip chip-provisioned"
                               title="This workspace was auto-created when a sold lead moved into the Sold stage"
                             >
                               auto-provisioned
                             </span>
-                            <span className="acc-note">
-                              from sold lead &middot; <b>{o.provisionedFromClientName || "—"}</b>
-                            </span>
-                          </>
+                          </div>
                         ) : null}
+                      </td>
+                      <td data-label="Business Type">
+                        <span
+                          className="chip"
+                          style={{
+                            fontWeight: 600,
+                            fontSize: "12px",
+                            background: "var(--bg-soft)",
+                            border: "1px solid var(--line-strong)",
+                            textTransform: "none",
+                            letterSpacing: "normal"
+                          }}
+                          title={`Business Type: ${bType}`}
+                        >
+                          {bType}
+                        </span>
                       </td>
                       <td className="acc-line" data-label="Phone">
                         {linked?.phone ? (
@@ -807,64 +872,38 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                           <span className="acc-muted">&mdash;</span>
                         )}
                       </td>
-                      {/* Owner 2026-08-28 privacy fix — NO Password column:
-                          the temp password is private to the client. It is
-                          handed over one-time via the post-creation modal or
-                          the row's "Reset password" action (modal), never
-                          displayed persistently in this table. */}
                       <td className="num" data-label="Members">
                         {o.userCount}
                       </td>
-                      <td className="num" data-label="Client records">
+                      <td className="num" data-label="Clients records">
                         {o.clientCount}
                       </td>
                       <td data-label="Created">{fmtDate(o.createdAt)}</td>
-                      <td className="num" data-label="Subscription" title="Monthly subscription value">
-                        {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
-                          `${money(o.monthlySubscriptionAmount ?? 0)}/mo`
-                        ) : (
-                          <span className="acc-muted">&mdash;</span>
-                        )}
-                      </td>
-                      <td data-label="Billing cycle">
-                        {editingBillingOrgId === o.id ? (
-                          <input
-                            type="date"
-                            className="billing-date-input"
-                            value={billingDraft}
-                            onChange={(e) => setBillingDraft(e.target.value)}
-                            onBlur={() => handleSaveBillingCycle(o, billingDraft)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleSaveBillingCycle(o, billingDraft);
-                              if (e.key === "Escape") setEditingBillingOrgId(null);
-                            }}
-                            disabled={savingBillingOrgId === o.id}
-                            aria-label={`Billing cycle date for ${o.name}`}
-                          />
-                        ) : (
-                          <span className="acc-cycle">
-                            <span className="acc-cycle-line">
-                              {o.billingCycleDate ? (
-                                fmtDate(o.billingCycleDate)
-                              ) : (
-                                <span className="acc-muted">&mdash;</span>
-                              )}
-                              <button
-                                type="button"
-                                className="icon-btn"
-                                title="Set billing cycle date"
-                                aria-label={`Set billing cycle date for ${o.name}`}
-                                onClick={() => {
-                                  setEditingBillingOrgId(o.id);
-                                  setBillingDraft(o.billingCycleDate || "");
-                                }}
-                                disabled={savingBillingOrgId !== null}
-                              >
-                                &#9998;
-                              </button>
+                      <td className="num" data-label="Subscription" title="Monthly subscription charge">
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "flex-end", width: "100%" }}>
+                          {amt > 0 ? (
+                            <span className={isSubPrivate ? "pii-blur" : undefined} style={{ fontVariantNumeric: "tabular-nums" }}>
+                              {isSubPrivate ? "••••••" : `${money(amt)}/mo`}
                             </span>
-                          </span>
-                        )}
+                          ) : (
+                            <span className="acc-muted">&mdash;</span>
+                          )}
+                          {amt > 0 && (
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              style={{ padding: "2px", border: "none", background: "transparent", cursor: "pointer", color: "inherit", opacity: 0.65 }}
+                              title={isSubPrivate ? "Reveal subscription charge" : "Hide subscription charge"}
+                              aria-label={isSubPrivate ? "Reveal subscription charge" : "Hide subscription charge"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleRowSub(o.id);
+                              }}
+                            >
+                              {isSubPrivate ? <PiiEyeOffIcon /> : <PiiEyeIcon />}
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td data-label="Actions">
                         <div className="row-actions">
@@ -974,40 +1013,75 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
             <thead>
               <tr>
                 <th>Account</th>
-                <th>Package</th>
-                <th>Status</th>
+                <th>Business Type</th>
+                <th>Phone</th>
                 <th>Email</th>
-                <th>Members</th>
-                <th className="num">Client records</th>
-                <th className="num">Subscription</th>
-                <th>Canceled</th>
-                <th>Data retained until</th>
+                <th className="num">Members</th>
+                <th className="num">Clients records</th>
+                <th>Created</th>
+                <th className="num">
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "flex-end" }}>
+                    <span>Subscription</span>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ padding: "2px", border: "none", background: "transparent", cursor: "pointer", color: "inherit", opacity: 0.8 }}
+                      title={subHidden ? "Show subscription charges" : "Hide subscription charges"}
+                      aria-label={subHidden ? "Show subscription charges" : "Hide subscription charges"}
+                      onClick={() => {
+                        setSubHidden((prev) => !prev);
+                        setRevealedSubRows({});
+                      }}
+                    >
+                      {subHidden ? <PiiEyeOffIcon /> : <PiiEyeIcon />}
+                    </button>
+                  </div>
+                </th>
                 <th className="actions-th">Actions</th>
               </tr>
             </thead>
             <tbody>
               {inactiveOrgs.map((o) => {
                 const linked = clientByOrg[o.id];
+                const bType = (o.verticalKey ? verticalLabel(o.verticalKey) : "") || o.industry || linked?.industry || "B2B";
+                const isRevealed = subHidden ? !!revealedSubRows[o.id] : !revealedSubRows[o.id];
+                const isSubPrivate = !isRevealed;
+                const amt = o.monthlySubscriptionAmount ?? 0;
+
                 return (
                   <tr key={o.id} className="row-inactive">
                     <td className="acc-strong" data-label="Account">
                       <span className={`acc-name${blurPii(pii)}`} title={o.name}>
                         {o.name}
                       </span>
-                    </td>
-                    <td data-label="Package">
-                      {o.tier ? (
-                        <span className="chip chip-tier" title={TIER_LABELS[o.tier] ?? o.tier}>
-                          {TIER_SHORT_LABELS[o.tier] ?? o.tier}
+                      <div style={{ marginTop: "4px" }}>
+                        <span className="chip chip-archived" title="Inactive account — data retained, logins blocked">
+                          Inactive
                         </span>
+                      </div>
+                    </td>
+                    <td data-label="Business Type">
+                      <span
+                        className="chip"
+                        style={{
+                          fontWeight: 600,
+                          fontSize: "12px",
+                          background: "var(--bg-soft)",
+                          border: "1px solid var(--line-strong)",
+                          textTransform: "none",
+                          letterSpacing: "normal"
+                        }}
+                        title={`Business Type: ${bType}`}
+                      >
+                        {bType}
+                      </span>
+                    </td>
+                    <td className="acc-line" data-label="Phone">
+                      {linked?.phone ? (
+                        <span className={blurPii(pii)}>{linked.phone}</span>
                       ) : (
                         <span className="acc-muted">&mdash;</span>
                       )}
-                    </td>
-                    <td data-label="Status">
-                      {/* Owner 2026-08-29 — explicit Inactive indicator (the
-                          chip text is uppercased by the shared chip CSS). */}
-                      <span className="chip chip-archived" title="Inactive — the account is canceled, its data is retained and its logins are blocked">Inactive</span>
                     </td>
                     <td className="acc-line" data-label="Email">
                       {o.loginEmail ? (
@@ -1019,23 +1093,35 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                     <td className="num" data-label="Members">
                       {o.userCount}
                     </td>
-                    <td className="num" data-label="Client records">
+                    <td className="num" data-label="Clients records">
                       {o.clientCount}
                     </td>
-                    <td className="num" data-label="Subscription" title="Monthly subscription value">
-                      {(o.monthlySubscriptionAmount ?? 0) > 0 ? (
-                        `${money(o.monthlySubscriptionAmount ?? 0)}/mo`
-                      ) : (
-                        <span className="acc-muted">&mdash;</span>
-                      )}
-                    </td>
-                    <td data-label="Canceled">{o.canceledAt ? fmtDate(o.canceledAt) : <span className="acc-muted">&mdash;</span>}</td>
-                    <td data-label="Data retained until">
-                      {o.retentionUntil ? (
-                        fmtDate(o.retentionUntil)
-                      ) : (
-                        <span className="acc-muted">&mdash;</span>
-                      )}
+                    <td data-label="Created">{fmtDate(o.createdAt)}</td>
+                    <td className="num" data-label="Subscription" title="Monthly subscription charge">
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", justifyContent: "flex-end", width: "100%" }}>
+                        {amt > 0 ? (
+                          <span className={isSubPrivate ? "pii-blur" : undefined} style={{ fontVariantNumeric: "tabular-nums" }}>
+                            {isSubPrivate ? "••••••" : `${money(amt)}/mo`}
+                          </span>
+                        ) : (
+                          <span className="acc-muted">&mdash;</span>
+                        )}
+                        {amt > 0 && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            style={{ padding: "2px", border: "none", background: "transparent", cursor: "pointer", color: "inherit", opacity: 0.65 }}
+                            title={isSubPrivate ? "Reveal subscription charge" : "Hide subscription charge"}
+                            aria-label={isSubPrivate ? "Reveal subscription charge" : "Hide subscription charge"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleRowSub(o.id);
+                            }}
+                          >
+                            {isSubPrivate ? <PiiEyeOffIcon /> : <PiiEyeIcon />}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td data-label="Actions">
                       <div className="row-actions">
@@ -1277,6 +1363,29 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                       aria-label="Monthly subscription in dollars per month"
                     />
                   </label>
+                  <label className="field">
+                    <span className="field-label">Business type</span>
+                    <select
+                      value={editVertical}
+                      onChange={(e) => setEditVertical(e.target.value)}
+                      aria-label="Business type"
+                    >
+                      {ALL_VERTICALS.map((v) => (
+                        <option key={v.key} value={v.key}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Billing cycle date</span>
+                    <input
+                      type="date"
+                      value={editBillingDate}
+                      onChange={(e) => setEditBillingDate(e.target.value)}
+                      aria-label="Billing cycle date"
+                    />
+                  </label>
                   <p className="field-hint">
                     Edits the client's own record in your workspace — the account's CRM data is not touched.{" "}
                     <b>Deal value</b> is the sales number on the client record; <b>Monthly subscription</b> is what
@@ -1351,6 +1460,29 @@ export default function Accounts({ ownerOrgId, onViewAccount }: Props) {
                       value={editSub}
                       onChange={(e) => setEditSub(e.target.value)}
                       aria-label="Monthly subscription in dollars per month (no linked client record)"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Business type</span>
+                    <select
+                      value={editVertical}
+                      onChange={(e) => setEditVertical(e.target.value)}
+                      aria-label="Business type"
+                    >
+                      {ALL_VERTICALS.map((v) => (
+                        <option key={v.key} value={v.key}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Billing cycle date</span>
+                    <input
+                      type="date"
+                      value={editBillingDate}
+                      onChange={(e) => setEditBillingDate(e.target.value)}
+                      aria-label="Billing cycle date"
                     />
                   </label>
                   <div className="modal-actions">
